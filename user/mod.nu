@@ -34,11 +34,13 @@ const _exclude: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
 
 # ——— helpers ———————————————————————————————————————————————————————————————
 
-alias xglob = glob --depth=4 --exclude=[
+alias xglob = glob --depth=3 --exclude=[
+  `**/*.yazi/**`
+  `**/plugins/**`
   `**/vale/styles/**`
   `**/helix/runtime/**`
   `**/nushell/{autoload/*,history.txt}`
-  `**/*.{*bck,*shm,*wal,msgpackz,sqlite3}`
+  `**/*.{*bck,*shm,*wal,msgpackz,sqlite3,wasm}`
   `**/{logs,Code - Insiders,google-chrome-for-testing}/**`
 ]
 
