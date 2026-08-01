@@ -29,6 +29,8 @@ export const modules: path = $var.modules
 export const plugins: path = $var.plugins
 export const scripts: path = $var.scripts
 export const common: path = $var.common
+export const share: path = $var.local | path join share
+export const cache: path = $nu.cache-dir | path dirname
 
 const _exclude: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
 

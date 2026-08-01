@@ -34,11 +34,9 @@ def "init carapace" []: nothing -> nothing {
 
 # Initialize and auto-start the default Zellij session.
 def "init zellij" []: nothing -> nothing {
-  if $env not-has ZELLIJ {
-    if ($env.ZELLIJ_AUTO_START? | into bool --relaxed) {
-      let name: string = $env.ZELLIJ_AUTO_SESSION? | default auto
-      zellij attach $name --create --force-run-commands
-    }
+  if $env not-has ZELLIJ and ($env.ZELLIJ_AUTO_START? | into bool --relaxed) {
+    let name: string = $env.ZELLIJ_AUTO_SESSION? | default auto
+    zellij attach $name --create --force-run-commands
     if ($env.ZELLIJ_AUTO_EXIT? | into bool --relaxed) {
       exit 0 # nu-lint-ignore: exit_only_in_main
     }

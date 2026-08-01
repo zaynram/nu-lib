@@ -22,9 +22,8 @@ export const NU_PLUGIN_DIRS: list<path> = [
 
 # Initialize the shell session.
 @category shells
-export def startup []: nothing -> int {
+export def startup []: nothing -> nothing {
   vendor init
   fortune | ansi gradient --fgstart 0x40c9ff --fgend 0xe81cff | print
   set-options
-  return $nu.pid
 }
