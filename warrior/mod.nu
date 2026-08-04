@@ -11,6 +11,11 @@ export module time {
 
   # ——— definitions —————————————————————————————————————————————————————————————
 
+  # Interact with the Timewarrior CLI.
+  export def --wrapped main [
+    ...rest: string@_timew-raw # Arguments to pass directly to the `timew` interface
+  ]: nothing -> nothing { run-external timew ...$rest }
+
   # Describe an item to record time for via the `timew` CLI.
   @category productivity
   export def desc [
@@ -37,11 +42,13 @@ export module time {
   export def span [
     --from: datetime@_common-datetimes # Anchor date for the interval
     --span: duration@_common-durations # Timespan for the interval
+    --text (-t) # Return a string instead of a list of arguments
   ]: [
     nothing -> list<string>
     record<from: datetime> -> list<string>
     record<span: duration> -> list<string>
     record<from: oneof<nothing, datetime>, span: oneof<nothing, duration>> -> list<string>
+    any -> oneof<string, list<string>>
   ] {
     match ($in | default {} | default $from from | default $span span | compact) {
       {from: $f span: $s} => [from ($f | str-datetime) for ($s | str-duration)]
@@ -49,7 +56,7 @@ export module time {
       {span: $s} => [($s | str-duration) ago]
       {from: $f} => [from ($f | str-datetime)]
       _ => []
-    }
+    } | if $text { str join (char sp) } else { }
   }
 
   # Summarize the Timewarrior data with automatic conversion to Nushell types.
@@ -77,8 +84,8 @@ export module time {
     | if ($last | into int | into bool) { last $last } else { }
     | insert zone {|row| $row.tags | first }
     | update tags { skip 1 | match ($in | length) { 1 => { first } _ => { } } }
-    | update start { into datetime }
-    | upsert end { try { into datetime } catch { ignore } }
+    | update start { into datetime | date to-timezone local }
+    | upsert end { try { into datetime | date to-timezone local } catch { ignore } }
     | insert span {|row| ($row.end? | default { date now }) - $row.start }
     | if $then != null {
       do --capture-errors $then $in
@@ -95,19 +102,15 @@ export module time {
   export alias docs = start https://timewarrior.net/docs/
   # Continue tracking time for the an entry.
   export alias cont = timew continue
-  # Stop the currently tracked time entry.
-  export alias stop = timew stop
-  # Undo the previous time tracking action.
-  export alias undo = timew undo
-  # Edit a time entry.
-  export alias edit = timew resize
 
   # ——— helpers —————————————————————————————————————————————————————————————————
 
   def str-duration []: duration -> string {
     math abs | format duration min | split words | str join
   }
-  def str-datetime []: datetime -> string { format date %s }
+  def str-datetime []: datetime -> string {
+    date to-timezone local | format date %s
+  }
 
   alias "into completions" = do {|opts: record = {}|
     let data: list<string> = $in
@@ -116,6 +119,16 @@ export module time {
   }
 
   # ——— completions —————————————————————————————————————————————————————————————
+
+  #topiary: disable
+  def _timew-raw [context: string]: nothing -> record { # nu-lint-ignore: positional_to_pipeline
+    $context
+    | str replace --regex '^time\s' 'timew '
+    | commandline complete
+    | str trim --right
+    | where $it not-in [show week day start summary export]
+    | into completions {sort: false}
+  }
 
   def _common-durations [context: string = '' --raw --abs]: [
     nothing -> oneof<list<duration>, record>
