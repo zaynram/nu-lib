@@ -2,7 +2,9 @@
 
 use ../vendor modules
 use ../path resolve
-use ($modules)/session edit
+use ($modules | path join session) edit
+
+export use std "path add"
 
 # ——— definitions —————————————————————————————————————————————————————————————
 
@@ -26,13 +28,19 @@ export def --wrapped editor [
 
 # Check if command(s) are available on PATH.
 #
-# Note that `all` is used for the test so if more than one
-# name is provided then any missing command will return false.
+# Note that `all` is used for the test by default so if more than one
+# name is provided then any missing command will return false. Pass
+# `--mode=any` for the alternate behavior.
 @category filesystem
 export def on-path [
-  name?: string@_executables # Command name (if the name is completed, it's on PATH already)
+  ...names: string@_executables # Command name (if the name is completed, it's on PATH already)
+  --mode (-m): string@[all any] = all
 ]: oneof<nothing, string, list<string>> -> bool {
-  append $name | compact --empty | all { which $in | is-not-empty }
+  append $names | compact --empty | if ($in | is-empty) {
+    error make --unspanned 'no commands were provided'
+  } else {
+    run-internal $mode { which $in | is-not-empty }
+  }
 }
 
 # Run closures based on the current execution platform.

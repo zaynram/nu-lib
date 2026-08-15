@@ -7,32 +7,33 @@ use ../util editor
 
 # ——— constants —————————————————————————————————————————————————————————————
 
-export const bin: path = '/usr/bin/'
+export const bin: path = $nu.home-dir | path join .local bin
+export const lib: path = $nu.home-dir | path join library
+export const data: path = $nu.data-dir | path dirname
 export const home: path = $nu.home-dir
-
-const var: record = {
-  autoload: $nu.user-autoload-dirs.0?
-  config: ($nu.default-config-dir | path dirname)
-  data: ($nu.data-dir | path dirname)
-  local: ($nu.home-dir | path join .local)
-  modules: ($nu.data-dir | path join modules)
-  plugins: ($nu.current-exe | path expand | path dirname)
-  scripts: ($nu.data-dir | path join scripts)
-  common: ($nu.default-config-dir | path join common)
-}
-
-export const autoload: path = $var.autoload
-export const config: path = $var.config
-export const data: path = $var.data
-export const local: path = $var.local
-export const modules: path = $var.modules
-export const plugins: path = $var.plugins
-export const scripts: path = $var.scripts
-export const common: path = $var.common
-export const share: path = $var.local | path join share
+export const autoload: path = $nu.user-autoload-dirs.0?
+export const modules: path = $lib | path join nushell
+export const config: path = $nu.default-config-dir | path dirname
+export const plugins: path = $nu.current-exe | path expand | path dirname
+export const scripts: path = $nu.data-dir | path join scripts
 export const cache: path = $nu.cache-dir | path dirname
 
 const _exclude: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
+
+# ——— environment ——————————————————————————————————————————————————————————————
+
+export-env {
+  load-env {
+    XDG_CONFIG_HOME: ($env.XDG_CONFIG_HOME? | default $config)
+    XDG_DATA_HOME: ($env.XDG_DATA_HOME? | default $data)
+    PNPM_HOME: ($data | path join pnpm)
+    NUPM_HOME: ($data | path join nupm)
+    TOPIARY_CONFIG_FILE: ($config | path join topiary languages.ncl)
+    TOPIARY_LANGUAGE_DIR: ($config | path join topiary queries)
+    GOPATH: ($data | path join go)
+    GOBIN: $bin
+  }
+}
 
 # ——— helpers ———————————————————————————————————————————————————————————————
 
@@ -53,6 +54,8 @@ alias nu-glob = do {|then?: closure|
   } | compact --empty | flatten | uniq
 }
 
+alias vars = do --ignore-errors { (scope variables | where name == '$user').0?.value }
+
 # ——— definitions ———————————————————————————————————————————————————————————
 
 # Interact with a script or module definition file.
@@ -61,11 +64,8 @@ export def --env lib [
   target: path@_any-lib-target # The name of the module or script to target
   --get (-g) # Return the constructed path instead of opening it
 ]: nothing -> oneof<nothing, path> {
-  let p: path = if $var has $target {
-    $var | get $target
-  } else if $target != null {
-    $var | get modules common scripts | nu-glob { where $it =~ $target } | first
-  }
+  let p: path = vars | get --ignore-case --optional $target
+    | default { [$modules $scripts] | nu-glob { where $it =~ $target } | first }
   if $get { return $p } else if $p != null { editor $p } else {
     error wrap --code=usr::lib::unresolved_target ...[
       $"could not find script or module matching '($target)'"
@@ -82,7 +82,7 @@ export def auto [
   --vendor (-v) # Use the vendor autoload directory
   --get (-g) # Return the resolved path instead of default behavior
 ]: nothing -> oneof<nothing, path, table> {
-  let dir: path = if $vendor { use ../vendor; $vendor } else { $var } | get autoload
+  let dir: path = if $vendor { use ../vendor autoload; $autoload } else { $autoload }
   try { mkdir $dir; cd $dir } catch {
     error wrap --code=usr::autoload::internal_error ...[
       "could not resolve autoload directory"
@@ -114,7 +114,7 @@ export def config [
   --path (-p): path@_config-path # Exact path (relative to target if provided, otherwise `~/.config`) of a file to edit
   --get (-g) # Return the constructed path instead of opening it
 ]: nothing -> oneof<nothing, table> {
-  let cwd: path = [$var.config $target] | compact --empty | path join
+  let cwd: path = [$config $target] | compact --empty | path join
   try { mkdir $cwd; cd $cwd } catch {
     error wrap "could not resolve config directory" --code usr::config::unresolved_directory
   }
@@ -149,8 +149,8 @@ export def --env main [
   target?: cell-path@_cell-path # Cell-path of the property to retrieve
   --get (-g) # Return the directory path instead of navigating to it
 ]: nothing -> oneof<nothing, path, record> {
-  if $target == null { return $var }
-  let dir: oneof<nothing, path> = $var | get --ignore-case --optional $target
+  if $target == null { return (vars) }
+  let dir: oneof<nothing, path> = vars | get --ignore-case --optional $target
   if $get { return $dir } else if $dir != null { cd $dir } else {
     error wrap --code=common::user::dir::invalid_target ...[
       $"the `$var` constant does not have property '($target)'"
@@ -168,18 +168,17 @@ alias nu-glob = do {|then?: closure|
   } | compact --empty | flatten | uniq
 }
 
-def _cell-path []: nothing -> list { $var | columns }
+def _cell-path []: nothing -> list { vars | columns }
 def _any-lib-target []: nothing -> list {
-  let cols: list<string> = [modules common scripts]
-  $var | select ...$cols | values | nu-glob | append $cols
+  [$modules $scripts] | nu-glob | append [modules scripts]
 }
-def _autoload-target []: nothing -> list { $var.autoload | nu-glob { path parse | get stem } }
-def _config-target []: nothing -> list { xglob $"($var.config)/*" | path basename }
+def _autoload-target []: nothing -> list { $autoload | nu-glob { path parse | get stem } }
+def _config-target []: nothing -> list { xglob $"($config)/*" | path basename }
 def _config-path [context: string]: nothing -> list {
   $context
   | split words
   | where $it not-in [user config path]
-  | par-each { prepend $var.config | path join }
+  | par-each { prepend $config | path join }
   | where ($it | path type) == dir
   | if ($in | is-empty) { return [] } else {
     let dir: path = $in | first
