@@ -1,3 +1,5 @@
+# Internal module library for personal use.
+
 # ——— imports —————————————————————————————————————————————————————————————————
 
 export use vendor
@@ -29,7 +31,7 @@ export-env {
       ...(glob $"($user.scripts)/**" --exclude=[**/_internal/**])
     ]
     $env
-    | select --optional NU_LIB_DIRS NU_PLUGIN_DIRS
+    | select --ignore-case --optional NU_LIB_DIRS NU_PLUGIN_DIRS REPO
     | upsert NU_LIB_DIRS { append $NU_LIB_DIRS }
     | upsert NU_PLUGIN_DIRS { append $NU_PLUGIN_DIRS }
     | upsert REPO { default {} | upsert discovery true | default [] path }
