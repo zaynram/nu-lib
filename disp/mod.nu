@@ -5,6 +5,7 @@ use std null-device
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
+const DIR: path = path self .
 const XRS: path = $nu.home-dir | path join .Xresources
 const DIM: string = '1920x1080'
 const ENV: record = {
@@ -12,6 +13,15 @@ const ENV: record = {
   XDG_RUNTIME_DIR: '/run/user/'
   DBUS_SESSION_BUS_ADDRESS: 'unix:path='
   LISTENER_PORT: 5901
+}
+const COL: list<string> = [
+  DISPLAY
+  WAYLAND_DISPLAY
+  XDG_RUNTIME_DIR
+  DBUS_SESSION_BUS_ADDRESS
+]
+const MAP: record = {
+  claude-desktop: [--ozone-platform=wayland]
 }
 const OPT: record = {
   -geometry: $DIM
@@ -23,14 +33,23 @@ const OPT: record = {
   -ZlibLevel: 1
 }
 const EXC: list = [tint2 Xtigervnc openbox]
+const WPS: list<string> = [/mnt/c/Windows/System32/WindowsPowerShell/v1.0/]
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
+
+export alias repair = job spawn --description=disp-repair {
+  with-env {PATH: ($env.PATH ++ $WPS)} {
+    powershell.exe -ExecutionPolicy Bypass -Command "Stop-Process -Name msrdc -Force -ErrorAction SilentlyContinue" out+err> (null-device)
+  }
+}
 
 alias check-listeners = try { ss -ltn | find $ENV.LISTENER_PORT } catch { [] }
 alias repr-job = match ($in | compact --empty) {
   {id: $n description: $d} => $"job '($d)' \(id: ($n))"
   {id: $n} => $'job ($n)'
 }
+
+def is-remote []: nothing -> bool { $env has SSH_CONNECTION }
 
 def --env update-applications [
   ...names: string
@@ -71,6 +90,7 @@ def --env update-listeners []: nothing -> nothing {
 }
 export-env {
   if $env.ENV_CONVERSIONS not-has display {
+    repair
     $env.ENV_CONVERSIONS.disp = {
       from_string: {|s|
         default $s
@@ -112,6 +132,13 @@ export-env {
     }
 }
 
+def kill-one [--strict]: oneof<string, record<name: string>> -> nothing {
+  let name: string = match ($in | describe) { string => $in _ => $in.name }
+  job --kill $name
+  let args: list = [--ignore-case (if $strict { '--exact' } else { '--full' }) $name]
+  pkill ...$args out+err> (null-device)
+}
+
 # ——— definitions ——————————————————————————————————————————————————————————————
 
 # Consume the display session environment.
@@ -119,14 +146,18 @@ export def env [
   --exec (-x): closure # Closure to run under this environment
   --async (-a): string # Label for a job to wrap the `--exec` closure with
 ]: oneof<nothing, record> -> oneof<int, string, nothing> {
-  let e: record = default {}
-    | merge $ENV
+  let base: record = $in | default {}
+  let full: record = if (is-remote) {
+    $ENV
     | update XDG_RUNTIME_DIR { path join (id -u) }
     | update DBUS_SESSION_BUS_ADDRESS {|_| $in + $_.XDG_RUNTIME_DIR }
+  } else {
+    $env | select ...$COL
+  } | merge $base
   match ($exec | describe) {
-    nothing => { return $e }
-    closure if $async == null => { with-env $e $exec }
-    closure => { job spawn --description=$async { with-env $e $exec } }
+    nothing => { return $full }
+    closure if $async == null => { with-env $full $exec }
+    closure => { job spawn --description=$async { with-env $full $exec } }
   }
 }
 
@@ -187,7 +218,34 @@ export def job [
   } else { }
 }
 
-# Launch a graphical application, with automatic display process spawn
+# Return a table of detected running applications.
+export def apps [
+  --for-each: closure # Closure to run with each of the applications
+  --no-update # Disable auto-refresh of the application list after `--for-each` completes
+]: nothing -> oneof<nothing, table> {
+  update-applications
+  $env.disp.apps
+  | where $it not-in $EXC
+  | if $for_each == null { } else {
+    let apps: table = $in
+    for a in $apps { $a | do --ignore-errors $for_each $a }
+    if not $no_update { update-applications }
+  }
+}
+
+# Move windows with powershell.
+export def maximize [name?: string]: nothing -> nothing {
+  let p: path = $DIR | path join utils.psm1
+  job spawn --description=disp-maximize {
+    with-env {PATH: ($env.PATH ++ $WPS)} {
+      powershell.exe -ExecutionPolicy Bypass -Command $"Import-Module ($p); Set-WSLgFullscreen ($name)" out+err> (null-device)
+    }
+  } | ignore
+}
+
+# Launch a graphical application, with automatic display process spawn handling.
+#
+# When run with an `app` on the server directly, the application will be launched directly.
 export def --env --wrapped main [
   app?: oneof<path, string>@_apps
   # The name or path of an application to start
@@ -207,74 +265,76 @@ export def --env --wrapped main [
   # Forcibly restart any processes already running
   ...rest: string
   # Argments to pass through to the application
-]: nothing -> oneof<nothing, record> {
+]: nothing -> oneof<nothing, record, table> {
   if $environ { return (env) }
-  if $kill or $force {
-    if $app != null {
-      update-applications # clear stale process references
-      job --kill $app
-      pkill -f $app out+err> (null-device)
-    }
-    for x in [openbox Xtigervnc] {
-      job --kill $x
-      pkill -x $x out+err> (null-device)
-    }
-    sleep 1sec
+
+  if $force or $terminate {
+    apps --no-update --for-each={|a| job --kill $a.name; $a | kill-one --strict }
+    for x in $EXC { job --kill $x; $x | kill-one }
+  } else if $kill and $app != null {
+    job --kill $app
+    $app | kill-one --strict
   }
 
-  if $kill or $status {
-    update-vncserver
+  if $terminate or $kill or $status {
     update-applications
-    update-listeners
-    return $env.disp
+    if (is-remote) {
+      update-vncserver
+      update-listeners
+      return $env.disp
+    } else {
+      return $env.disp.apps
+    }
   }
 
   let jobs: list<string> = job list
     | where $it has description and ($it.pids? | is-not-empty)
     | get description
 
-  alias is-not-running = do {|name: string|
-    $force or $jobs not-has $name and (proc $name | is-empty)
-  }
-
-  if (is-not-running Xtigervnc) {
-    log info --short 'starting xtigervnc...'
-    let args: list = $OPT
-      | merge $options
-      | items {|k v| [$k $v] | into string }
-      | flatten
-    log debug $'args: ($args | to nuon --serialize)'
-    env --exec={ Xtigervnc $ENV.DISPLAY -localhost ...$args } --async=xtigervnc
-    sleep 2sec
-    if (check-listeners | is-empty) {
-      try { ls ($nu.home-dir | path join .config tigervnc *.log | into glob) | sort-by modified | last }
-      | match $in { {name: $p} => { open --raw $p | lines | last 20 | str join (char newline) } }
-      | error make --unspanned {
-        msg: 'xtigervnc did not survive startup'
-        help: $in
-      }
-    } else {
-      log info --short 'xtigervnc started succesfully'
-      update-vncserver xtigervnc
+  if (is-remote) {
+    def is-not-running [name: string]: nothing -> bool {
+      $force or $jobs not-has $name and (proc $name | is-empty)
     }
-  }
 
-  if (is-not-running openbox) {
-    log info --short 'starting openbox...'
-    env --exec={ openbox } --async=openbox
-    | log info --short $"spawned openbox process job \(id: ($in))"
-    sleep 1sec
-    update-vncserver openbox
-  }
+    if (is-not-running Xtigervnc) {
+      log info 'starting xtigervnc...'
+      let args: list = $OPT
+        | merge $options
+        | items {|k v| [$k $v] | into string }
+        | flatten
+      log debug $'args: ($args | to nuon --serialize)'
+      env --exec={ Xtigervnc $ENV.DISPLAY -localhost ...$args } --async=xtigervnc
+      sleep 2sec
+      if (check-listeners | is-empty) {
+        try { ls ($nu.home-dir | path join .config tigervnc *.log | into glob) | sort-by modified | last }
+        | match $in { {name: $p} => { open --raw $p | lines | last 20 | str join (char newline) } }
+        | error make --unspanned {
+          msg: 'xtigervnc did not survive startup'
+          help: $in
+        }
+      } else {
+        log info 'xtigervnc started succesfully'
+        update-vncserver xtigervnc
+      }
+    }
 
-  env --exec={ xrdb -merge $XRS out+err> (null-device) }
+    if (is-not-running openbox) {
+      log info 'starting openbox...'
+      env --exec={ openbox } --async=openbox
+      | log info $"spawned openbox process job \(id: ($in))"
+      sleep 1sec
+      update-vncserver openbox
+    }
 
-  if (is-not-running tint2) {
-    log info --short 'starting tint2...'
-    env --exec={ tint2 } --async=tint2
-    | log info --short $"spawned tint2 process job \(id: ($in))"
-    sleep 1sec
-    update-applications tint2
+    env --exec={ xrdb -merge $XRS out+err> (null-device) }
+
+    if (is-not-running tint2) {
+      log info 'starting tint2...'
+      env --exec={ tint2 } --async=tint2
+      | log info $"spawned tint2 process job \(id: ($in))"
+      sleep 1sec
+      update-applications tint2
+    }
   }
 
   let name: oneof<nothing, string> = match $app {
@@ -290,16 +350,25 @@ export def --env --wrapped main [
       sleep 1sec
       log info $'killed orphaned ($name) process'
     }
-    log info --short $'starting application ($name)...'
-    env --exec={ run-external $app ...$rest } --async=$app
-    | log info --short $"spawned ($name) process job \(id: ($in))"
-    sleep 1sec
+
+    log info $'starting application ($name)...'
+    if (is-remote) {
+      env --exec={ run-external $app ...$rest } --async=$app
+      sleep 1sec
+    } else {
+      let args: list<string> = $MAP | get --optional $app | append $rest | compact | uniq
+      let id: int = env --exec={ run-external $app ...$args } --async=$app
+      sleep 2sec
+      maximize ($app | split words | first); $id
+    } | log info $"spawned ($name) process job \(id: ($in))"
     update-applications $app
   }
 
-  return $env.disp
+  $env.disp | if (is-remote) { compact --empty } else { get apps }
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————
 
-def _apps []: nothing -> list { scope commands | where type == external | get name }
+def _apps []: nothing -> list {
+  scope commands | where type == external | append $env.disp.apps | get name | uniq
+}
