@@ -1,4 +1,7 @@
 # Display wrapper module for native linux and SSH remote usage.
+#
+# Tracking lives in this process's job table: `status` in another shell shows the
+# containers but only the applications that shell launched or registered itself.
 
 use ../log
 use ../windows [powershell "powershell x" "path as-windows" "win home" "win which"]
@@ -56,8 +59,7 @@ export def --wrapped main [
   ...rest: string # Arguments passed through to the application
 ]: nothing -> record {
   let procs: table = snapshot
-  let m: string = mode $procs
-  ensure $m $procs
+  let m: string = ensure (mode $procs) $procs
   if $app == null { return (status) }
   let name: string = $app | path basename
   if (tracked --procs $procs | where name == $name | is-not-empty) {
@@ -76,7 +78,6 @@ export def --wrapped main [
 
 # Report the display mode, container processes, VNC listeners, and tracked applications.
 @example 'inspect the session' { disp status }
-@example 'relaunch tracked applications' { disp status | get apps.name | each { disp $in } }
 export def status []: nothing -> record<mode: string, xvnc: oneof<nothing, record>, openbox: oneof<nothing, record>, tint2: oneof<nothing, record>, mstsc: oneof<nothing, record>, listeners: oneof<nothing, int>, apps: table> {
   let procs: table = snapshot
   let m: string = mode $procs
@@ -116,7 +117,7 @@ export def register [...names: string@_running]: nothing -> record {
   status
 }
 
-# Stop a tracked application, or every tracked application when no name is given.
+# Stop an application by name (tracked or not), or every tracked application when no name is given.
 @example 'stop one application' { disp stop xterm }
 @example 'stop all tracked applications' { disp stop }
 export def stop [app?: string@_tracked]: nothing -> record {
@@ -154,8 +155,9 @@ export def repair []: nothing -> nothing {
 # Maximize a WSLg window by title through `utils.psm1`.
 @example 'maximize the window titled Claude' { disp maximize Claude }
 export def maximize [name?: string@_tracked]: nothing -> nothing {
-  let psm: path = $DIR | path join utils.psm1
-  job spawn --description=disp-maximize { powershell x $"Import-Module ($psm); Set-WSLgFullscreen ($name)" | ignore }
+  let psm: string = $DIR | path join utils.psm1 | path as-windows
+  let arg: string = match $name { null => '' _ => $"'($name)'" }
+  job spawn --description=disp-maximize { powershell x $"Import-Module '($psm)'; Set-WSLgFullscreen ($arg)" | ignore }
   sleep 1sec
 }
 
@@ -191,14 +193,15 @@ def session-env [m: string]: nothing -> record {
 
 def pids-of [
   name: string
-  --fuzzy # Fall back to a case-insensitive command-line match when no exact name matches
+  --fuzzy # Fall back to a case-insensitive command-line substring match when no exact name matches
   --procs: table
 ]: nothing -> list<int> {
   let procs: table = snapshot $procs
   let n: string = $name | str lowercase
+  # ponytail: `ps` truncates `name` to 15 characters, so longer executables only match with --fuzzy
   $procs
   | where ($it.name | str lowercase) == $n
-  | default --empty { if $fuzzy { $procs | where command =~ ('(?i)' + $name) } else { [] } }
+  | default --empty { if $fuzzy { $procs | where ($it.command | str contains --ignore-case $name) } else { [] } }
   | get pid
 }
 
@@ -228,7 +231,8 @@ def spawn [name: string cmd: closure --with: record = {}]: nothing -> int {
   $id
 }
 
-def ensure [m: string procs: table]: nothing -> nothing {
+# Spawn whatever the mode needs and return the effective mode (wslg becomes xrdp once mstsc is up).
+def ensure [m: string procs: table]: nothing -> string {
   let vars: record = session-env $m
   let down: closure = {|name: string| pids-of --procs $procs $name | is-empty }
   match $m {
@@ -252,30 +256,33 @@ def ensure [m: string procs: table]: nothing -> nothing {
       if (do $down openbox) { spawn openbox --with $vars { openbox } }
       if (do $down tint2) { spawn tint2 --with $vars { tint2 } }
     }
-    wslg => {
-      if (do $down mstsc.exe) { try { spawn-mstsc } catch {|e| log warning $e.msg } }
-    }
+    wslg => { if (do $down mstsc.exe) and (spawn-mstsc) { return 'xrdp' } }
   }
+  $m
 }
 
-def spawn-mstsc []: nothing -> nothing {
-  let rdp: path = $env.RDP_CONFIG_FILE? | default { win home --join=[wsl.rdp] } | path expand
-  if not ($rdp | path exists) { error make --unspanned $"unable to resolve RDP configuration file: '($rdp)'" }
-  let exe: path = win which mstsc.exe | default { error make --unspanned "unable to locate 'mstsc.exe' executable" }
-  let cfg: string = $rdp | path as-windows
-  spawn mstsc.exe { run-external $exe $cfg out+err> (null-device) }
-  sleep 1sec
+def spawn-mstsc []: nothing -> bool {
+  try {
+    let rdp: path = $env.RDP_CONFIG_FILE? | default { win home --join=[wsl.rdp] } | path expand
+    if not ($rdp | path exists) { error make --unspanned $"unable to resolve RDP configuration file: '($rdp)'" }
+    let exe: path = win which mstsc.exe | default { error make --unspanned "unable to locate 'mstsc.exe' executable" }
+    let cfg: string = $rdp | path as-windows
+    spawn mstsc.exe { run-external $exe $cfg out+err> (null-device) }
+    sleep 1sec
+    true
+  } catch {|e| log warning $e.msg; false }
 }
 
-# Kill tracked jobs by description, then any remaining exact-name processes (orphans and registered apps).
+# SIGTERM every pid behind the names (job pids, exact-name orphans, registered apps), settle,
+# then `job kill` whatever job is still listed (that one is SIGKILL).
 def halt [...names: string --procs: table]: nothing -> nothing {
   let procs: table = snapshot $procs
   let jobs: table = job list | where {|j| $j.description? in $names }
-  let pids: list<int> = $names | each {|n| pids-of --procs $procs $n } | flatten
+  let pids: list<int> = $jobs | get --optional pids | flatten | append ($names | each {|n| pids-of --procs $procs $n } | flatten) | uniq
   if ($jobs | is-empty) and ($pids | is-empty) { return }
-  for j in $jobs { job kill $j.id }
   for pid in $pids { kill --quiet $pid }
   sleep 1sec
+  for j in (job list | where {|j| $j.description? in $names }) { job kill $j.id }
   let hit: list<string> = $jobs | get description | append ($procs | where pid in $pids | get name) | uniq
   log info $"stopped ($hit | str join ', ')"
 }
@@ -303,9 +310,10 @@ def _running []: nothing -> table<value: string, description: string> {
   let since: oneof<nothing, datetime> = $procs
     | where ($it.name | str lowercase) in $names
     | get start_time | sort | get --optional 0
+  let known: list<string> = _tracked
   $procs
   | if $since == null { } else { where start_time > $since }
-  | where ($it.name | str lowercase) not-in $names and name not-in (_tracked)
+  | where ($it.name | str lowercase) not-in $names and name not-in $known
   | sort-by start_time --reverse
   | uniq-by name
   | each { {value: $in.name description: $"pid ($in.pid), ($in.start_time | date humanize)"} }
