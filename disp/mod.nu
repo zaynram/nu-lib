@@ -55,18 +55,19 @@ export-env {
       }
       # Deserializer takes optional argument for cases of manual invocation.
       let deserialize = {|s?: string|
-        if $s == null {
+        let procs: table = snapshot
+        let pids: list<int> = if $s == null {
           $env.disp | match ($in | describe | split words | first) {
             string => { split row (char esep) }
             record if ($in.apps? | describe) == string => { get $.apps | split row (char esep) }
             record if ($in.apps? | is-not-empty) => { get $.apps.pid? | default [] }
             _ => []
-          } | compact
+          }
         } else {
-          try { $s | split row (char esep) | into int } catch { [] }
-        } | par-each {|pid| proc --unwrap $pid }
-        | {apps: $in listeners: (check-listeners | length | if $in > 0 { })}
-        | update-containers --return
+          $s | split row (char esep)
+        } | compact | into string | where $it =~ '^\d+$' | into int
+        {apps: ($procs | where pid in $pids) listeners: (check-listeners | length | if $in > 0 { })}
+        | update-containers --return --procs $procs
       }
       $env.ENV_CONVERSIONS = $env.ENV_CONVERSIONS
         | insert $.disp {from_string: $deserialize to_string: $serialize}
@@ -74,8 +75,9 @@ export-env {
   } catch {|err|
     log error $"`disp` module environment initialization did not succeed\n[error]($err.rendered?)"
   } finally {
-    update-containers
-    update-applications
+    let procs: table = snapshot
+    update-containers --procs $procs
+    update-applications --procs $procs
     update-listeners
   }
 }
@@ -121,13 +123,14 @@ export def env [
 export def proc [
   arg?: oneof<int, string> # PID or string to filter names with (regex matched)
   --unwrap (-u) # Only operate on the first matching process entry
+  --procs: table # Process snapshot to search instead of taking a new one
 ]: nothing -> oneof<nothing, table, record, list<int>> {
-  let procs: table<name: string, pid: int> = ps | where status != Zombie | uniq-by pid
+  let procs: table = snapshot $procs
   match ($arg | describe) {
     int => { $procs | where pid == $arg }
     string => {
       # Hoisted out of `where`: a subexpression in a row condition is re-evaluated per row.
-      let pid: oneof<nothing, int> = if $EXC has $arg { pid-of $arg } else { pid-of --options=[--full --ignore-case] $arg }
+      let pid: oneof<nothing, int> = if $EXC has $arg { pid-of --procs $procs $arg } else { pid-of --procs $procs --full $arg }
       $procs | where pid == $pid
     }
     nothing => {
@@ -140,9 +143,9 @@ export def proc [
         try {
           match $it.key {
             apps => { append ($procs | where pid in $it.value) }
-            mstsc => { let p = pid-of mstsc.exe; append ($procs | where pid == $p) }
-            xvnc => { let p = pid-of Xtigervnc; append ($procs | where pid == $p) }
-            openbox => { let p = pid-of openbox; append ($procs | where pid == $p) }
+            mstsc => { let p = pid-of --procs $procs mstsc.exe; append ($procs | where pid == $p) }
+            xvnc => { let p = pid-of --procs $procs Xtigervnc; append ($procs | where pid == $p) }
+            openbox => { let p = pid-of --procs $procs openbox; append ($procs | where pid == $p) }
           }
         } catch {|err|
           log error $"unexpected error during `$env.disp.($it.key)` process collection\n[error]($err.rendered?)"
@@ -161,12 +164,13 @@ export def job [
   --kill (-k) # Kill the job(s) with matching descriptions
   --unwrap (-u) # Only operate on the first matching job entry
   --pids (-p) # Return a list of process IDs from the matching jobs
+  --procs: table # Process snapshot to search instead of taking a new one
 ]: nothing -> oneof<nothing, table, record, list<int>> {
   let jobs: table<id: int, pids: list<int>, description: string> = job list | default '' description | default [] pids
   match ($arg | describe) {
     int => { $jobs | where id == $arg }
     string => {
-      let pid: oneof<nothing, int> = if $EXC has $arg { pid-of $arg } else { pid-of --options=[--full --ignore-case] $arg }
+      let pid: oneof<nothing, int> = if $EXC has $arg { pid-of --procs $procs $arg } else { pid-of --procs $procs --full $arg }
       $jobs | where pids has $pid
     }
     nothing => {
@@ -206,8 +210,8 @@ export def host [
   --openbox (-o)
   # Include information about `openbox` processes
 ]: nothing -> record {
-  let type: string = session-type
   update-containers
+  let type: string = session-type
   $env.disp | reject apps | insert mode $type | if $all {
     return $in
   } else {
@@ -276,18 +280,20 @@ export def --env --wrapped main [
 ]: nothing -> oneof<nothing, record, table> {
   if $environ { return (env) }
 
+  let procs: table = snapshot
+  update-containers --procs $procs
   let stype: string = session-type
   let rconn: bool = $stype == ssh
-  let details: closure = {||
-    update-containers
-    update-applications
+  let details: closure = {|procs: table|
+    update-containers --procs $procs
+    update-applications --procs $procs
     if $rconn { update-listeners }
     $env.disp | insert mode $stype
   }
 
   if $force or $terminate {
     let end_process: closure = {|x: string strict: bool = false|
-      pid-of --unwrap=false $x | match ($in | describe) {
+      pid-of --procs $procs --unwrap=false $x | match ($in | describe) {
         list<any> | nothing => { job --kill $x }
         list<int> => { par-each { kill-one --signal=SIGKILL --errors=false --strict=$strict } }
       }
@@ -299,15 +305,18 @@ export def --env --wrapped main [
     $app | kill-one --strict --errors=false
   }
 
+  # Processes may have been killed above; only then is the initial snapshot stale.
+  let procs: table = if $force or $terminate or ($kill and $app != null) { snapshot } else { $procs }
+
   let jobs: list<string> = job list
     | where $it has description and ($it.pids? | is-not-empty)
     | get description
 
-  if $refresh or $terminate or $kill or $status { do $details | return $in }
+  if $refresh or $terminate or $kill or $status { do --env $details $procs | return $in }
 
   if $rconn {
     def is-not-running [name: string]: nothing -> bool {
-      $force or $jobs not-has $name and not (is-running $name)
+      $force or $jobs not-has $name and not (is-running --procs $procs $name)
     }
 
     if (is-not-running Xtigervnc) {
@@ -330,14 +339,14 @@ export def --env --wrapped main [
         notify-spawned xtigervnc $id
       }
     } else {
-      notify-running xtigervnc
+      notify-running --procs $procs xtigervnc
     }
 
     if (is-not-running openbox) {
       log info 'starting openbox...'
       env --exec={ openbox } --async=openbox
     } else {
-      notify-running openbox
+      notify-running --procs $procs openbox
     }
 
     env --exec={ xrdb -merge $XRS out+err> (null-device) }
@@ -347,17 +356,17 @@ export def --env --wrapped main [
       env --exec={ tint2 } --async=tint2
       apps --register tint2
     } else {
-      notify-running tint2
+      notify-running --procs $procs tint2
     }
   } else if $stype != xrdp {
-    try { spawn-mstsc } catch {
+    try { spawn-mstsc --procs $procs } catch {
       match ($in | compact --empty) { {msg: $m} => { log warning $m } }
-      match $app { null => { do $details | return $in } }
+      match $app { null => { do --env $details (snapshot) | return $in } }
     }
   }
 
   let name: oneof<nothing, string> = match $app {
-    null if not $default => { return (do $details) }
+    null if not $default => { return (do --env $details (snapshot)) }
     null => 'x-terminal-emulator'
     _ => { $app | path basename }
   }
@@ -383,10 +392,15 @@ export def --env --wrapped main [
     }
     apps --register $app
   }
-  do $details
+  do --env $details (snapshot)
 }
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
+
+# Take one process snapshot per command; every lookup filters this table instead of forking `pgrep`.
+def snapshot [procs?: table]: nothing -> table {
+  if $procs == null { ps --long | where status != Zombie | uniq-by pid } else { $procs }
+}
 
 def rdp-config []: nothing -> path {
   $env | get --ignore-case --optional $.RDP_CONFIG_FILE | default --empty {
@@ -394,8 +408,8 @@ def rdp-config []: nothing -> path {
   }
 }
 
-def notify-running [name: string]: nothing -> nothing {
-  log info $"detected existing '($name)' process \(pid: (pid-of $name))"
+def notify-running [name: string --procs: table]: nothing -> nothing {
+  log info $"detected existing '($name)' process \(pid: (pid-of --procs $procs $name))"
 }
 
 def notify-spawned [name: string id: int]: nothing -> nothing {
@@ -420,10 +434,12 @@ def repr-job []: record<id: int> -> string {
   }
 }
 
+# Container evidence comes from the last `update-containers` refresh (exact process name only, so a
+# fuzzy command-line match cannot flip the mode), then falls back to the environment.
 def session-type []: nothing -> string {
   match ($env | select --optional ...$VAR | compact) {
-    _ if (is-running Xtigervnc) => 'ssh'
-    _ if (is-running mstsc.exe) => 'xrdp'
+    _ if (named-as $.xvnc Xtigervnc) => 'ssh'
+    _ if (named-as $.mstsc mstsc.exe) => 'xrdp'
     {SSH_CONNECTION: _ DISPLAY: ':1'} => 'ssh'
     {XRDP_SESSION: _ DISPLAY: ':10'} => 'xrdp'
     {WSL_INTEROP: _ DISPLAY: ':0'} => 'wslg'
@@ -432,10 +448,21 @@ def session-type []: nothing -> string {
 
 def is-remote []: nothing -> bool { (session-type) == ssh }
 
+# True when the cached container at `key` is an exact (case-insensitive) process-name match.
+def named-as [key: cell-path name: string]: nothing -> bool {
+  if ($env.disp? | describe | split words | first) != record { return false }
+  match ($env.disp | get --optional $key) {
+    {name: $n} => { ($n | str lowercase) == ($name | str lowercase) }
+    _ => false
+  }
+}
+
 def --env update-applications [
   ...names: string
+  --procs: table # Process snapshot to search instead of taking a new one
 ]: oneof<nothing, list<string>> -> nothing {
-  if $env not-has disp { update-containers }
+  let procs: table = snapshot $procs
+  if $env not-has disp { update-containers --procs $procs }
   let apps: table = append [
     ...($names | default --empty [tint2])
     ...($env.disp.apps | get --optional name | compact)
@@ -443,12 +470,12 @@ def --env update-applications [
     | compact
     | path basename
     | reduce --fold=[] {|app acc|
-      proc --unwrap $app
+      proc --procs $procs --unwrap $app
       | default {
-        job --pids $app
+        job --pids --procs $procs $app
         | default []
         | first
-        | if $in != null { proc --unwrap $in }
+        | if $in != null { proc --procs $procs --unwrap $in }
       } | prepend $acc
       | compact
       | uniq-by pid
@@ -456,18 +483,17 @@ def --env update-applications [
   $env.disp.apps = $apps
 }
 
-def process-info [desc: string name?: string]: nothing -> oneof<nothing, record> {
-  let arg: oneof<int, string> = job --unwrap --pids $desc
-    | if ($in | is-not-empty) { first } else if $name != null { pid-of $name }
-    | default $desc
-  match ($arg | describe) {
-    int => { ps | where pid == $arg | first }
-    string => { proc --unwrap $arg }
-  } | if ($in | is-not-empty) and $in has status and $in.status != Zombie { }
+def process-info [desc: string name?: string --procs: table]: nothing -> oneof<nothing, record> {
+  let procs: table = snapshot $procs
+  let pid: oneof<nothing, int> = job --unwrap --pids --procs $procs $desc
+    | if ($in | is-not-empty) { first } else if $name != null { pid-of --procs $procs $name }
+    | default { if $EXC has $desc { pid-of --procs $procs $desc } else { pid-of --procs $procs --full $desc } }
+  $procs | where pid == $pid | get --optional 0 | if $in != null { select pid ppid name status cpu mem virtual }
 }
 
 def --env update-containers [
   --return # Return the value instead of setting the `$env.disp` variable
+  --procs: table # Process snapshot to search instead of taking a new one
   only?: cell-path@[mstsc xvnc openbox]
 ]: [
   nothing -> nothing
@@ -477,11 +503,12 @@ def --env update-containers [
     | default [] apps
     | default null listeners
     | select --optional $.apps $.listeners
+  let procs: table = snapshot $procs
   let columns: list<cell-path> = if $only != null { [$only] } else { [$.mstsc $.xvnc $.openbox] }
   let merged: record = {
-    mstsc: (process-info mstsc mstsc.exe)
-    xvnc: (process-info xtigervnc Xtigervnc)
-    openbox: (process-info openbox)
+    mstsc: (process-info --procs $procs mstsc mstsc.exe)
+    xvnc: (process-info --procs $procs xtigervnc Xtigervnc)
+    openbox: (process-info --procs $procs openbox)
   } | select --optional ...$columns
     | merge $current
   if $return { return $merged } else { $env.disp = $merged }
@@ -542,9 +569,9 @@ def kill-one [
 }
 
 const _exe: path = '/mnt/c/Windows/System32/mstsc.exe'
-def spawn-mstsc [--force]: nothing -> oneof<nothing, error> {
-  if (is-running mstsc.exe) {
-    if not $force { notify-running mstsc.exe | return }
+def spawn-mstsc [--force --procs: table]: nothing -> oneof<nothing, error> {
+  if (is-running --procs $procs mstsc.exe) {
+    if not $force { notify-running --procs $procs mstsc.exe | return }
     'mstsc.exe' | kill-one --strict
   }
   let rdp: path = rdp-config | path expand
@@ -560,37 +587,21 @@ def spawn-mstsc [--force]: nothing -> oneof<nothing, error> {
   update-containers mstsc
 }
 
-def is-running [name: string --options: list<string> = [--ignore-case --exact]]: nothing -> bool {
-  match (pid-of --options=$options $name) {
-    null => { return false }
-    $pid => { ps | where pid == $pid and status != Zombie | is-not-empty }
-  }
+def is-running [name: string --procs: table]: nothing -> bool {
+  (pid-of --procs $procs $name) != null
 }
 
 def pid-of [
   name: string
+  --full # Regex match against the full command line instead of the exact (case-insensitive) name
   --unwrap = true
-  --options (-o): list<string> = [--ignore-case --exact]
+  --procs: table # Process snapshot to search instead of taking a new one
 ]: nothing -> oneof<nothing, int, list<int>> {
-  ^pgrep ...$options $name
-  | complete
-  | match $in.exit_code {
-    1 => { return null }
-    0 => {
-      get stdout
-      | lines
-      | str trim --right
-      | into int
-      | if ($in | is-not-empty) and $unwrap { first } else { }
-    }
-    $c => {
-      error make --unspanned {
-        msg: $'`pgrep` exited with code ($c)'
-        code: 'disp::module::external_non_zero_exit_code'
-        help: $"[stderr]\n($in.stderr)"
-      }
-    }
-  }
+  let n: string = $name | str lowercase
+  snapshot $procs
+  | where {|p| if $full { $p.command =~ ('(?i)' + $name) } else { ($p.name | str lowercase) == $n } }
+  | get pid
+  | if ($in | is-empty) { null } else if $unwrap { first } else { }
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————
