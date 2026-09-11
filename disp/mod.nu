@@ -4,7 +4,7 @@
 # containers but only the applications that shell launched or registered itself.
 
 use ../log
-use ../windows [powershell "powershell x" "path as-windows" "win home" "win which"]
+use ../windows [ powershell "powershell x" "path as-windows" "win home" "win which" ]
 use std null-device
 
 # ——— constants ————————————————————————————————————————————————————————————————
@@ -17,7 +17,8 @@ const ENV: record<DISPLAY: string, XDG_RUNTIME_DIR: string, DBUS_SESSION_BUS_ADD
   XDG_RUNTIME_DIR: '/run/user/'
   DBUS_SESSION_BUS_ADDRESS: 'unix:path='
 }
-const COL: list<string> = [
+const SEL: list<cell-path> = [$.pid $.name $.status $.mem]
+const LOCAL: list<string> = [
   DISPLAY
   WAYLAND_DISPLAY
   XDG_RUNTIME_DIR
@@ -27,15 +28,24 @@ const COL: list<string> = [
   WSL_INTEROP
 ]
 const OPT: list<string> = [
-  -geometry 1920x1080
-  -depth '24'
-  -nolisten unix
-  -SecurityTypes VncAuth
-  -PasswordFile ($nu.home-dir | path join .config tigervnc passwd)
-  -CompareFB '2'
-  -ZlibLevel '1'
+  -geometry
+  1920x1080
+  -depth
+  '24'
+  -nolisten
+  unix
+  -SecurityTypes
+  VncAuth
+  -PasswordFile
+  ($nu.home-dir | path join .config tigervnc passwd)
+  -CompareFB
+  '2'
+  -ZlibLevel
+  '1'
 ]
-const MAP: record<claude-desktop: list<string>> = {claude-desktop: [--ozone-platform=wayland]}
+const MAP: record<claude-desktop: list<string>> = {
+  claude-desktop: [--ozone-platform=wayland]
+}
 const CONTAINERS: record<xvnc: string, openbox: string, tint2: string, mstsc: string> = {
   xvnc: Xtigervnc
   openbox: openbox
@@ -49,31 +59,43 @@ const CONTAINERS: record<xvnc: string, openbox: string, tint2: string, mstsc: st
 #
 # Without `app` only the containers are ensured. An application already tracked as a
 # job is not started twice; an untracked process with the same name is killed first.
+# `--mode` (or `$env.DISP_SESSION_MODE`) overrides the detected session type for the call.
 @category platform
 @example 'ensure the containers and report status' { disp }
 @example 'launch an application, passing arguments through' { disp xterm -fa Mono }
 @example 'launch under WSLg and maximize the window' { disp claude-desktop --maximize }
+@example 'force the session type for one launch' { disp --mode ssh xterm }
 export def --wrapped main [
   app?: string@_apps # Executable name or path to launch
-  --maximize (-m) # Maximize the window after spawning (WSLg only)
+  --mode (-m): string@['ssh' 'xrdp' 'wslg'] # Override the session type
+  --maximize (-M) # Maximize the window after spawning (WSLg only)
   ...rest: string # Arguments passed through to the application
 ]: nothing -> record {
-  let procs: table = snapshot
-  let m: string = ensure (mode $procs) $procs
-  if $app == null { return (status) }
-  let name: string = $app | path basename
-  if (tracked --procs $procs | where name == $name | is-not-empty) {
-    log info $"detected existing '($name)' job"
-    return (status)
+  if $mode != null and $mode not-in [ssh xrdp wslg] { error make --unspanned $"unknown session mode '($mode)'" }
+  let override: record = $mode
+    | default { $env | get --ignore-case --optional $.disp_session_mode }
+    | wrap DISP_SESSION_MODE
+    | compact
+  with-env $override {
+    let procs: table = snapshot
+    let m: string = ensure (mode $procs) $procs
+    if $app == null { return (status) }
+    let name: string = $app | path basename
+    if ($procs | tracked | where name == $name | is-not-empty) {
+      log info $"detected existing '($name)' job"
+      return (status)
+    }
+    if ($procs | pids-of $name | is-not-empty) {
+      log warning $"detected orphaned '($name)' process; restarting..."
+      halt --procs $procs $name
+    }
+    let args: list<string> = if $m == wslg {
+      $MAP | get --optional $name
+    } | default [] | append $rest
+    spawn $name --with (session-env $m) { run-external $app ...$args }
+    if $maximize and $m == wslg { maximize ($name | split words | first) }
+    status
   }
-  if (pids-of --procs $procs $name | is-not-empty) {
-    log warning $"detected orphaned '($name)' process; restarting..."
-    halt --procs $procs $name
-  }
-  let args: list<string> = if $m == wslg { $MAP | get --optional $name | default [] } else { [] } | append $rest
-  spawn $name --with (session-env $m) { run-external $app ...$args }
-  if $maximize and $m == wslg { maximize ($name | split words | first) }
-  status
 }
 
 # Report the display mode, container processes, VNC listeners, and tracked applications.
@@ -82,10 +104,10 @@ export def status []: nothing -> record<mode: string, xvnc: oneof<nothing, recor
   let procs: table = snapshot
   let m: string = mode $procs
   {mode: $m}
-  | merge ($CONTAINERS | update cells {|n| row --procs $procs $n })
+  | merge ($CONTAINERS | update cells {|n| $procs | row $n })
   | merge {
     listeners: (if $m == ssh { listeners })
-    apps: (tracked --procs $procs | where name not-in ($CONTAINERS | values))
+    apps: ($procs | tracked --exclude=($CONTAINERS | values))
   }
 }
 
@@ -100,9 +122,9 @@ export def env []: nothing -> record { session-env (mode (snapshot)) }
 @example 'adopt an application started elsewhere' { disp register xterm }
 export def register [...names: string@_running]: nothing -> record {
   let procs: table = snapshot
-  let known: list<string> = tracked --procs $procs | get name
+  let known: list<string> = $procs | tracked | get name
   for n in $names {
-    let pid: oneof<nothing, int> = pids-of --fuzzy --procs $procs $n | get --optional 0
+    let pid: oneof<nothing, int> = $procs | pids-of --fuzzy $n | first
     let name: oneof<nothing, string> = $procs | where pid == $pid | get --optional 0.name
     if $name == null {
       log warning $"no process matched '($n)'"
@@ -122,11 +144,8 @@ export def register [...names: string@_running]: nothing -> record {
 @example 'stop all tracked applications' { disp stop }
 export def stop [app?: string@_tracked]: nothing -> record {
   let procs: table = snapshot
-  tracked --procs $procs
-  | where name not-in ($CONTAINERS | values)
-  | get name
-  | if $app == null { } else { [$app] }
-  | halt --procs $procs ...$in
+  let names: list<string> = tracked --procs=$procs --exclude=($CONTAINERS | values) | get name
+  halt --procs=$procs ...(if $app == null { $names } else { [$app] })
   status
 }
 
@@ -134,7 +153,8 @@ export def stop [app?: string@_tracked]: nothing -> record {
 @example 'tear the session down' { disp terminate }
 export def terminate []: nothing -> record {
   let procs: table = snapshot
-  tracked --procs $procs | get name | append ($CONTAINERS | values) | uniq | halt --procs $procs ...$in
+  let names: list<string> = tracked --procs=$procs | get name | append ($CONTAINERS | values) | uniq
+  halt --procs=$procs ...$names
   status
 }
 
@@ -156,27 +176,53 @@ export def repair []: nothing -> nothing {
 @example 'maximize the window titled Claude' { disp maximize Claude }
 export def maximize [name?: string@_tracked]: nothing -> nothing {
   let psm: string = $DIR | path join utils.psm1 | path as-windows
-  let arg: string = match $name { null => '' _ => $"'($name)'" }
+  let arg: string = match $name { null => '' _ => { $name | str replace --all "'" "''" | $"'($in)'" } }
   job spawn --description=disp-maximize { powershell x $"Import-Module '($psm)'; Set-WSLgFullscreen ($arg)" | ignore }
   sleep 1sec
 }
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
-# One process snapshot per command; every lookup filters this table instead of forking.
-def snapshot [procs?: table]: nothing -> table {
-  $procs | default { ps --long | where status != Zombie | uniq-by pid }
+def find-jobs [
+  --exclude: list<string> = []
+]: oneof<nothing, list<string>> -> table<id: int, description: string, pids: list> {
+  let match = $in
+  job list | where $it has description and description not-in $exclude and (
+    $match == null or description in $match
+  )
 }
 
-# Exact-name evidence from the snapshot first (a command-line match can never flip the mode), then the environment.
+# One process snapshot per command; every lookup filters this table instead of forking.
+def snapshot [procs?: table]: oneof<nothing, table> -> table {
+  default $procs
+  | default { ps --long | where status != Zombie | uniq-by pid }
+}
+
+# Rows are tried in order and a row matches on its environment condition or on its exact-name
+# container process, so an earlier row's environment beats a later row's process evidence
+# (an SSH login with no DISPLAY is ssh even if mstsc.exe is up). Nothing matched means wslg.
 def mode [procs: table]: nothing -> string {
-  if (pids-of --procs $procs Xtigervnc | is-not-empty) { return 'ssh' }
-  if (pids-of --procs $procs mstsc.exe | is-not-empty) { return 'xrdp' }
-  match ($env | select --optional SSH_CONNECTION DISPLAY XRDP_SESSION | compact) {
-    {SSH_CONNECTION: _ DISPLAY: ':1'} => 'ssh'
-    {XRDP_SESSION: _ DISPLAY: ':10'} => 'xrdp'
-    _ => 'wslg'
+  let e: record = $env | (
+      select --ignore-case --optional
+      $.ssh_connection
+      $.xrdp_session
+      $.display
+      $.disp_session_mode
+    ) | compact
+
+  $e.disp_session_mode? | match $in {
+    null => { }
+    ssh | xrdp | wslg => { return $in }
+    $x => { log warning $"ignoring unknown session mode override '($x)'" }
   }
+
+  [
+    [mode cond proc];
+    [ssh ($e has ssh_connection or $e.display? in [null ':1']) Xtigervnc]
+    [xrdp ($e has xrdp_session or $e.display? == ':10') mstsc.exe]
+  ] | where $it.cond or ($procs | pids-of $it.proc | is-not-empty)
+  | get --optional 0.mode
+  | default wslg
 }
 
 def session-env [m: string]: nothing -> record {
@@ -186,8 +232,17 @@ def session-env [m: string]: nothing -> record {
       | update XDG_RUNTIME_DIR { path join (id -u) }
       | update DBUS_SESSION_BUS_ADDRESS {|r| $in + ($r.XDG_RUNTIME_DIR | path join bus) }
     }
-    xrdp => { $env | select --optional ...$COL | compact | merge {DISPLAY: ':10'} }
-    _ => { $env | select --optional ...$COL | compact }
+    xrdp => {
+      $env
+      | select --optional ...$LOCAL
+      | compact
+      | merge {DISPLAY: ':10'}
+    }
+    _ => {
+      $env
+      | select --optional ...$LOCAL
+      | compact
+    }
   }
 }
 
@@ -195,7 +250,7 @@ def pids-of [
   name: string
   --fuzzy # Fall back to a case-insensitive command-line substring match when no exact name matches
   --procs: table
-]: nothing -> list<int> {
+]: oneof<nothing, table> -> list<int> {
   let procs: table = snapshot $procs
   let n: string = $name | str lowercase
   # ponytail: `ps` truncates `name` to 15 characters, so longer executables only match with --fuzzy
@@ -206,23 +261,29 @@ def pids-of [
 }
 
 # First exact-name row from the snapshot, projected to the shared shape.
-def row [name: string --procs: table]: nothing -> oneof<nothing, record> {
+def row [name: string --procs: table]: oneof<nothing, table> -> oneof<nothing, record> {
   let procs: table = snapshot $procs
-  let pid: oneof<nothing, int> = pids-of --procs $procs $name | get --optional 0
-  $procs | where pid == $pid | get --optional 0 | if $in != null { select pid name status mem }
+  let pid: oneof<nothing, int> = $procs | pids-of $name | get --optional 0
+  $procs
+  | where pid == $pid
+  | first
+  | if $in != null { select ...$SEL }
 }
 
 # Jobs with a description, joined to the snapshot by their external's pid or, for registered
 # watchers, by exact process name.
-def tracked [--procs: table]: nothing -> table {
+def tracked [
+  --procs: table
+  --exclude: list<string> = []
+]: oneof<nothing, table> -> table {
   let procs: table = snapshot $procs
-  job list
-  | where {|j| $j.description? | is-not-empty }
-  | each {|j|
-    let pid: oneof<nothing, int> = $j.pids.0? | default { pids-of --procs $procs $j.description | get --optional 0 }
-    $procs | where pid == $pid | get --optional 0 | if $in != null { select pid name status mem | update name $j.description }
-  }
-  | compact
+  find-jobs --exclude=$exclude | each {|j|
+    let pid: oneof<nothing, int> = $j.pids.0?
+      | default { $procs | pids-of $j.description | first }
+    $procs | where pid == $pid | first | if $in != null {
+      select ...$SEL | update name $j.description
+    }
+  } | compact
 }
 
 def spawn [name: string cmd: closure --with: record = {}]: nothing -> int {
@@ -234,22 +295,27 @@ def spawn [name: string cmd: closure --with: record = {}]: nothing -> int {
 # Spawn whatever the mode needs and return the effective mode (wslg becomes xrdp once mstsc is up).
 def ensure [m: string procs: table]: nothing -> string {
   let vars: record = session-env $m
-  let down: closure = {|name: string| pids-of --procs $procs $name | is-empty }
+  let down: closure = {|name: string| $procs | pids-of $name | is-empty }
   match $m {
     ssh => {
       if (do $down Xtigervnc) {
         spawn Xtigervnc --with $vars { Xtigervnc $ENV.DISPLAY -localhost ...$OPT }
         sleep 1sec
         if (listeners) == 0 {
-          error make --unspanned {
-            msg: 'xtigervnc did not survive startup'
-            help: (
-              try {
-                ls ($nu.home-dir | path join .config tigervnc *.log | into glob)
-                | sort-by modified | last | get name | open --raw | lines | last 20 | str join (char newline)
-              } catch { 'no tigervnc log found' }
-            )
-          }
+          let g = $nu.home-dir
+            | path join .config tigervnc *.log
+            | into glob
+          let p: oneof<nothing, path> = try { ls $g } catch { [] }
+            | sort-by modified
+            | get name
+            | last
+          if $p != null {
+            open --raw $p | lines | last 20 | str join (char newline)
+          } else {
+            $"no tigervnc log found \(glob: '($g)')"
+          } | wrap help
+          | insert msg 'xtigervnc did not survive startup'
+          | error make --unspanned $in
         }
         with-env $vars { xrdb -merge $XRS out+err> (null-device) }
       }
@@ -258,32 +324,50 @@ def ensure [m: string procs: table]: nothing -> string {
     }
     wslg => { if (do $down mstsc.exe) and (spawn-mstsc) { return 'xrdp' } }
   }
-  $m
+  return $m
 }
 
 def spawn-mstsc []: nothing -> bool {
   try {
-    let rdp: path = $env.RDP_CONFIG_FILE? | default { win home --join=[wsl.rdp] } | path expand
-    if not ($rdp | path exists) { error make --unspanned $"unable to resolve RDP configuration file: '($rdp)'" }
-    let exe: path = win which mstsc.exe | default { error make --unspanned "unable to locate 'mstsc.exe' executable" }
+    let rdp: path = $env.RDP_CONFIG_FILE?
+      | default { win home --join=[wsl.rdp] }
+      | let p: path
+      | try { path expand --strict } catch {
+        error make --unspanned $"unable to resolve RDP config file: '($p)'"
+      }
+    let exe: path = win which mstsc.exe | default {
+        error make --unspanned "unable to locate 'mstsc.exe' executable"
+      }
     let cfg: string = $rdp | path as-windows
     spawn mstsc.exe { run-external $exe $cfg out+err> (null-device) }
     sleep 1sec
-    true
-  } catch {|e| log warning $e.msg; false }
+    return true
+  } catch {|e|
+    log warning $e.msg
+    return false
+  }
 }
 
 # SIGTERM every pid behind the names (job pids, exact-name orphans, registered apps), settle,
 # then `job kill` whatever job is still listed (that one is SIGKILL).
 def halt [...names: string --procs: table]: nothing -> nothing {
   let procs: table = snapshot $procs
-  let jobs: table = job list | where {|j| $j.description? in $names }
-  let pids: list<int> = $jobs | get --optional pids | flatten | append ($names | each {|n| pids-of --procs $procs $n } | flatten) | uniq
+  let jobs: table = $names | find-jobs
+  let pids: list<int> = [
+    ...$jobs.pids
+    ...($names | each {|n| $procs | pids-of $n })
+  ] | flatten --all | uniq
+
   if ($jobs | is-empty) and ($pids | is-empty) { return }
+
   for pid in $pids { kill --quiet $pid }
   sleep 1sec
-  for j in (job list | where {|j| $j.description? in $names }) { job kill $j.id }
-  let hit: list<string> = $jobs | get description | append ($procs | where pid in $pids | get name) | uniq
+  for j in ($names | find-jobs) { job kill $j.id }
+
+  let hit: list<string> = [
+    ...$jobs.description
+    ...($procs | where pid in $pids).name
+  ] | uniq
   log info $"stopped ($hit | str join ', ')"
 }
 
@@ -316,5 +400,7 @@ def _running []: nothing -> table<value: string, description: string> {
   | where ($it.name | str lowercase) not-in $names and name not-in $known
   | sort-by start_time --reverse
   | uniq-by name
-  | each { {value: $in.name description: $"pid ($in.pid), ($in.start_time | date humanize)"} }
+  | insert description {|row| $"pid: ($row.pid); started ($row.start_time | date humanize)" }
+  | select $.name $.description
+  | rename --column={name: value}
 }
