@@ -125,8 +125,11 @@ export def proc [
   let procs: table<name: string, pid: int> = ps | where status != Zombie | uniq-by pid
   match ($arg | describe) {
     int => { $procs | where pid == $arg }
-    string if $EXC has $arg => { $procs | where pid == (pid-of $arg) }
-    string => { $procs | where pid == (pid-of --options=[--full --ignore-case] $arg) }
+    string => {
+      # Hoisted out of `where`: a subexpression in a row condition is re-evaluated per row.
+      let pid: oneof<nothing, int> = if $EXC has $arg { pid-of $arg } else { pid-of --options=[--full --ignore-case] $arg }
+      $procs | where pid == $pid
+    }
     nothing => {
       $env.disp
       | reject --optional $.listeners
@@ -137,9 +140,9 @@ export def proc [
         try {
           match $it.key {
             apps => { append ($procs | where pid in $it.value) }
-            mstsc => { append ($procs | where pid == (pid-of mstsc.exe)) }
-            xvnc => { append ($procs | where pid == (pid-of Xtigervnc)) }
-            openbox => { append ($procs | where pid == (pid-of openbox)) }
+            mstsc => { let p = pid-of mstsc.exe; append ($procs | where pid == $p) }
+            xvnc => { let p = pid-of Xtigervnc; append ($procs | where pid == $p) }
+            openbox => { let p = pid-of openbox; append ($procs | where pid == $p) }
           }
         } catch {|err|
           log error $"unexpected error during `$env.disp.($it.key)` process collection\n[error]($err.rendered?)"
@@ -162,8 +165,10 @@ export def job [
   let jobs: table<id: int, pids: list<int>, description: string> = job list | default '' description | default [] pids
   match ($arg | describe) {
     int => { $jobs | where id == $arg }
-    string if $EXC has $arg => { $jobs | where pids has (pid-of $arg) }
-    string => { $jobs | where pids has (pid-of --options=[--full --ignore-case] $arg) }
+    string => {
+      let pid: oneof<nothing, int> = if $EXC has $arg { pid-of $arg } else { pid-of --options=[--full --ignore-case] $arg }
+      $jobs | where pids has $pid
+    }
     nothing => {
       $env.disp
       | reject --optional $.listeners
