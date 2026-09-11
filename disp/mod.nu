@@ -97,7 +97,7 @@ export def env []: nothing -> record { session-env (mode (snapshot)) }
 # Each name resolves to a process (exact name first, then a command-line match) and a
 # watcher job named after that process ends once the process disappears.
 @example 'adopt an application started elsewhere' { disp register xterm }
-export def register [...names: string@_apps]: nothing -> record {
+export def register [...names: string@_running]: nothing -> record {
   let procs: table = snapshot
   let known: list<string> = tracked --procs $procs | get name
   for n in $names {
@@ -119,7 +119,7 @@ export def register [...names: string@_apps]: nothing -> record {
 # Stop a tracked application, or every tracked application when no name is given.
 @example 'stop one application' { disp stop xterm }
 @example 'stop all tracked applications' { disp stop }
-export def stop [app?: string@_apps]: nothing -> record {
+export def stop [app?: string@_tracked]: nothing -> record {
   let procs: table = snapshot
   tracked --procs $procs
   | where name not-in ($CONTAINERS | values)
@@ -153,7 +153,7 @@ export def repair []: nothing -> nothing {
 
 # Maximize a WSLg window by title through `utils.psm1`.
 @example 'maximize the window titled Claude' { disp maximize Claude }
-export def maximize [name?: string]: nothing -> nothing {
+export def maximize [name?: string@_tracked]: nothing -> nothing {
   let psm: path = $DIR | path join utils.psm1
   job spawn --description=disp-maximize { powershell x $"Import-Module ($psm); Set-WSLgFullscreen ($name)" | ignore }
   sleep 1sec
@@ -286,6 +286,27 @@ def listeners []: nothing -> int {
 
 # ——— completions ——————————————————————————————————————————————————————————————
 
+# Tracked application names plus executables on PATH, for launching.
 def _apps []: nothing -> list<string> {
-  job list | get --optional description | compact | append (which | where type == external | get command | path basename) | uniq
+  _tracked | append (which | where type == external | get command | path basename) | uniq
+}
+
+# Tracked application names, for stopping or maximizing.
+def _tracked []: nothing -> list<string> {
+  job list | get --optional description | compact | where $it not-in ($CONTAINERS | values) | uniq
+}
+
+# Untracked running processes, limited to those started after the earliest live container.
+def _running []: nothing -> table<value: string, description: string> {
+  let procs: table = snapshot
+  let names: list<string> = $CONTAINERS | values | str lowercase
+  let since: oneof<nothing, datetime> = $procs
+    | where ($it.name | str lowercase) in $names
+    | get start_time | sort | get --optional 0
+  $procs
+  | if $since == null { } else { where start_time > $since }
+  | where ($it.name | str lowercase) not-in $names and name not-in (_tracked)
+  | sort-by start_time --reverse
+  | uniq-by name
+  | each { {value: $in.name description: $"pid ($in.pid), ($in.start_time | date humanize)"} }
 }
