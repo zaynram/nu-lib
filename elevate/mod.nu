@@ -1,3 +1,5 @@
+# Utilities to ease working with elevated privilges in Nushell.
+
 # Elevate the current shell process.
 export def --env --wrapped main [
   ...rest: string # Arguments to pass to the `nu` invocation

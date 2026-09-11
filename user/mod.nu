@@ -1,9 +1,12 @@
+# Various definitions aimed at enhancing developer experience with shell tooling.
+
 # nu-lint-ignore-file: positional_to_pipeline, unsafe_dynamic_record_access
+
 # ——— imports ———————————————————————————————————————————————————————————————
 
 use ../error
 use ../path
-use ../util editor
+use ../util [ editor "into completions" ]
 
 # ——— constants —————————————————————————————————————————————————————————————
 
@@ -22,29 +25,16 @@ const _exclude: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
-export-env {
-  load-env {
-    XDG_CONFIG_HOME: ($env.XDG_CONFIG_HOME? | default $config)
-    XDG_DATA_HOME: ($env.XDG_DATA_HOME? | default $data)
-    PNPM_HOME: ($data | path join pnpm)
-    NUPM_HOME: ($data | path join nupm)
-    TOPIARY_CONFIG_FILE: ($config | path join topiary languages.ncl)
-    TOPIARY_LANGUAGE_DIR: ($config | path join topiary queries)
-    GOPATH: ($data | path join go)
-    GOBIN: $bin
-  }
-}
-
 # ——— helpers ———————————————————————————————————————————————————————————————
 
 alias xglob = glob --depth=3 --exclude=[
-  `**/*.yazi/**`
-  `**/plugins/**`
-  `**/vale/styles/**`
-  `**/helix/runtime/**`
-  `**/nushell/{autoload/*,history.txt}`
-  `**/*.{*bck,*shm,*wal,msgpackz,sqlite3,wasm}`
+  **/*.yazi/**
+  `**/{.vscode,.git*,plugins,vale/styles}/**`
+  `**/helix/{runtime,grammars,queries}/**`
   `**/{logs,Code - Insiders,google-chrome-for-testing}/**`
+  `**/nushell/{autoload/*,history.txt}`
+  **/.nu-lint.toml
+  `**/*.{*bck,*shm,*wal,msgpackz,sqlite3,wasm}`
 ]
 
 alias nu-glob = do {|then?: closure|
@@ -57,6 +47,41 @@ alias nu-glob = do {|then?: closure|
 alias vars = do --ignore-errors { (scope variables | where name == '$user').0?.value }
 
 # ——— definitions ———————————————————————————————————————————————————————————
+
+# Consume or initialize the user environment variables.
+export def --env env [
+  --with (-w): record = {
+    XDG_CONFIG_HOME: $config
+    XDG_DATA_HOME: $data
+    PNPM_HOME: ($data | path join pnpm)
+    NUPM_HOME: ($data | path join nupm)
+    TOPIARY_CONFIG_FILE: ($config | path join topiary languages.ncl)
+    TOPIARY_LANGUAGE_DIR: ($config | path join topiary queries)
+    GOPATH: ($data | path join go)
+    GO_BIN: $bin
+  }
+  # Merge these environment variables into the record, overwriting any existing values
+  --load (-l)
+  # Load the environment into the current process, if not done so already
+  --show (-s)
+  # Return the user environment, as a record
+]: oneof<record, nothing> -> oneof<nothing, record> {
+  let e: record = default {} | merge $with | upsert PATH { default $env.PATH | prepend (path) }
+  if $load { $e | load-env }
+  if $show or not $load { return $e }
+}
+
+# Return a list of PATH directories satisfying a condition.
+#
+# If no predicate is provided, directories in the current environment's PATH will be excluded.
+export def path [
+  pred?: closure # Predicate to filter the elements included in the output list
+  --all (-a) # Include all directories (cannot be combined with a predicate)
+]: nothing -> list {
+  glob --no-file --depth=2 --exclude=[**/.vscode-server-insiders/**] $"($home)/**/bin"
+  | append (glob --no-file --no-symlink --exclude=[**/_internal/**] $"($scripts)/**")
+  | if $all { } else if $pred != null { where $pred } else { difference $env.PATH }
+}
 
 # Interact with a script or module definition file.
 @category core
@@ -111,7 +136,7 @@ export def auto [
 export def config [
   # nu-lint-ignore: kebab_case_commands
   target?: path@_config-target # The directory name to search for config files under
-  --path (-p): path@_config-path # Exact path (relative to target if provided, otherwise `~/.config`) of a file to edit
+  --path (-p): path@_config-path # Path of a file to edit, relative to `$target`
   --get (-g) # Return the constructed path instead of opening it
 ]: nothing -> oneof<nothing, table> {
   let cwd: path = [$config $target] | compact --empty | path join
@@ -167,14 +192,37 @@ alias nu-glob = do {|then?: closure|
     | if $then != null { do --ignore-errors $then $d } else { path relative-to $d }
   } | compact --empty | flatten | uniq
 }
+alias replace-home = str replace $nu.home-dir '~'
 
-def _cell-path []: nothing -> list { vars | columns }
-def _any-lib-target []: nothing -> list {
-  [$modules $scripts] | nu-glob | append [modules scripts]
+def _cell-path []: nothing -> oneof<record, list> {
+  vars | columns | into completions {completion_algorithm: substring}
 }
-def _autoload-target []: nothing -> list { $autoload | nu-glob { path parse | get stem } }
-def _config-target []: nothing -> list { xglob $"($config)/*" | path basename }
-def _config-path [context: string]: nothing -> list {
+def _any-lib-target []: nothing -> oneof<record, list> {
+  [
+    ...($modules | nu-glob | wrap value | insert description ($modules | replace-home))
+    ...($scripts | nu-glob | wrap value | insert description ($scripts | replace-home))
+  ] | into completions {
+    sort: true
+    completion_algorithm: fuzzy
+    match_description: true
+  }
+}
+def _autoload-target []: nothing -> oneof<record, list> {
+  $autoload
+  | nu-glob { path parse | rename --column={stem: value parent: description} }
+  | reject extension
+  | into completions {completion_algorithm: substring}
+}
+def _config-target []: nothing -> oneof<record, list> {
+  xglob $"($config)/*"
+  | wrap description
+  | insert value {|row| $row.description | path basename }
+  | into completions {
+    match_description: true
+    completion_algorithm: substring
+  }
+}
+def _config-path [context: string]: nothing -> oneof<record, list> {
   $context
   | split words
   | where $it not-in [user config path]
@@ -182,6 +230,15 @@ def _config-path [context: string]: nothing -> list {
   | where ($it | path type) == dir
   | if ($in | is-empty) { return [] } else {
     let dir: path = $in | first
-    xglob $"($dir)/**/*" --no-dir | path relative-to $dir
+    let label: string = try { $dir | path relative-to $config } catch { $dir | replace-home }
+    xglob $"($dir)/**/*" --no-dir
+    | path relative-to $dir
+    | wrap value
+    | insert description $label
+    | into completions {
+      sort: true
+      match_description: true
+      completion_algorithm: substring
+    }
   }
 }

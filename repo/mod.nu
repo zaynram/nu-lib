@@ -1,3 +1,5 @@
+# Repository aggregation utilities and resolvers (GitHub-only for now).
+
 # nu-lint-ignore-file: string_param_as_path
 
 # ——— constants ———————————————————————————————————————————————————————————————
@@ -22,35 +24,52 @@ export-env {
   # Only set the conversion if it is not already loaded (avoids serialization round-trip).
   if $env.ENV_CONVERSIONS not-has repo {
     $env.ENV_CONVERSIONS.repo = {
-      from_string: {|s|
-        $s | parse --regex `(?<discovery>\d{1})@(?<path>.*)`
-        | into record
-        | update discovery { into bool }
-        | update path { split row (char esep) | hydrate-git-context }
+      from_string: {|s?|
+        $s | default $env.repo? | try {
+          parse --regex `(?<discovery>\d{1})@(?<path>.*)`
+          | into record
+          | update discovery { into bool }
+          | update path { split row (char esep) | uniq | hydrate-git-context }
+        } catch {
+          return {discovery: false cache: null path: []}
+        }
       }
-      to_string: {|v|
-        if ($v | describe) == string { return $v }
+      to_string: {|v?|
+        if ($v | describe) !~ ^record { return ($v | default '') }
         let n: int = $v.repo?.discovery | default false | into int
-        let p: string = $v.repo?.path.directory | default [] | str join (char esep)
+        let p: string = $v.repo?.path.directory | default [] | uniq | str join (char esep)
         return $"($n)@($p)"
       }
     }
   }
-  # Always reassign the `$env.repo` value to pick up environment changes and
-  # gracefully handle [de-]serialization issues on load.
-  $env.repo = if $env not-has repo or $env.repo == null {
-    # Sensible defaults for missing or null values.
-    {path: [] cache: null discovery: false}
-  } else if ($env.repo | describe) == string {
-    # Process termination can cause converter to unload while retaining the variable value,
-    # which can block reinitialization and throw errors on every command.
-    # To avoid this case, we convert strings manually if detected when this module loads.
-    do $env.ENV_CONVERSIONS.repo.from_string $env.repo
-  } else if ($env.repo | describe) =~ ^record {
-    $env.repo | default false discovery | default null cache | default [] path
-  } else { error make --unspanned $'received unknown type for `$env.repo`: ($env.repo | describe)' }
-    # Upsert here the branches to ensure `$env.repo.discovery` is evaluated.
-    | upsert path {|row| if $row.discovery { append (discover-git-repos | hydrate-git-context) } else { } }
+  # Skip remaining initialization unless de-serializing or setting defaults.
+  if $env not-has repo or ($env.repo | describe) == string { env --load }
+}
+
+export def --env env [
+  --find (-f)
+  # Enable repository search behavior (sets `$env.repo.discovery` to `true`)
+  --load (-l)
+  # Load the environment into the current process, if not done so already
+  --show (-s)
+  # Return the user environment, as a record
+]: nothing -> oneof<nothing, record> {
+  if $load {
+    # Always reassign the `$env.repo` value to pick up environment changes and gracefully handle [de-]serialization issues on load.
+    $env.repo = {discovery: ($env.repo?.discovery? | into bool --relaxed | $in or $find) cache: null path: []}
+      | match ($env.repo? | describe | split words | first) {
+        # Sensible defaults for missing or null values.
+        nothing => { }
+        # Process termination can cause converter to unload while retaining the variable value, which can block reinitialization and throw errors on every command.
+        # To avoid this case, we convert strings manually if detected when this module loads.
+        string => { do --capture-errors $env.ENV_CONVERSIONS.repo.from_string $env.repo }
+        record => { merge deep --strategy=prepend $env.repo }
+        $t => { error make --unspanned $'received unknown type for `$env.repo`: ($t)' }
+        # Upsert here the branches to ensure `$env.repo.discovery` is evaluated.
+      } | into record
+      | if $find { upsert path { append (discover-git-repos | hydrate-git-context) | uniq-by name } } else { }
+  }
+  if $show or not $load { return $env.repo? }
 }
 
 # Add a project directory to the `$env.repo.path`.

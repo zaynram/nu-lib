@@ -1,4 +1,6 @@
-use ~/library/nushell/_internal NU_LIB_DIRS
+# Various management-related utilities for working with system and provisioned packages.
+
+use ~/library/nushell/_internal [ NU_LIB_DIRS null-device ]
 export use nightly-toolkit get-latest-nightly-build
 
 # Ephemeral log file holding the output of the latest run.
@@ -81,7 +83,7 @@ export def --env reload-plugins []: nothing -> nothing {
       plugin add $row.filename
       print $'(ansi green)added ($row.name)(ansi rst)'
     } catch {
-      cargo uninstall ($row.filename | path basename)
+      cargo uninstall ($row.filename | path basename) out+err>| complete
       print --stderr $'(ansi red)uninstalled ($row.name)(ansi rst)'
     }
   } | ignore

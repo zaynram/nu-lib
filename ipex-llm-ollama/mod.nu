@@ -1,3 +1,5 @@
+# Commands for the IPEX-based Ollama installation providing GPU-accelerated inference in WSL.
+
 const NAME: string = 'ipex-llm-ollama'
 const HOME: path = $nu.home-dir | path join $'.($NAME)'
 const SYCL: path = $HOME | path join ls-sycl-device

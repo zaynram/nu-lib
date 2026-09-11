@@ -2,124 +2,162 @@
 
 # nu-lint-ignore-file: kebab_case_commands, missing_output_type
 
+const _save: path = $nu.data-dir | path join windows_env.msgpack
+
+# ——— aliases ——————————————————————————————————————————————————————————————————
+
+# Run the PowerShell 7 executable.
+export alias pwsh = /mnt/c/progra~1/PowerShell/7/pwsh.exe
+# Run a command with PowerShell 7.
+export alias "pwsh x" = pwsh -nop -noni -c
+# Run the Powershell Core executable.
+export alias powershell = /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+# Run a comand with Powershell Core.
+export alias "powershell x" = powershell -nop -noni -c
+# Convert Windows path(s) to a UNIX path(s).
+export alias "path as-posix" = each {||
+  if $in starts-with / { $'//wsl.localhost/($env.WSL_DISTRO_NAME)/($in)' } else { }
+  | try { wslpath -u $in }
+}
+# Convert UNIX path(s) to a Windows path(s).
+export alias "path as-windows" = each {|| try { wslpath -m $in } }
+
 # ——— environment ——————————————————————————————————————————————————————————————
 
 export-env {
-  $env.PATH
-  | split list --regex '\s*^/mnt/[[:alpha:]]{1}/.+' --split=before
-  | do --env {|home: record|
-    load-env {
-      USERPROFILE: ($home | path join)
-      PATH: ($in | first)
-      WINPATH: ($in | skip 1 | flatten)
+  const RE: string = '[[:punct:]]{0,1}/mnt/[[:alpha:]]{1}/.+/{0,1}[[:punct:]]{0,1}'
+  if $env not-has WINPATH {
+    $env.PATH?
+    | split row (char esep)
+    | flatten
+    | reduce --fold={PATH: [] WINPATH: []} {|it acc|
+      let c: cell-path = if $it =~ $RE { $.WINPATH } else { $.PATH }
+      $acc | update $c { append $it | uniq }
     }
-  } {parent: /mnt/c/Users stem: $env.USER extension: ''}
+  } | default {}
+  | if $env not-has WSL_DISTRO_NAME {
+    insert WSL_DISTRO_NAME { sys host | get name | split words | first }
+  } else if ($in | is-not-empty) { }
+  | load-env
 }
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
-# Locate a Windows application and return the path(s).
-@category core
-export def --wrapped "win which" [
-  name: string # The name of the application to search for
-  --unwrap (-u) # Return the first entry only
-  ...rest: string # Additional arguments to pass to `where.exe`
-]: nothing -> oneof<list<path>, path, nothing> {
-  with-env {PATH: (require-var winpath)} {
-    /mnt/c/Windows/system32/where.exe $name ...$rest
-    | lines
-    | compact --empty
-    | append (which $name --all | get --optional path | default [])
-    | each { /usr/bin/wslpath -u $in | into string }
-    | if $unwrap { first } else { $in }
+# Run a command on the Windows PATH, if it exists.
+export def --wrapped "win run" [
+  name: string
+  # The name of the application to run
+  ...rest: string
+  # Arguments to pass through to the application if it resolves
+]: any -> any {
+  win which $name | match ($in | describe) {
+    string => { run-external $in ...$rest }
+    nothing => { error make --unspanned $"command not found: '($name)'" }
+    $t => { error make --unspanned $"unexpected return type: `win which` -> '($t)'" }
   }
 }
-# Change to the windows user's desktop directory
+
+# Locate a command on the Windows host.
+@category platform
+export def --wrapped "win which" [
+  --all (-a)
+  # Return all paths matching the application names
+  ...names: string
+  # The application names to query locations of
+]: nothing -> oneof<nothing, path, list<path>, record> {
+  let where: closure = {|a: string|
+    try { /mnt/c/Windows/System32/where.exe $a | lines }
+    | default []
+    | str trim --right
+    | path as-posix
+    | if $all { } else { first }
+  }
+  match ($names | length) {
+    0 => { return }
+    1 => { do $where $names.0 }
+    _ => { $names | reduce --fold={} {|it acc| upsert $it { do $where $it } } }
+  }
+}
+
+# Utilize the full Windows environment for a single command or load it into the session.
+@category environment
+export def --env "win env" [
+  --exec (-e): closure
+  # Closure to run with the Windows environment loaded temporarily (overrides other flags)
+  --load (-l)
+  # Load the variables into the process environment instead of returning them
+  --path (-p): string@[merge overwrite] = merge
+  # Controls whether the PATH value merges the current process PATH or not
+  --vars (-v): list<cell-path>@[[$.PATH] [$.PATHEXT] [$.USERPROFILE]] = [$.PATH $.PATHEXT $.USERPROFILE]
+  # The variables to include in the environment
+  --reset (-r)
+  # Force invalidate any cached environment data
+]: oneof<nothing, record> -> oneof<nothing, record, any> {
+  let i: record = default {}
+  if not $reset { try { open $_save | from msgpack } }
+  | default --empty {
+    let e: record = $env.WINPATH?
+      | default --empty { powershell x '$env:PATH' | split row ';' | where $it !~ '%\w+%' | path as-posix }
+      | match $path {
+        merge => { prepend $env.PATH }
+        overwrite => { }
+        _ => { error make --unspanned $"invalid value for `--path`: '($path)'" }
+      } | {PATH: ($in | uniq)}
+      | insert USERPROFILE { $env.USERPROFILE? | default --empty $"/mnt/c/Users/($env.USER)" }
+      | insert PATHEXT { $env.PATHEXT? | default --empty '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL' }
+    $e | to msgpack --serialize | save --force $_save
+    return $e
+  } | merge deep --strategy=prepend $i
+  | select --optional ...$vars
+  | compact
+  | match ($exec | describe) {
+    nothing if not $load => { }
+    nothing => { load-env; hide-env WINPATH }
+    closure => { with-env $in $exec }
+  }
+}
+
+# Use or navigate to the Window's environment's `$env.USERPROFILE`.
 @category filesystem
-export def desk --env [
-  ...segments: string # Path segments to join to the resolved desktop directory
-  --return (-r) # Return the resolved path instead of changing directories
+export def --env "win home" [
+  --cd # Navigate to the resolved directory, if it exists
+  --join (-j): list<string> = []
+  # Path segments to join to the resolved home directory
+  --edit (-e)
+  # Open the resolved path with `$env.EDITOR`
+  --posix (-p) = ($nu.os-info.name != windows)
+  # Return the resolved path as a POSIX path
 ]: nothing -> oneof<nothing, directory> {
-  let target: path = require-var userprofile --validate { path type | $in == dir }
-    | path join desktop ...$segments
-  if $return { return $target } else { goto-target $target }
+  let p: path = win env --vars=[$.USERPROFILE] | get $.USERPROFILE | path join ...$join
+  if not $edit and not $cd {
+    return ($p | if $posix { path as-posix } else { path as-windows })
+  } else if $edit {
+    run-external $env.EDITOR? $p
+  } else if $cd {
+    try { cd $p } catch { error make --unspanned $"resolved path is not a valid directory: '($p)'" }
+  }
 }
 
 # Construct a windows path from the input path
 @category filesystem
 export def --env "win path" [
-  ...segments: string
-  --user (-u) # Use the user's home directory as the base path
-  --mount (-m): string = c # Use this mounted drive as the base path
-  --cd (-c) # Set the working directory to the windows path
+  --join (-j): list<string> = []
+  # Path segments to join to the base path
+  --cd (-c)
+  # Set the working directory to the windows path
+  --user (-u)
+  # Use the user's home directory as the base path
+  --edit (-e)
+  # Open the resolved path with `$env.EDITOR`
+  --posix (-p) = ($nu.os-info.name != windows)
+  # Return the resolved path as a POSIX path
 ]: oneof<path, nothing> -> oneof<path, nothing> {
-  let target: path = if not $user { [/ mnt $mount] } else {
-    require-var userprofile --validate { path type | $in == dir }
-  } | path join ...$segments
-  if not $cd { return $target } else { goto-target $target }
-}
-
-# Invoke an executable on the windows PATH.
-#
-# Invocation may be provided inline as `<command> ...<args>` or
-# as a closure from pipeline input stream.
-@category filesystem
-export def --env --wrapped "win run" [
-  executable?: string # External command to invoke with Windows PATH
-  ...rest: string # Arguments to pass to the executable
-  --nu-help # Show the native help message for this command (`--help` is passed to invocation)
-  --base-env: record = {} # Base environment to inject the Windows PATH into
-]: oneof<closure, nothing> -> any {
-  if $nu_help { help "win run" | return $in }
-  if $in == null and $executable == null {
-    error make --unspanned "no command or closure was provided"
-  }
-  let path: list<path> = [
-    ...($base_env | get --ignore-case --optional path | default [])
-    ...(require-var winpath --validate { ($in | describe) =~ list })
-    ...($env | get --ignore-case --optional path | default [])
-  ] | uniq
-  let vars: record = $base_env | reject --ignore-case --optional path | merge {PATH: $path}
-  let main: closure = $in | default {
-      let name: string = match ($executable | path parse | get extension) {
-        exe | cmd | bat | ps1 => $executable
-        _ => { win which --unwrap $executable }
-      }
-      if $name == null { error make --unspanned $"command not found: ($executable)" }
-      return { run-external $name ...$rest }
-    }
-  with-env $vars { do --env --capture-errors $main }
-}
-
-# ——— helpers ——————————————————————————————————————————————————————————————————
-
-def require-var [
-  name: string
-  --validate: closure # Value is provided as a positional and as pipeline input
-]: nothing -> any {
-  let check = $validate | default { { $in != null } }
-  let value = $env | get --optional --ignore-case $name
-  let valid = $value | do --ignore-errors $check $value | into bool --relaxed
-  if $valid { return $value } else {
-    error make --unspanned $"invalid value for environment variable '($name)'"
-  }
-}
-
-def bad-target [
-  label: record<text: string, span: string>
-]: oneof<error, nothing> -> error {
-  error make --unspanned {
-    msg: $"($label.text) is not a valid directory"
-    label: $label
-    inner: ([$in] | compact)
-  }
-}
-
-def --env goto-target [
-  target: directory
-  --text: string = target
-]: nothing -> nothing {
-  try { cd $target } catch {
-    bad-target {text: $text span: (metadata $target).span}
+  let p: path = if $user { win home } else { '/mnt/c' } | path join ...$join
+  if not $edit and not $cd {
+    return ($p | if $posix { path as-posix } else { path as-windows })
+  } else if $edit {
+    run-external $env.EDITOR? $p
+  } else if $cd {
+    try { cd $p } catch { error make --unspanned $"resolved path is not a valid directory: '($p)'" }
   }
 }

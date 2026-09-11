@@ -1,3 +1,5 @@
+# Apt-related shorthand and utility methods.
+
 # nu-lint-ignore-file: unhandled_external_error, pipe_spacing
 
 # Auto-elevating apt wrapper

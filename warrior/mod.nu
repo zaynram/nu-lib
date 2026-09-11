@@ -1,13 +1,13 @@
 # nu-lint-ignore-file: custom_log_command
-export module time {
-  # ——— constants ———————————————————————————————————————————————————————————————
 
-  const _options: record = {
-    match_description: true
-    completion_algorithm: substring
-    case_sensitive: false
-    sort: true
-  }
+use ../util "into completions"
+
+const DATA = {
+  time: ($nu.data-dir | path basename --replace timewarrior/data)
+  task: ($nu.data-dir | path basename --replace task)
+}
+
+export module time {
 
   # ——— definitions —————————————————————————————————————————————————————————————
 
@@ -19,22 +19,23 @@ export module time {
   # Describe an item to record time for via the `timew` CLI.
   @category productivity
   export def desc [
-    slug: string # Descriptor of the work item's scope
-    --tag (-t): string@_tags = board # Identifier for the parent scope
-    --git (-g) # Use the basename of `git` repository root as the tag
-    --cwd (-c) # Use the basname of the current working directory as the tag
-    ...labels: string # Arguments to pass to `timew start`; positionals are extra tags by default
+    slug: string
+    # Descriptor of the work item's scope
+    --tag (-t): string@_time_tags
+    # Identifier for the parent scope; defaults to basename of working directory
+    --cd (-c): directory
+    # Change to this directory before constructing tags
+    --rev-parse (-r)
+    # Use the repository root of the `pwd` or `--cd` (if given) as the tag
+    ...rest: string@_time_tags
+    # Arguments to pass to `timew start`; positionals are extra tags by default
   ]: nothing -> nothing {
-    let mode: oneof<nothing, string> = {git: $git cwd: $cwd}
-      | transpose key value
-      | where $it.value
-      | get --optional 0.key
-    let tag: string = match $mode {
-      null => $tag
-      git => { try { git rev-parse --show-toplevel } catch { pwd } | path basename }
-      cwd => { pwd | path basename }
+    if $cd != null and ($cd | path type) == dir { cd $cd }
+    match $tag {
+      _ if $rev_parse => { timew start (resolve-repo-root | path basename) $slug ...($rest | prepend $tag | compact) }
+      null => { timew start (pwd | path basename) $slug ...$rest }
+      _ => { timew start $tag $slug ...$rest }
     }
-    timew start $tag $slug ...$labels
   }
 
   # Convert a datetime and/or duration value into a `timew` interval.
@@ -102,6 +103,16 @@ export module time {
   export alias docs = start https://timewarrior.net/docs/
   # Continue tracking time for the an entry.
   export alias cont = timew continue
+  # Return the tags data as a Nushell table.
+  export def tags []: nothing -> table<name: string, count: int> {
+    $DATA.time
+    | path join tags.data
+    | path expand --strict
+    | open --raw
+    | from json
+    | transpose name count
+    | flatten count
+  }
 
   # ——— helpers —————————————————————————————————————————————————————————————————
 
@@ -110,12 +121,6 @@ export module time {
   }
   def str-datetime []: datetime -> string {
     date to-timezone local | format date %s
-  }
-
-  alias "into completions" = do {|opts: record = {}|
-    let data: list<string> = $in
-      | each {|_| if $_ =~ \s { $"`($_)`" } else { $_ } }
-    return {completions: $data options: ($_options | merge $opts)}
   }
 
   # ——— completions —————————————————————————————————————————————————————————————
@@ -128,32 +133,6 @@ export module time {
     | str trim --right
     | where $it not-in [show week day start summary export]
     | into completions {sort: false}
-  }
-
-  def _common-durations [context: string = '' --raw --abs]: [
-    nothing -> oneof<list<duration>, record>
-  ] {
-    let pos = $abs or $context =~ `--from[\s|=]\.+`
-    [1hr 6hr 12hr 1day 3day 5day 1wk 2wk 4wk]
-    | if $pos { } else { par-each {|d| [$d ($d * -1)] } | flatten }
-    | sort --reverse
-    | if $raw { } else { into string | into completions {sort: false} }
-  }
-
-  def _common-datetimes []: [nothing -> record] {
-    let now = date now
-    _common-durations --raw --abs
-    | par-each { $now - $in | format date %FT%T%:z }
-    | into completions
-  }
-
-  def _tags []: nothing -> record {
-    let tags: list<string> = timew tags | from ssv --minimum-spaces=1 | skip 1 | get Tag
-    glob $"($nu.home-dir)/**/.git" --depth=3
-    | path dirname
-    | path basename
-    | append $tags
-    | into completions
   }
 }
 
@@ -240,146 +219,211 @@ export module task {
       }
     }
   }
+}
 
-  def "str chrono" []: oneof<duration, datetime> -> string {
-    match ($in | describe) {
-      datetime => { format date %FT%T%:z }
-      duration => {
-        format duration day
-        | parse --regex '(?<int>\d+)(?<frac>\.*\d*)\s*[A-Za-z]+\s*'
-        | into record
-        | update frac { default --empty 0 | into float | $in * 24 | math round --precision=1 }
-        | $"P($in.int)DT($in.frac)H"
+# ——— utilities ——————————————————————————————————————————————————————————————
+
+def resolve-repo-root []: nothing -> oneof<error, directory> {
+  match (git rev-parse --show-toplevel | complete) {
+    {exit_code: 0 stdout: $o} => { $o | str trim | path expand --strict }
+    {exit_code: $c stderr: $e} => {
+      error make {
+        msg: $'git exited with code ($c)'
+        code: 'warrior::time::non_zero_exit_code'
+        help: $"[stderr]\n($e)"
       }
     }
   }
+}
 
-  def mkargs [...args: string]: record<command: string> -> list<string> {
-    let vars: record = default {} | compact --empty
-    let done: bool = $vars.complete? | into bool --relaxed
-    def throw [flag: string requires: string --with: list<string>]: nothing -> error {
-      let end: oneof<nothing, string> = if ($with | is-not-empty) { $'with ($with | par-each { $'`--($in)`' } | str join `, `)' }
-      error make --unspanned $"`--($flag)` must ($requires)($end)."
+def "str chrono" []: oneof<duration, datetime> -> string {
+  match ($in | describe) {
+    datetime => { format date %FT%T%:z }
+    duration => {
+      format duration day
+      | parse --regex '(?<int>\d+)(?<frac>\.*\d*)\s*[A-Za-z]+\s*'
+      | into record
+      | update frac { default --empty 0 | into float | $in * 24 | math round --precision=1 }
+      | $"P($in.int)DT($in.frac)H"
     }
-    [$vars.command]
-    | if $vars has project { append [project:($vars.project)] } else { }
-    | if $vars has priority { append [priority:($vars.priority)] } else { }
-    | if $vars has status { append [status:($vars.status)] } else { }
-    | if $vars has tags { append ($vars.tags | items {|k v| $v | par-each { $k + $in } } | flatten) } else { }
-    | if $vars has due and not $done { append [due:($vars.due | str chrono)] } else { }
-    | if $vars has recur { append [recur:($vars.recur)] } else { }
-    | if $vars has until { append [until:($vars.until | str chrono)] } else { }
-    | if $vars has schedule {
-      append (
-        $vars.schedule | match ($in | describe) {
-          datetime if $done => { throw schedule 'be a record' --with=[complete=true] }
-          datetime => [scheduled:($in | format date %F)]
-          _ => { items {|k v| [$k $v] | format date %F | str join : } }
-        }
-      )
-    } else { }
-    | append [-- ...$args]
   }
+}
 
-  def _projects []: nothing -> record {
-    {
-      options: {
-        case_sensitive: false
-        completion_algorithm: substring
-        sort: true
+def mkargs [...args: string]: record<command: string> -> list<string> {
+  let vars: record = default {} | compact --empty
+  let done: bool = $vars.complete? | into bool --relaxed
+  def throw [flag: string requires: string --with: list<string>]: nothing -> error {
+    let end: oneof<nothing, string> = if ($with | is-not-empty) { $'with ($with | par-each { $'`--($in)`' } | str join `, `)' }
+    error make --unspanned $"`--($flag)` must ($requires)($end)."
+  }
+  [$vars.command]
+  | if $vars has project { append [project:($vars.project)] } else { }
+  | if $vars has priority { append [priority:($vars.priority)] } else { }
+  | if $vars has status { append [status:($vars.status)] } else { }
+  | if $vars has tags { append ($vars.tags | items {|k v| $v | par-each { $k + $in } } | flatten) } else { }
+  | if $vars has due and not $done { append [due:($vars.due | str chrono)] } else { }
+  | if $vars has recur { append [recur:($vars.recur)] } else { }
+  | if $vars has until { append [until:($vars.until | str chrono)] } else { }
+  | if $vars has schedule {
+    append (
+      $vars.schedule | match ($in | describe) {
+        datetime if $done => { throw schedule 'be a record' --with=[complete=true] }
+        datetime => [scheduled:($in | format date %F)]
+        _ => { items {|k v| [$k $v] | format date %F | str join : } }
       }
-      completions: (
-        repo list
-        | insert description {|row| $"github:($row.owner)/($row.name)" }
-        | select name description
-        | rename --column={name: value}
-      )
-    }
-  }
+    )
+  } else { }
+  | append [-- ...$args]
+}
 
-  def _priorities []: nothing -> record {
-    {
-      options: {
-        case_sensitive: false
-        completion_algorithm: prefix
-        sort: false
-      }
-      completions: [
-        [value description];
-        [H 'High priority; use for active tasks']
-        [M 'Medium priority; use for sequencing next tasks']
-        [L 'Low priority; use for chores and non-development tasks']
-      ]
-    }
-  }
+# ——— completions ——————————————————————————————————————————————————————————————
 
-  def _progression []: nothing -> record {
-    {
-      options: {
-        case_sensitive: false
-        completion_algorithm: prefix
-        sort: false
-      }
-      completions: [
-        [value description];
-        [pending 'Ready; marks a task as not started but not waiting']
-        [completed 'Done; marks a task as finished']
-        [deleted 'Removed; marks a task as abandoned and removes it from tracking']
-        [waiting 'Queued; marks a task as waiting to start until a certain date']
-      ]
-    }
+def _time_tags []: nothing -> oneof<list, record> {
+  $DATA.time
+  | path join tags.data
+  | try { path expand --strict | open --raw | from json | columns }
+  | default --empty {
+    timew tags
+    | complete
+    | get stdout
+    | str replace 'No data found.' ''
+    | lines
+    | str trim
+  } | into completions {
+    case_sensitive: false
+    completion_algorithm: prefix
+    sort: true
   }
+}
 
-  def _frequencies []: nothing -> record {
-    {
-      options: {
-        case_sensitive: false
-        completion_algorithm: fuzzy
-        sort: false
-      }
-      completions: [
-        [value description];
-        [daily 'Every day']
-        [1day 'Every <n=1> days']
-        [weekdays 'Every week on Mon, Tue, Wed, Thu, Fri']
-        [weekly 'Every week']
-        [1wk 'Every <n=1> weeks']
-        [biweekly 'Every two weeks']
-        [fortnight 'Every two weeks']
-        [monthly 'Every month']
-        [1mo 'Every <n=1> month']
-        [quarterly 'Every three months']
-        [1qtr 'Every <n=1> quarters']
-        [semiannual 'Every six months']
-        [annual 'Every year']
-        [yearly 'Every year']
-        [1yr 'Every <n=1> years']
-        [biannual 'Every two years']
-        [biyearly 'Every two years']
-      ]
-    }
+def _task_tags []: nothing -> record {
+  task _tags
+  | complete
+  | get stdout
+  | lines
+  | str trim
+  | into completions {
+    case_sensitive: false
+    completion_algorithm: prefix
+    sort: true
   }
+}
 
-  def _contexts []: nothing -> record {
-    {
-      options: {
-        case_sensitive: false
-        completion_algorithm: fuzzy
-        sort: false
-      }
-      completions: []
+def _projects []: nothing -> record {
+  {
+    options: {
+      case_sensitive: false
+      completion_algorithm: substring
+      sort: true
     }
+    completions: (
+      repo list
+      | insert description {|row| $"github:($row.owner)/($row.name)" }
+      | select name description
+      | rename --column={name: value}
+    )
   }
+}
 
-  def _common_dates []: nothing -> record {
-    let now = date now
-    {
-      options: {
-        case_sensitive: false
-        completion_algorithm: substring
-        sort: true
-      }
-      completions: (1..45 | par-each { $in * 1day | $now + $in | format date %F })
+def _priorities []: nothing -> record {
+  {
+    options: {
+      case_sensitive: false
+      completion_algorithm: prefix
+      sort: false
     }
+    completions: [
+      [value description];
+      [H 'High priority; use for active tasks']
+      [M 'Medium priority; use for sequencing next tasks']
+      [L 'Low priority; use for chores and non-development tasks']
+    ]
   }
+}
+
+def _progression []: nothing -> record {
+  {
+    options: {
+      case_sensitive: false
+      completion_algorithm: prefix
+      sort: false
+    }
+    completions: [
+      [value description];
+      [pending 'Ready; marks a task as not started but not waiting']
+      [completed 'Done; marks a task as finished']
+      [deleted 'Removed; marks a task as abandoned and removes it from tracking']
+      [waiting 'Queued; marks a task as waiting to start until a certain date']
+    ]
+  }
+}
+
+def _frequencies []: nothing -> record {
+  {
+    options: {
+      case_sensitive: false
+      completion_algorithm: fuzzy
+      sort: false
+    }
+    completions: [
+      [value description];
+      [daily 'Every day']
+      [1day 'Every <n=1> days']
+      [weekdays 'Every week on Mon, Tue, Wed, Thu, Fri']
+      [weekly 'Every week']
+      [1wk 'Every <n=1> weeks']
+      [biweekly 'Every two weeks']
+      [fortnight 'Every two weeks']
+      [monthly 'Every month']
+      [1mo 'Every <n=1> month']
+      [quarterly 'Every three months']
+      [1qtr 'Every <n=1> quarters']
+      [semiannual 'Every six months']
+      [annual 'Every year']
+      [yearly 'Every year']
+      [1yr 'Every <n=1> years']
+      [biannual 'Every two years']
+      [biyearly 'Every two years']
+    ]
+  }
+}
+
+def _contexts []: nothing -> record {
+  {
+    options: {
+      case_sensitive: false
+      completion_algorithm: fuzzy
+      sort: false
+    }
+    completions: []
+  }
+}
+
+def _common_dates []: nothing -> record {
+  let now = date now
+  {
+    options: {
+      case_sensitive: false
+      completion_algorithm: substring
+      sort: true
+    }
+    completions: (1..45 | par-each { $in * 1day | $now + $in | format date %F })
+  }
+}
+
+def _common-durations [context: string = '' --raw --abs]: [
+  nothing -> oneof<list<duration>, record>
+] {
+  let pos = $abs or $context =~ `--from[\s|=]\.+`
+  [1hr 6hr 12hr 1day 3day 5day 1wk 2wk 4wk]
+  | if $pos { } else { par-each {|d| [$d ($d * -1)] } | flatten }
+  | sort --reverse
+  | if $raw { } else { into string | into completions {sort: false} }
+}
+
+def _common-datetimes []: [nothing -> record] {
+  let now = date now
+  _common-durations --raw --abs
+  | par-each { $now - $in | format date %FT%T%:z }
+  | into completions
 }

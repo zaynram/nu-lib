@@ -1,12 +1,96 @@
 # ——— imports —————————————————————————————————————————————————————————————————
 
-use ../vendor modules
 use ../path resolve
-use ($modules | path join session) edit
+use ($nu.data-dir | path basename --replace nupm/modules/session) edit
 
-export use std "path add"
+export use std/util [ "path add" null-device ellie ]
+export module std/help
+export module std/bench
+
+const EXE: path = $nu.current-exe | path expand --strict --no-symlink
+
+# ——— helpers ——————————————————————————————————————————————————————————————————
+
+alias quote-char = match $in {
+  single => [`'` `'`]
+  double => [`"` `"`]
+  auto => ['`' '`']
+}
+
+def each-completion [c: closure]: [
+  nothing -> oneof<list<any>, table<value: any>>
+  list<any> -> list<any>
+  table<value: any> -> table<value: any>
+] {
+  match ($in | describe | split words | first) {
+    list => { par-each --keep-order $c }
+    table => { update value $c }
+  }
+}
 
 # ——— definitions —————————————————————————————————————————————————————————————
+
+# Compute the difference between two datetimes as a duration, or evaluate the datetime after a duration as a datetime.
+export def "date diff" [
+  d: oneof<datetime, duration> = 0us
+  # Offset or comparison date to compute the duration from the input date (or now)
+  --tz: string@_timezones = local
+  # Timezone to convert datetimes to before operating
+  --format (-f): string@_datetime_formats
+  # Return a string representation of the datetime in this format
+  --invert (-i)
+  # Reverse the mathemetical operation on the argument; will flip the anchor if datetime, otherwise will invert the sign of a duration
+  --record (-r)
+  # Return the datetime or duration difference as a record
+]: oneof<nothing, string, datetime> -> oneof<duration, datetime, string> {
+  match ($in | describe) { datetime => { } nothing => { date now } string => { date from-human } }
+  | date to-timezone $tz
+  | match ($d | describe) { datetime if $invert => { $d - $in } duration if not $invert => { $in + $d } _ => { $in - $d } }
+  | if $format != null and ($in | describe) == datetime { format date $format } else if $record { into record } else { }
+}
+
+# Return a serialization of a datetime, optionally for a computed time delta.
+export alias timestamp = date diff --format=%+
+
+# Wrap an iterable containing custom completions into a record with completion options.
+# - `$in` will have elements converted to strings with `to text` then compacted (with `--empty`)
+# - `$options` will be run through `compact` to use their defaults when set to `null`
+# - `--quote=auto` will serialize completion elements using `to nuon --serialize --raw-strings`
+# - `--quote=single`|`--quote=double` will wrap completion elements coerced using `to nuon --no-commas`
+@category core
+@example 'transform a list into a completions record' { [1 2 3] | into completions }
+@example 'complete filenames and match full path descriptions' {
+  glob * --no-dir --depth=3
+  | wrap description
+  | insert value {|row| $row.description | path basename }
+  | into completions {match_description: true}
+}
+export def "into completions" [
+  options: record = {
+    sort: true
+    case_sensitive: false
+    completion_algorithm: prefix
+    match_description: false
+  }
+  # Options for the custom completions (set any option to `null` to use default)
+  --quote (-q): string@[single double auto none] = auto
+  # Mode for wrapping completion items in quotes for ergonomics on the commandline
+]: [
+  list<any> -> record<options: record, completions: list<any>>
+  table<value: any, description: string> -> record<options: record, completions: table<value: any, description: string>>
+] {
+  {
+    options: ($options | compact)
+    completions: (
+      $in | compact --empty | match $quote {
+        auto => { each-completion { if $in =~ \s+ { to nuon --serialize --raw-strings } else { to text } } }
+        single => { each-completion { $"'($in | to nuon --no-commas)'" } }
+        double => { each-completion { $'"($in | to nuon --no-commas)"' } }
+        _ => { }
+      }
+    )
+  }
+}
 
 # Open a file in the default editor or the editor pane of an active Zellij session.
 @category core
@@ -43,28 +127,50 @@ export def on-path [
   }
 }
 
+alias resolve-cmd = try { which $in | get $.0?.path }
+
+# Return the absolute path of a command if found, otherwise null.
+@category core
+export def command [
+  ...names: string
+  # The names of the commands to resolve the paths of
+  --prune (-p)
+  # Prune entries for commands that could not be resolved (warning: may desync input/output list indices)
+  --as-record (-r)
+  # Return a mapping of command names to their locations
+]: [
+  nothing -> oneof<nothing, path, list<path>, record>
+  string -> oneof<path, list<path>, record>
+  list<string> -> oneof<list<path>, record>
+] {
+  append $names
+  | match ($in | length) { 0 => { return } 1 => { first } _ => { } }
+  | if $as_record { each {|it| resolve-cmd | wrap $it } | into record } else { each { resolve-cmd } }
+  | match ($in | describe) { string | nothing => { } _ if $prune => { compact | sort } _ => { sort } }
+}
+
 # Run closures based on the current execution platform.
 #
 @category platform
 export def --wrapped match-os [
-  record: oneof<nothing, record<linux: oneof<any, closure>>, record<macos: oneof<any, closure>>, record<windows: oneof<any, closure>>, record<bsd: oneof<any, closure>>, record<other: oneof<any, closure>>> = null # Mapping of OS names to values or closures (properties are optional)
-  --linux (-l): oneof<any, closure> # Linux-only value or closure
-  --macos (-m): oneof<any, closure> # MacOS-only value or closure
-  --windows (-w): oneof<any, closure> # Windows only value or closure
-  --bsd (-b): oneof<any, closure> # BSD-only value or closure
-  --other (-o): oneof<any, closure> # Use this if no item was provided for the current platform
-  ...args: string # Arguments to pass through to the closure
-]: [
-  oneof<nothing, record<linux: oneof<any, closure>, macos: oneof<any, closure>, windows: oneof<any, closure>, bsd: oneof<any, closure>, other: oneof<any, closure>>> -> oneof<nothing, any>
-] {
-  default { $record | default {} }
-  | default { $linux } linux
-  | default { $macos } macos
-  | default { $windows } windows
-  | default { $bsd } bsd
-  | default { $other } other ...($in | columns)
+  record: oneof<record, record<linux: any, macos: any, windows: any, bsd: any>> = {}
+  # Mapping of OS names to values or closures
+  --default (-d): any = null
+  # Use this if no item was provided for the current platform
+  --execute (-e) = true
+  # If the resolved value is a closure, run it and return the result
+  --capture (-c) = true
+  # Capture any errors raised when executing a closure (only effective with `--execute`)
+  ...args: string
+  # Arguments to pass through to the closure
+]: oneof<record, nothing> -> oneof<nothing, any> {
+  default $record
   | get --optional $nu.os-info.name
-  | if ($in | describe) == closure { do --capture-errors $in ...$args } else { }
+  | default $default
+  | match ($in | describe) {
+    closure if $execute => { do --ignore-errors=(not $capture) $in ...$args }
+    _ => { return $in }
+  }
 }
 
 # Replace the current shell instance with a fresh one.
@@ -72,17 +178,15 @@ export def --wrapped match-os [
 # Optionally, a record can be piped in which will be merged into
 # the process environment.
 @category shells
-export def --env reload [
+export def --env --wrapped reload [
   --erase (-e) # Erase the history (clear without keeping scrollback)
-  --fresh (-f) # Clear the cached PID to allow rerunning startup actions
-  --login (-l) = true # Run Nushell as a login shell
-  --reset (-r) = true # Redraw the UI (run `reset`)
+  ...rest: string # Additional arguments for the Nushell invocation
 ]: oneof<nothing, record> -> nothing {
-  default {} | load-env
-  if $reset { match-os --linux { reset } }
-  if $fresh { $env.pid = null }
-  if $erase { clear } else { clear --keep-scrollback }
-  if $login { exec nu --login } else { exec nu }
+  match-os {linux: {|| reset (if $erase { '-wc' } else { '-w' }) }}
+  with-env ($in | default {}) {
+    if $nu.is-interactive { hide-env --ignore-errors pid }
+    if $nu.is-login { exec $EXE --login ...$rest } else { exec $EXE ...$rest }
+  }
 }
 
 # Substitute a falsy value with a default or closure.
@@ -185,6 +289,14 @@ def error [msg: string ...code: string]: oneof<nothing, record<stdout: string>> 
 
 # ——— completions —————————————————————————————————————————————————————————————
 
-def _executables []: nothing -> list {
-  which | where type == external | get command | path parse | get stem
+def _executables []: nothing -> oneof<record, list> {
+  which | where type == external | get command | path parse | get stem | into completions
+}
+
+def _timezones []: nothing -> oneof<record, list> {
+  'date to-timezone ' | commandline complete | into completions
+}
+
+def _datetime_formats []: nothing -> record {
+  format date --list | reject Example | rename --column={Specification: value Description: description} | into completions
 }

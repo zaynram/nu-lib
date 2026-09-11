@@ -1,33 +1,63 @@
+# Utilities and constants for pre-configured or vendored programs and libraries.
+
 # ——— imports —————————————————————————————————————————————————————————————————
 
 use ../error
+use ../util "path add"
 
 # ——— constants ———————————————————————————————————————————————————————————————
 
+export const bin: path = '/opt/homebrew/bin/'
 export const autoload: path = $nu.vendor-autoload-dirs.2
 export const plugins: path = $nu.data-dir | path join plugins (version).version
 export const modules: path = $nu.data-dir | path basename --replace nupm/modules
 export const scripts: path = $nu.data-dir | path basename --replace nupm/scripts
+
+const _path: list = [$bin $scripts]
 
 alias vars = do --ignore-errors { (scope variables | where name == '$vendor').0?.value }
 alias rtty = do --ignore-errors { run-external ($autoload | path basename --replace require-tty) | ignore }
 
 # ——— definitions —————————————————————————————————————————————————————————————
 
-# Refresh the `oh-my-posh` prompt configuration.
-# Ensures the script is replaced after application updates.
-def "init oh-my-posh" []: nothing -> nothing {
-  let p: path = $nu.home-dir | path join .config oh-my-posh prompt.json
-  oh-my-posh init nu --config $p
-  $autoload | path join oh-my-posh.nu | rtty
+# Consume or initialize the vendor environment variables.
+export def --env env [
+  --with (-w): record = {}
+  # Merge these environment variables into the record, overwriting any existing values
+  --load (-l)
+  # Load the environment into the current process, if not done so already
+  --show (-s)
+  # Return the vendor environment, as a record
+]: oneof<record, nothing> -> oneof<nothing, record> {
+  let e: record = default {} | merge $with | upsert PATH { default $env.PATH | prepend (path) }
+  if $load { $e | load-env }
+  if $show or not $load { return $e }
 }
 
-# Refresh the `carapace` completion script.
-# Ensures the script contains all configured completions on startup.
-def "init carapace" []: nothing -> nothing {
-  let p: path = $nu.vendor-autoload-dirs | last | path join carapace.nu
-  carapace _carapace nushell | save --force $p
-  $p | rtty
+# Return a list of PATH directories satisfying a condition.
+#
+# If no predicate is provided, directories in the current environment's PATH will be excluded.
+export def path [
+  pred?: closure # Predicate to filter the elements included in the output list
+  --all (-a) # Include all directories (cannot be combined with a predicate)
+]: nothing -> list {
+  $_path | if $all { } else if $pred != null { where $pred } else { difference $env.PATH }
+}
+
+const _exts: list = [toml yaml yml json jsonc]
+
+# Refresh the `oh-my-posh` prompt configuration.
+export def "init oh-my-posh" [
+  --config: path
+  # Path to the Oh-My-Posh prompt configuration file (defaults to `$env.POSH_CONFIG` if set)
+]: nothing -> nothing {
+  match ($config | default --empty $env.POSH_CONFIG?) {
+    null => { oh-my-posh init nu }
+    $p if ($p | path type) != file => { error make --unspanned $"file not found: '($p)'" }
+    $p if ($p | path parse).extension not-in [toml yaml yml json jsonc] => { error make --unspanned $"invalid configuration file: '($p)'" }
+    $p => { oh-my-posh init nu --config=($p) }
+  }
+  $autoload | path join oh-my-posh.nu | run ($autoload | path basename --replace require-tty) | ignore
 }
 
 # Initialize and auto-start the default Zellij session.
@@ -40,10 +70,6 @@ export def start-zellij []: nothing -> nothing {
     }
   }
 }
-
-# Initialize and run configured vendor startup actions.
-@category shells
-export def --env init []: nothing -> nothing { init oh-my-posh; init carapace }
 
 # Navigate or return a configured vendor directory.
 @category filesystem
