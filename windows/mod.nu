@@ -8,12 +8,12 @@ const _save: path = $nu.data-dir | path join windows_env.msgpack
 
 # Run the PowerShell 7 executable.
 export alias pwsh = /mnt/c/progra~1/PowerShell/7/pwsh.exe
-# Run a command with PowerShell 7.
-export alias "pwsh x" = pwsh -nop -noni -c
+# Run a command with PowerShell 7 (use `pwsh` directly to choose another execution policy).
+export alias "pwsh x" = pwsh -nop -noni -ExecutionPolicy Bypass -c
 # Run the Powershell Core executable.
 export alias powershell = /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
-# Run a comand with Powershell Core.
-export alias "powershell x" = powershell -nop -noni -c
+# Run a comand with Powershell Core (use `powershell` directly to choose another execution policy).
+export alias "powershell x" = powershell -nop -noni -ExecutionPolicy Bypass -c
 # Convert Windows path(s) to a UNIX path(s).
 export alias "path as-posix" = each {||
   if $in starts-with / { $'//wsl.localhost/($env.WSL_DISTRO_NAME)/($in)' } else { }
