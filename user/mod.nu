@@ -31,7 +31,6 @@ const _exclude: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
 
 # ——— helpers ———————————————————————————————————————————————————————————————
 
-
 alias xglob = glob --depth=3 --exclude=[
   **/*.yazi/**
   `**/{.vscode,.git*,plugins,vale/styles}/**`
@@ -84,8 +83,8 @@ export def path [
   pred?: closure # Predicate to filter the elements included in the output list
   --all (-a) # Include all directories (cannot be combined with a predicate)
 ]: nothing -> list {
-  glob --no-file --depth=2 --exclude=[**/.vscode-server-insiders/**] $"($home | fix-path ** bin)"
-  | append (glob --no-file --no-symlink --exclude=[**/_internal/**] $"($scripts | fix-path **)")
+  glob --no-file --depth=2 --exclude=[**/.vscode-server-insiders/**] ($home | fix-path ** bin)
+  | append (glob --no-file --no-symlink --exclude=[**/_internal/**] ($scripts | fix-path **))
   | if $all { } else if $pred != null { where $pred } else { difference $env.PATH }
 }
 
@@ -191,7 +190,6 @@ export def --env main [
 
 # ——— completions ———————————————————————————————————————————————————————————
 
-const _exclude: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
 alias replace-home = str replace $nu.home-dir '~'
 
 def _cell-path []: nothing -> oneof<record, list> {

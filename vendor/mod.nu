@@ -70,7 +70,7 @@ export def "init oh-my-posh" [
   }
 
   let f: path = $autoload | path join oh-my-posh.nu
-  $f | run ($autoload | path basename --replace require-tty) | ignore
+  $f | run $_rtty | ignore
   if $nu.os-info.name == windows {
     open --raw $f
     | collect { lines | take until { str contains '$_omp_executable upgrade' } | str join (char newline) }

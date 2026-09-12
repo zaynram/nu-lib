@@ -38,7 +38,6 @@ export def fix-path [...segments: string]: path -> path {
   }
 }
 
-
 # Compute the difference between two datetimes as a duration, or evaluate the datetime after a duration as a datetime.
 export def "date diff" [
   d: oneof<datetime, duration> = 0us
