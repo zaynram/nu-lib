@@ -239,13 +239,7 @@ def resolve-repo-root []: nothing -> oneof<error, directory> {
 def "str chrono" []: oneof<duration, datetime> -> string {
   match ($in | describe) {
     datetime => { format date %FT%T%:z }
-    duration => {
-      format duration day
-      | parse --regex '(?<int>\d+)(?<frac>\.*\d*)\s*[A-Za-z]+\s*'
-      | into record
-      | update frac { default --empty 0 | into float | $in * 24 | math round --precision=1 }
-      | $"P($in.int)DT($in.frac)H"
-    }
+    duration => { $"P($in // 1day)DT(($in mod 1day) / 1hr | math round --precision=1)H" }
   }
 }
 

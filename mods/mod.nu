@@ -31,19 +31,12 @@ def default-include-modules [
   ) | uniq-by module_id
 }
 
-def preserve-serialized-closure [
-]: closure -> list<string> {
-  to nuon --serialize --raw-strings
-  | from nuon
-  | str trim
-  | split chars
-  | skip until { ['{' '|'] not-has $in }
-  | drop
-  | str join
-  | str trim
+def preserve-serialized-closure []: closure -> list<string> {
+  view source $in
+  | str replace --all --regex '^\{\|*\s*|\s*\}$' ''
   | lines
   | str trim --left
-  | append [""]
+  | append ['']
 }
 
 alias build-mods-refs = par-each --keep-order {|row|

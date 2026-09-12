@@ -6,7 +6,7 @@ const SYCL: path = $HOME | path join ls-sycl-device
 export-env {
   if ($HOME | path type) == dir and $env not-has IPEX_LLM_OLLAMA_HOME {
     $env.IPEX_LLM_OLLAMA_HOME = $HOME
-    $env.PATH ++= [$HOME] | where ($it | path type) == dir
+    $env.PATH ++= [$HOME]
   }
 }
 # List the detected SYCL devices.

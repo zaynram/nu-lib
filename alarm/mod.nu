@@ -14,10 +14,8 @@ export def --env set [
   --then (-t): closure # Closure to run once the timer expires
   --silent (-s) # Disable default alarm expiration behavior (`clear -k` + print message)
 ]: nothing -> record {
-  $env.time.alarms | where name == $name | first | if $in != null {
-    error make $'an alarm named ($name) is already set'
-  }
-  let now = date now
+  if $env.time.alarms.name has $name { error make $'an alarm named ($name) is already set' }
+  let now: datetime = date now
   let wait: duration = match ($when | describe) {
     duration => $when
     datetime => { $when | $in - $now }

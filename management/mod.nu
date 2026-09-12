@@ -78,8 +78,8 @@ export def history [
 
 # Reload all plugins to ensure latest version is loaded.
 export def --env reload-plugins []: nothing -> nothing {
-  plugin list --engine | each {|row|
-    try { plugin stop $row.name; plugin rm $row.name };
+  for row in (plugin list --engine) {
+    try { plugin stop $row.name; plugin rm $row.name }
     try {
       plugin add $row.filename
       print $'(ansi green)added ($row.name)(ansi rst)'
@@ -87,7 +87,7 @@ export def --env reload-plugins []: nothing -> nothing {
       cargo uninstall ($row.filename | path basename) out+err>| complete
       print --stderr $'(ansi red)uninstalled ($row.name)(ansi rst)'
     }
-  } | ignore
+  }
 }
 
 # Update the Nushell binary and reload all plugin binaries.

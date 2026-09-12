@@ -25,20 +25,17 @@ export alias "path as-windows" = each {|| try { wslpath -m $in } }
 # ——— environment ——————————————————————————————————————————————————————————————
 
 export-env {
-  const RE: string = '[[:punct:]]{0,1}/mnt/[[:alpha:]]{1}/.+/{0,1}[[:punct:]]{0,1}'
   if $env not-has WINPATH {
-    $env.PATH?
+    $env.PATH
     | split row (char esep)
     | flatten
-    | reduce --fold={PATH: [] WINPATH: []} {|it acc|
-      let c: cell-path = if $it =~ $RE { $.WINPATH } else { $.PATH }
-      $acc | update $c { append $it | uniq }
-    }
-  } | default {}
-  | if $env not-has WSL_DISTRO_NAME {
-    insert WSL_DISTRO_NAME { sys host | get name | split words | first }
-  } else if ($in | is-not-empty) { }
-  | load-env
+    | uniq
+    | group-by {|p| if $p =~ '[[:punct:]]{0,1}/mnt/[[:alpha:]]{1}/.+/{0,1}[[:punct:]]{0,1}' { 'WINPATH' } else { 'PATH' } }
+    | default [] PATH
+    | default [] WINPATH
+    | load-env
+  }
+  if $env not-has WSL_DISTRO_NAME { $env.WSL_DISTRO_NAME = sys host | get name | split words | first }
 }
 
 # ——— definitions ——————————————————————————————————————————————————————————————
@@ -49,7 +46,7 @@ export def --wrapped "win run" [
   # The name of the application to run
   ...rest: string
   # Arguments to pass through to the application if it resolves
-]: any -> any {
+]: nothing -> any {
   win which $name | match ($in | describe) {
     string => { run-external $in ...$rest }
     nothing => { error make --unspanned $"command not found: '($name)'" }
@@ -70,7 +67,7 @@ export def --wrapped "win which" [
     | default []
     | str trim --right
     | path as-posix
-    | if $all { } else { first }
+    | if $all { } else { get --optional 0 }
   }
   match ($names | length) {
     0 => { return }
