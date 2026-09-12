@@ -193,7 +193,7 @@ export def --env main [
 const _exclude: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
 alias nu-glob = do {|then?: closure|
   par-each {|d|
-    glob $"($d)/**/*.nu" --no-dir --depth=3 --exclude=$_exclude
+    glob ($d | fix-path ** *.nu) --no-dir --depth=3 --exclude=$_exclude
     | if $then != null { do --ignore-errors $then $d } else { path relative-to $d }
   } | compact --empty | flatten | uniq
 }
@@ -219,7 +219,7 @@ def _autoload-target []: nothing -> oneof<record, list> {
   | into completions {completion_algorithm: substring}
 }
 def _config-target []: nothing -> oneof<record, list> {
-  xglob $"($config)/*"
+  xglob ($config | fix-path *)
   | wrap description
   | insert value {|row| $row.description | path basename }
   | into completions {
@@ -236,7 +236,7 @@ def _config-path [context: string]: nothing -> oneof<record, list> {
   | if ($in | is-empty) { return [] } else {
     let dir: path = $in | first
     let label: string = try { $dir | path relative-to $config } catch { $dir | replace-home }
-    xglob $"($dir)/**/*" --no-dir
+    xglob ($dir | fix-path ** *) --no-dir
     | path relative-to $dir
     | wrap value
     | insert description $label
