@@ -11,13 +11,15 @@ const _mnt: record<name: string, path: path, ipv4: string, auth: path> = {
 
 # ——— aliases ——————————————————————————————————————————————————————————————————
 
+# Check whether the Termux filesystem is currently mounted.
 export alias is-mounted = do --ignore-errors { glob $"($_mnt.path)/*" --depth=1 | is-not-empty }
+# Unmount the Termux filesystem, if it is mounted.
 export alias unmount = do --capture-errors {|p: path = $_mnt.path| if (is-mounted) { fusermount3 -u $p } }
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
 # Create or remove a filesystem mount for a configured device running Termux.
-def mount [
+export def mount [
   --name (-n): string = $_mnt.name # The username of the termux login
   --path (-p): path = $_mnt.path # The path of the termux filesystem mount
   --ipv4 (-i): string = $_mnt.ipv4 # The IP address of the termux device

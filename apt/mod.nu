@@ -19,7 +19,7 @@ export alias acl = try {
 # Run the automated cleanup scripts for apt, optionally uninstalling packages first.
 export def arm [
   ...names: string@_removable-packages # Names of any packages to remove
-]: nothing -> string {
+]: nothing -> nothing {
   try {
     if ($names | is-not-empty) { sudo apt-get remove --yes ...$names }
     sudo apt-get autoremove --yes

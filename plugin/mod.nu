@@ -1,6 +1,6 @@
 const REGEX: record = {
-  gh-repo: `^(?<owner>\w+)/(?<name>\w+)$`
-  nu-plugin: `^nu_plugin_(?<name>\w+)$`
+  gh-repo: `^(?<owner>[\w.-]+)/(?<name>[\w.-]+)$`
+  nu-plugin: `^nu_plugin_(?<name>[\w.-]+)$`
 }
 
 # Install a plugin using cargo and automatically register it.
