@@ -38,8 +38,8 @@ export-env {
       }
       to_string: {|v?|
         if ($v | describe) =~ '^(nothing|string)$' { return ($v | to text) }
-        let n: int = $v.repo?.discovery? | default false | into int
-        let p: string = $v.repo?.path? | default [] | get $.directory? | compact | uniq | str join (char esep)
+        let n: int = $v.discovery? | default false | into int
+        let p: string = $v.path? | default [] | get $.directory? | compact | uniq | str join (char esep)
         return $"($n)@($p)"
       }
     }
