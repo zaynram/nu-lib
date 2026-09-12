@@ -30,6 +30,15 @@ def each-completion [c: closure]: [
 
 # ——— definitions —————————————————————————————————————————————————————————————
 
+# Ensure a joined path contains no backslashes on Windows; same as `path join` on other platforms.
+export def fix-path [...segments: string]: path -> path {
+  path join ...$segments | match $nu.os-info.name {
+    windows => { str replace --all '\' '/' }
+    _ => {}
+  }
+}
+
+
 # Compute the difference between two datetimes as a duration, or evaluate the datetime after a duration as a datetime.
 export def "date diff" [
   d: oneof<datetime, duration> = 0us
@@ -102,11 +111,21 @@ export def --wrapped editor [
     let rest: list = append $rest | compact --empty | default --empty $cwd | resolve
     if $env has ZELLIJ {
       edit --workspace=$cwd $rest.0? ...($rest | skip 1)
+    } else if $nu.os-info.name != windows and (on-path editor) {
+      cd $cwd
+      run-external editor ...$rest
     } else {
-      cd $cwd; run-external editor ...$rest
+      cd $cwd
+      run-external $env.config.buffer_editor ...$rest
     }
   } else {
-    if $env has ZELLIJ { help editor } else { man editor }
+    if $env has ZELLIJ {
+      help editor
+    } else if $nu.os-info.name != windows and (on-path man editor) {
+      man editor
+    } else {
+      help $env.config.buffer_editor
+    }
   }
 }
 
@@ -123,7 +142,7 @@ export def on-path [
   append $names | compact --empty | if ($in | is-empty) {
     error make --unspanned 'no commands were provided'
   } else {
-    run-internal $mode { which $in | is-not-empty }
+    run-internal $mode { which $in --all | where type == external | is-not-empty }
   }
 }
 

@@ -36,7 +36,11 @@ const OPT: record = {
   -ZlibLevel: 1
 }
 const EXC: list = [tint2 Xtigervnc openbox mstsc.exe]
-const PSE: path = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
+const PSE: path = if $nu.os-info.name == windows {
+  '/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
+} else {
+  '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
+}
 const VAR: list<string> = [WSL_INTEROP DISPLAY SSH_CONNECTION XRDP_SESSION]
 
 # ——— environment ——————————————————————————————————————————————————————————————
@@ -508,7 +512,14 @@ def kill-one [
         SIGINT => 2
         SIGKILL => 9
         _ => 15
-      } | kill --quiet=(not $notify) --signal=$in $pid
+      } | run-internal kill ...(
+        if $nu.os-info.name == windows {
+          $'--force=($in == 9)'
+        } else {
+          $'--signal=($in)'
+        } | prepend [$'--quiet=(not $notify)']
+        | append $pid
+      )
     }
     string => {
       let name: string = $in

@@ -1,6 +1,6 @@
 # Various management-related utilities for working with system and provisioned packages.
 
-use ~/library/nushell/_internal [ NU_LIB_DIRS null-device ]
+use ../ [ NU_LIB_DIRS null-device ]
 export use nightly-toolkit get-latest-nightly-build
 
 # Ephemeral log file holding the output of the latest run.

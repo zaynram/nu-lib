@@ -6,12 +6,16 @@
 
 use ../error
 use ../path
-use ../util [ editor "into completions" ]
+use ../util [ editor fix-path "into completions" ]
 
 # ——— constants —————————————————————————————————————————————————————————————
 
 export const bin: path = $nu.home-dir | path join .local bin
-export const lib: path = $nu.home-dir | path join library
+export const lib: path = if $nu.os-info.name == windows {
+  $nu.home-dir | path join desktop
+} else {
+  $nu.home-dir | path join library
+}
 export const data: path = $nu.data-dir | path dirname
 export const home: path = $nu.home-dir
 export const autoload: path = $nu.user-autoload-dirs.0?
@@ -27,6 +31,7 @@ const _exclude: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
 
 # ——— helpers ———————————————————————————————————————————————————————————————
 
+
 alias xglob = glob --depth=3 --exclude=[
   **/*.yazi/**
   `**/{.vscode,.git*,plugins,vale/styles}/**`
@@ -38,7 +43,7 @@ alias xglob = glob --depth=3 --exclude=[
 ]
 
 alias nu-glob = do {|then?: closure|
-  par-each {|d|
+  fix-path | par-each {|d|
     glob $"($d)/**/*.nu" --no-dir --depth=3 --exclude=$_exclude
     | if $then != null { do --ignore-errors $then $d } else { path relative-to $d }
   } | compact --empty | flatten | uniq
@@ -78,8 +83,8 @@ export def path [
   pred?: closure # Predicate to filter the elements included in the output list
   --all (-a) # Include all directories (cannot be combined with a predicate)
 ]: nothing -> list {
-  glob --no-file --depth=2 --exclude=[**/.vscode-server-insiders/**] $"($home)/**/bin"
-  | append (glob --no-file --no-symlink --exclude=[**/_internal/**] $"($scripts)/**")
+  glob --no-file --depth=2 --exclude=[**/.vscode-server-insiders/**] $"($home | fix-path ** bin)"
+  | append (glob --no-file --no-symlink --exclude=[**/_internal/**] $"($scripts | fix-path **)")
   | if $all { } else if $pred != null { where $pred } else { difference $env.PATH }
 }
 
