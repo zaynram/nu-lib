@@ -13,7 +13,7 @@ export def install [
     | where $plugin =~ $it.regex
     | first
     | if $in == null { error make --unspanned 'plugin name or git is required' } else { }
-  let name: string = $plugin | parse $mode.regex | into record | get name
+  let name: string = $plugin | parse --regex $mode.regex | into record | get name
   let path: path = $env.CARGO_HOME?
     | default { $nu.home-dir | path join .cargo }
     | path join bin $name

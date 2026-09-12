@@ -106,7 +106,7 @@ export def --env lib [
 ]: nothing -> oneof<nothing, path> {
   vars
   | get --ignore-case --optional $target
-  | default { [$modules $scripts] | nu-glob { where $it has $target } | first }
+  | default { [$modules $scripts] | nu-glob { where $it has $target } | sort | first }
   | submit-path $target --edit=(not $get)
 }
 
