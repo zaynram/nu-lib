@@ -22,7 +22,6 @@ def ensure-in-bounds [n: int]: oneof<table, list, nothing> -> int {
     $n if $n >= $len => { $len - 1 }
   }
 }
-alias parse-variable = try { parse 'env_change.{name}' | into record | get name }
 alias validate-target = do --capture-errors {||
   if $env.config.hooks not-has ($in | into string | split row . | where $it != '$' | first) {
     error make --unspanned $'unknown hook type: ($in)'
@@ -39,19 +38,6 @@ alias hook-getter = do --capture-errors {|target: oneof<string, cell-path>|
 alias hook-setter = do {|target: oneof<string, cell-path>|
   $target | validate-target
   {|_: closure| $env.config.hooks = $env.config.hooks | upsert $target $_ }
-}
-
-def test-args [
-  target: oneof<string, cell-path>
-]: list<any> -> list<any> {
-  let rest: list = $in
-  let ct: int = $rest | length
-  match ($target | parse-variable) {
-    null => $rest
-    $x if $ct == 2 => $rest
-    $x if $ct == 1 => [...$rest ($env | get --ignore-case --optional $x)]
-    $x => [null ($env | get --ignore-case --optional $x)]
-  }
 }
 
 def parse-context []: string -> list<string> {
@@ -184,7 +170,7 @@ export def --wrapped test [
 ]: nothing -> any {
   match (invoke (hook-getter $target) $item) {
     null => { error make --unspanned $'no closure found for ($target) at ($item)' }
-    $elt => { do --capture-errors $elt ...($rest | test-args $target) }
+    $elt => { do --capture-errors $elt ...$rest }
   }
 }
 

@@ -85,7 +85,7 @@ export def --wrapped editor [
   ...rest: string # Pass arguments to the wrapped editor
 ]: oneof<nothing, path, list<path>> -> nothing {
   if $rest not-has `--help` {
-    let rest: list = append $rest | compact --empty | default --empty $cwd | path expand
+    let rest: list = append $rest | compact --empty | default --empty [$cwd] | path expand
     if $env has ZELLIJ {
       edit --workspace=$cwd $rest.0? ...($rest | skip 1)
     } else if $nu.os-info.name != windows and (on-path editor) {

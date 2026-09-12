@@ -236,12 +236,7 @@ def resolve-repo-root []: nothing -> oneof<error, directory> {
   }
 }
 
-def "str chrono" []: oneof<duration, datetime> -> string {
-  match ($in | describe) {
-    datetime => { format date %FT%T%:z }
-    duration => { $"P($in // 1day)DT(($in mod 1day) / 1hr | math round --precision=1)H" }
-  }
-}
+def "str chrono" []: datetime -> string { format date %FT%T%:z }
 
 def mkargs [...args: string]: record<command: string> -> list<string> {
   let vars: record = default {} | compact --empty

@@ -53,14 +53,12 @@ alias nu-glob = do {|then?: closure|
 alias vars = do --ignore-errors { (scope variables | where name == '$user').0?.value }
 
 def submit-path [
-  target: string
+  target?: string
   --edit
 ]: oneof<nothing, path> -> oneof<nothing, path> {
-  match $in {
-    null | '' => { error wrap --code=internal::user::unresolved_target $"no items found for target: '($target)'" }
-    $p if $edit => { editor ($p | path expand) }
-    $p => { $p | path expand }
-  }
+  let p: oneof<nothing, path> = $in
+  if ($p | is-empty) { error wrap --code=internal::user::unresolved_target $"no items found for target: '($target)'" }
+  if $edit { editor ($p | path expand) } else { $p | path expand }
 }
 
 # ——— definitions ———————————————————————————————————————————————————————————
@@ -129,8 +127,8 @@ export def auto [
   }
   match {t: $target r: $get} {
     {t: null r: true} => { return $dir }
-    {t: null r: false} => { ls --short-names | path select | path expand }
-    {t: $t} => { $t | with-extension nu | path expand }
+    {t: null r: false} => { ls --short-names | path select }
+    {t: $t} => { $t | with-extension nu }
   } | submit-path $target --edit=(not $get)
 }
 
@@ -143,7 +141,7 @@ export def config [
   target?: path@_config-target # The directory name to search for config files under
   --path (-p): path@_config-path # Path of a file to edit, relative to `$target`
   --get (-g) # Return the constructed path instead of opening it
-]: nothing -> oneof<nothing, table> {
+]: nothing -> oneof<nothing, path, table> {
   let item: path = [$config $target] | compact --empty | path join
   $item | match ($in | path type) {
     file => { submit-path $target --edit=(not $get) | return $in }
@@ -156,9 +154,9 @@ export def config [
     if ($files | is-empty) {
       error make --unspanned $"no config files found for '($target)'"
     } else if $count > 1 {
-      $files | path truncate --root . | path select | path expand
+      $files | path truncate --root . | path select
     } else if $count == 1 {
-      $files | first | path expand
+      $files | first
     }
   } | submit-path $target --edit=(not $get)
 }

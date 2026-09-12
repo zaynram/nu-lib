@@ -24,7 +24,7 @@ export def mount [
   --path (-p): path = $_mnt.path # The path of the termux filesystem mount
   --ipv4 (-i): string = $_mnt.ipv4 # The IP address of the termux device
   --auth (-a): path = $_mnt.auth # The identity file to use for authentication
-]: nothing -> table {
+]: nothing -> oneof<nothing, table> {
   if (is-mounted) { return }
   ^sshfs -p 8022 $path -o ...[
     $"IdentityFile=($auth),reconnect,ServerAliveInterval=15,idmap=user,uid=(id -u),gid=(id -g),StrictHostKeyChecking=accept-new"
