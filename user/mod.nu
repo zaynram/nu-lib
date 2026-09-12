@@ -43,8 +43,8 @@ alias xglob = glob --depth=3 --exclude=[
 ]
 
 alias nu-glob = do {|then?: closure|
-  fix-path | par-each {|d|
-    glob $"($d)/**/*.nu" --no-dir --depth=3 --exclude=$_exclude
+  par-each {|d|
+    glob ($d | fix-path ** *.nu) --no-dir --depth=3 --exclude=$_exclude
     | if $then != null { do --ignore-errors $then $d } else { path relative-to $d }
   } | compact --empty | flatten | uniq
 }
@@ -191,12 +191,6 @@ export def --env main [
 # ——— completions ———————————————————————————————————————————————————————————
 
 const _exclude: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
-alias nu-glob = do {|then?: closure|
-  par-each {|d|
-    glob ($d | fix-path ** *.nu) --no-dir --depth=3 --exclude=$_exclude
-    | if $then != null { do --ignore-errors $then $d } else { path relative-to $d }
-  } | compact --empty | flatten | uniq
-}
 alias replace-home = str replace $nu.home-dir '~'
 
 def _cell-path []: nothing -> oneof<record, list> {
