@@ -51,6 +51,29 @@ alias nu-glob = do {|then?: closure|
 
 alias vars = do --ignore-errors { (scope variables | where name == '$user').0?.value }
 
+def submit-path [
+  target: string
+  --edit
+]: [
+  nothing -> nothing
+  path -> oneof<nothing, path>
+  oneof<table<name: string>, list<path>> -> oneof<list<path>, nothing>
+] {
+  each {|p|
+    match ($p | describe | split words | first) {
+      string => $p
+      table if $p has name => $p.name
+      _ => null
+    } | path expand
+  } | if ($in | is-empty) {
+    error wrap --code=internal::user::unresolved_target ...[
+      $"no items found for target: '($target)'"
+    ]
+  } else if $edit {
+    editor ...(append $in)
+  } else { }
+}
+
 # ——— definitions ———————————————————————————————————————————————————————————
 
 # Consume or initialize the user environment variables.
@@ -94,13 +117,10 @@ export def --env lib [
   target: path@_any-lib-target # The name of the module or script to target
   --get (-g) # Return the constructed path instead of opening it
 ]: nothing -> oneof<nothing, path> {
-  let p: path = vars | get --ignore-case --optional $target
-    | default { [$modules $scripts] | nu-glob { where $it has $target } | first }
-  if $get { return $p } else if $p != null { editor $p } else {
-    error wrap --code=usr::lib::unresolved_target ...[
-      $"could not find script or module matching '($target)'"
-    ]
-  }
+  vars
+  | get --ignore-case --optional $target
+  | default { [$modules $scripts] | nu-glob { where $it has $target } | first }
+  | submit-path $target --edit=(not $get)
 }
 
 # Interact with an initialization script from an autoload directory.
@@ -118,20 +138,11 @@ export def auto [
       "could not resolve autoload directory"
     ]
   }
-  let value: oneof<nothing, path> = match {t: $target r: $get} {
+  match {t: $target r: $get} {
     {t: null r: true} => { return $dir }
     {t: null r: false} => { ls --short-names | path select | path expand }
     {t: $t} => { $t | path extension --replace nu | path expand }
-  }
-  if $value == null {
-    error wrap --code=common::user::auto::unresolved_target ...[
-      $"unable to resolve autoload script matching '($target)'"
-    ]
-  } else if $get {
-    return $value
-  } else {
-    editor $value
-  }
+  } | submit-path $target --edit=(not $get)
 }
 
 # Edit a non-nushell configuration file.
@@ -144,34 +155,23 @@ export def config [
   --path (-p): path@_config-path # Path of a file to edit, relative to `$target`
   --get (-g) # Return the constructed path instead of opening it
 ]: nothing -> oneof<nothing, table> {
-  let cwd: path = [$config $target] | compact --empty | path join
-  try { mkdir $cwd; cd $cwd } catch {
-    error wrap "could not resolve config directory" --code usr::config::unresolved_directory
+  let item: path = [$config $target] | compact --empty | path join
+  $item | match ($in | path type) {
+    file => { submit-path $target --edit=(not $get) | return $in }
+    dir => { cd $in }
+    _ => { mkdir $in; cd $in }
   }
-  if $path != null {
-    if not $get { editor $path; return }
-    return (pwd | path join $path)
-  }
-  let files: list = try { xglob **/* --no-dir } | default []
-  let count: int = $files | length
-  let value: oneof<nothing, path> = if ($files | is-empty) {
-    error make --unspanned $"no config files found for '($target)'"
-  } else if $count > 1 {
-    $files | path truncate --root . | path select | path expand
-  } else if $count == 1 {
-    $files | first | path expand
-  }
-
-  if $value == null {
-    error make {
-      msg: "could not resolve configuration file"
-      label: {text: target span: (metadata $target).span}
+  if $path != null { $path } else {
+    let files: list = try { xglob **/* --no-dir } | default []
+    let count: int = $files | length
+    if ($files | is-empty) {
+      error make --unspanned $"no config files found for '($target)'"
+    } else if $count > 1 {
+      $files | path truncate --root . | path select | path expand
+    } else if $count == 1 {
+      $files | first | path expand
     }
-  } else if $get {
-    return $value
-  } else {
-    editor $value
-  }
+  } | submit-path $target --edit=(not $get)
 }
 
 # Navigate to (or print) a directory value from the `usr` constant.
@@ -180,10 +180,11 @@ export def --env main [
   --get (-g) # Return the directory path instead of navigating to it
 ]: nothing -> oneof<nothing, path, record> {
   if $target == null { return (vars) }
-  let dir: oneof<nothing, path> = vars | get --ignore-case --optional $target
-  if $get { return $dir } else if $dir != null { cd $dir } else {
+  vars
+  | get --ignore-case --optional $target
+  | if $get { return $in } else if $in != null { cd $in } else {
     error wrap --code=common::user::dir::invalid_target ...[
-      $"the `$var` constant does not have property '($target)'"
+      $"no variable found for target: '($target)'"
     ]
   }
 }

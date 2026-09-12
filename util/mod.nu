@@ -1,21 +1,18 @@
+# General helpers and utility methods.
+
+# nu-lint-ignore-file: unchecked_get_index, require_main_with_stdin, add_doc_comment_exported_fn
+
 # ——— imports —————————————————————————————————————————————————————————————————
 
 use ../path resolve
 use ($nu.data-dir | path basename --replace nupm/modules/session) edit
 
+export use std/help
 export use std/util [ "path add" null-device ellie ]
-export module std/help
-export module std/bench
 
 const EXE: path = $nu.current-exe | path expand --strict --no-symlink
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
-
-alias quote-char = match $in {
-  single => [`'` `'`]
-  double => [`"` `"`]
-  auto => ['`' '`']
-}
 
 def each-completion [c: closure]: [
   nothing -> oneof<list<any>, table<value: any>>
@@ -34,7 +31,7 @@ def each-completion [c: closure]: [
 export def fix-path [...segments: string]: path -> path {
   path join ...$segments | match $nu.os-info.name {
     windows => { str replace --all '\' '/' }
-    _ => {}
+    _ => { }
   }
 }
 
@@ -145,7 +142,7 @@ export def on-path [
   }
 }
 
-alias resolve-cmd = try { which $in | get $.0?.path }
+alias resolve-cmd = do --ignore-errors {|| which $in | get $.0?.path }
 
 # Return the absolute path of a command if found, otherwise null.
 @category core

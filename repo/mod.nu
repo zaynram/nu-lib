@@ -37,9 +37,9 @@ export-env {
         }
       }
       to_string: {|v?|
-        if ($v | describe) !~ ^record { return ($v | default '') }
-        let n: int = $v.repo?.discovery | default false | into int
-        let p: string = $v.repo?.path.directory | default [] | uniq | str join (char esep)
+        if ($v | describe) =~ '^(nothing|string)$' { return ($v | to text) }
+        let n: int = $v.repo?.discovery? | default false | into int
+        let p: string = $v.repo?.path? | default [] | get $.directory? | compact | uniq | str join (char esep)
         return $"($n)@($p)"
       }
     }
@@ -48,6 +48,7 @@ export-env {
   if $env not-has repo or ($env.repo | describe) == string { env --load }
 }
 
+# Load the `repo` module environment.
 export def --env env [
   --find (-f)
   # Enable repository search behavior (sets `$env.repo.discovery` to `true`)
@@ -56,22 +57,23 @@ export def --env env [
   --show (-s)
   # Return the user environment, as a record
 ]: nothing -> oneof<nothing, record> {
-  if $load {
-    # Always reassign the `$env.repo` value to pick up environment changes and gracefully handle [de-]serialization issues on load.
-    $env.repo = {discovery: ($env.repo?.discovery? | into bool --relaxed | $in or $find) cache: null path: []}
-      | match ($env.repo? | describe | split words | first) {
-        # Sensible defaults for missing or null values.
-        nothing => { }
-        # Process termination can cause converter to unload while retaining the variable value, which can block reinitialization and throw errors on every command.
-        # To avoid this case, we convert strings manually if detected when this module loads.
-        string => { do --capture-errors $env.ENV_CONVERSIONS.repo.from_string $env.repo }
-        record => { merge deep --strategy=prepend $env.repo }
-        $t => { error make --unspanned $'received unknown type for `$env.repo`: ($t)' }
-        # Upsert here the branches to ensure `$env.repo.discovery` is evaluated.
-      } | into record
-      | if $find { upsert path { append (discover-git-repos | hydrate-git-context) | uniq-by name } } else { }
-  }
   if $show or not $load { return $env.repo? }
+  # Always reassign to pick up environment changes and gracefully handle [de-]serialization issues on load.
+  $env.repo = $env.repo?
+    | match ($in | describe | split words | first) {
+      record => { }
+      # Sensible defaults for missing or null values.
+      nothing => {discovery: false cache: null path: []}
+      # Process termination can cause converter to unload while retaining the variable value, which can block reinitialization and throw errors on every command.
+      # To avoid this case, we convert strings manually if detected when this module loads.
+      string => { do --capture-errors $env.ENV_CONVERSIONS.repo.from_string $in }
+      $t => { error make --unspanned $'received unknown type for `$env.repo`: ($t)' }
+    } | into record
+    # Upsert here the branches to ensure `$env.repo.discovery` is evaluated.
+    | upsert discovery { $in or $find }
+    | if $in.discovery {
+      upsert path { append (discover-git-repos | hydrate-git-context) | uniq-by name }
+    } else { }
 }
 
 # Add a project directory to the `$env.repo.path`.

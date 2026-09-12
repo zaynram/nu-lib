@@ -1,6 +1,7 @@
 # Various management-related utilities for working with system and provisioned packages.
 
-use ../mod.nu [ NU_LIB_DIRS null-device ]
+use ../mod.nu NU_LIB_DIRS
+use ../util null-device
 export use nightly-toolkit get-latest-nightly-build
 
 # Ephemeral log file holding the output of the latest run.
