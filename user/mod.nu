@@ -7,6 +7,7 @@
 use ../error
 use ../path
 use ../util [ editor fix-path "into completions" ]
+use std-rfc/path with-extension
 
 # ——— constants —————————————————————————————————————————————————————————————
 
@@ -54,24 +55,12 @@ alias vars = do --ignore-errors { (scope variables | where name == '$user').0?.v
 def submit-path [
   target: string
   --edit
-]: [
-  nothing -> nothing
-  path -> oneof<nothing, path>
-  oneof<table<name: string>, list<path>> -> oneof<list<path>, nothing>
-] {
-  each {|p|
-    match ($p | describe | split words | first) {
-      string => $p
-      table if $p has name => $p.name
-      _ => null
-    } | path expand
-  } | if ($in | is-empty) {
-    error wrap --code=internal::user::unresolved_target ...[
-      $"no items found for target: '($target)'"
-    ]
-  } else if $edit {
-    editor ...(append $in)
-  } else { }
+]: oneof<nothing, path> -> oneof<nothing, path> {
+  match $in {
+    null | '' => { error wrap --code=internal::user::unresolved_target $"no items found for target: '($target)'" }
+    $p if $edit => { editor ($p | path expand) }
+    $p => { $p | path expand }
+  }
 }
 
 # ——— definitions ———————————————————————————————————————————————————————————
@@ -141,7 +130,7 @@ export def auto [
   match {t: $target r: $get} {
     {t: null r: true} => { return $dir }
     {t: null r: false} => { ls --short-names | path select | path expand }
-    {t: $t} => { $t | path extension --replace nu | path expand }
+    {t: $t} => { $t | with-extension nu | path expand }
   } | submit-path $target --edit=(not $get)
 }
 

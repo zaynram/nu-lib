@@ -1,13 +1,3 @@
-# Retrieve or replace the extension of a path.
-@category filesystem
-export def extension [
-  --replace (-r): string # The extension to replace the current with
-]: path -> path {
-  let parsed: record<parent: path, stem: string, extension: string> = $in | path parse
-  if $replace == null { return $parsed.extension }
-  $parsed | update extension ($replace | str trim --left --char .) | path join
-}
-
 # Truncate a path by segment count or relativity to a base path.
 #
 # The `--from` argument uses regex matching on the first character
@@ -59,5 +49,3 @@ export def select [
     error make $message
   }
 }
-
-export alias resolve = par-each --keep-order {|_| try { path expand } catch { return $_ } }

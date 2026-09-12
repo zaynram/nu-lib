@@ -135,7 +135,7 @@ export def --env list [
     | update $.module.file {|row|
       let p: path = if $in ends-with mod.nu { path dirname } else { }
       let s: oneof<nothing, record> = $p | module-file-shorthand
-      $p | if $s != null { str replace $s.find $s.replace } else { }
+      $p | if $absolute or $s == null { } else { str replace $s.find $s.replace }
     } | reject --optional $.module.extra_description
     | if $commands { flatten module } else { get module | rename --column={file: location} }
   } | if $name != null { first } else { sort }

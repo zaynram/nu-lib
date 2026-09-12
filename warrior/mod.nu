@@ -296,19 +296,6 @@ def _time_tags []: nothing -> oneof<list, record> {
   }
 }
 
-def _task_tags []: nothing -> record {
-  task _tags
-  | complete
-  | get stdout
-  | lines
-  | str trim
-  | into completions {
-    case_sensitive: false
-    completion_algorithm: prefix
-    sort: true
-  }
-}
-
 def _projects []: nothing -> record {
   {
     options: {

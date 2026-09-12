@@ -4,7 +4,6 @@
 
 # ——— imports —————————————————————————————————————————————————————————————————
 
-use ../path resolve
 use ($nu.data-dir | path basename --replace nupm/modules/session) edit
 
 export use std/help
@@ -35,27 +34,9 @@ export def fix-path [...segments: string]: path -> path {
   }
 }
 
-# Compute the difference between two datetimes as a duration, or evaluate the datetime after a duration as a datetime.
-export def "date diff" [
-  d: oneof<datetime, duration> = 0us
-  # Offset or comparison date to compute the duration from the input date (or now)
-  --tz: string@_timezones = local
-  # Timezone to convert datetimes to before operating
-  --format (-f): string@_datetime_formats
-  # Return a string representation of the datetime in this format
-  --invert (-i)
-  # Reverse the mathemetical operation on the argument; will flip the anchor if datetime, otherwise will invert the sign of a duration
-  --record (-r)
-  # Return the datetime or duration difference as a record
-]: oneof<nothing, string, datetime> -> oneof<duration, datetime, string> {
-  match ($in | describe) { datetime => { } nothing => { date now } string => { date from-human } }
-  | date to-timezone $tz
-  | match ($d | describe) { datetime if $invert => { $d - $in } duration if not $invert => { $in + $d } _ => { $in - $d } }
-  | if $format != null and ($in | describe) == datetime { format date $format } else if $record { into record } else { }
-}
 
-# Return a serialization of a datetime, optionally for a computed time delta.
-export alias timestamp = date diff --format=%+
+# Serialize a datetime (default: now) in RFC 3339 format.
+export def timestamp []: oneof<nothing, datetime> -> string { default { date now } | format date %+ }
 
 # Wrap an iterable containing custom completions into a record with completion options.
 # - `$in` will have elements converted to strings with `to text` then compacted (with `--empty`)
@@ -104,7 +85,7 @@ export def --wrapped editor [
   ...rest: string # Pass arguments to the wrapped editor
 ]: oneof<nothing, path, list<path>> -> nothing {
   if $rest not-has `--help` {
-    let rest: list = append $rest | compact --empty | default --empty $cwd | resolve
+    let rest: list = append $rest | compact --empty | default --empty $cwd | path expand
     if $env has ZELLIJ {
       edit --workspace=$cwd $rest.0? ...($rest | skip 1)
     } else if $nu.os-info.name != windows and (on-path editor) {
@@ -140,28 +121,6 @@ export def on-path [
   } else {
     run-internal $mode { which $in --all | where type == external | is-not-empty }
   }
-}
-
-alias resolve-cmd = do --ignore-errors {|| which $in | get $.0?.path }
-
-# Return the absolute path of a command if found, otherwise null.
-@category core
-export def command [
-  ...names: string
-  # The names of the commands to resolve the paths of
-  --prune (-p)
-  # Prune entries for commands that could not be resolved (warning: may desync input/output list indices)
-  --as-record (-r)
-  # Return a mapping of command names to their locations
-]: [
-  nothing -> oneof<nothing, path, list<path>, record>
-  string -> oneof<path, list<path>, record>
-  list<string> -> oneof<list<path>, record>
-] {
-  append $names
-  | match ($in | length) { 0 => { return } 1 => { first } _ => { } }
-  | if $as_record { each {|it| resolve-cmd | wrap $it } | into record } else { each { resolve-cmd } }
-  | match ($in | describe) { string | nothing => { } _ if $prune => { compact | sort } _ => { sort } }
 }
 
 # Run closures based on the current execution platform.
@@ -204,21 +163,6 @@ export def --env --wrapped reload [
   }
 }
 
-# Substitute a falsy value with a default or closure.
-@category core
-export def substitute [
-  default?: oneof<nothing, any> # The value to substitute when the input is falsy
-  --run (-x): closure # Execute a closure when the input is falsy(priority over default if given)
-  --empty-ok (-e) # Treat empty containers as truthy and return them
-]: oneof<nothing, any> -> oneof<nothing, bool, any> {
-  let x: any = $in
-  match ($x | describe | split words | first) {
-    list | record | table => { if ($x | is-not-empty) or $empty_ok { return $x } }
-    _ => { try { if ($x | into bool --relaxed) { return $x } } }
-  }
-  match $run { null => $default _ => { do --capture-errors $run } }
-}
-
 # Link a binary to the user bin directory.
 @category platform
 export def bin-link [
@@ -257,32 +201,6 @@ export def bin-link [
   }
 }
 
-# Abstracted HTTP GET method with dynamic URL construction.
-@category network
-export def fetch [
-  url?: string # The URL to form request with (protocol can be omitted)
-  --pipe: oneof<string, list<string>> # Pipe the content to the executable, optionally with arguments
-  --save: path # Save the content to this path
-]: [
-  oneof<nothing, record<host: string, path: string>> -> oneof<nothing, path, string>
-] {
-  let content: string = match $url {
-    null => { $in | default { error make --unspanned 'no url was provided' } }
-    $s if $s =~ `^http[s]*://\w+` => { $s | url parse }
-    $s if $s =~ `^\w+\.\w+` => { $'https://($s)' | url parse }
-  } | default https scheme
-    | url join
-    | http get --raw $in
-
-  let args: list = [$pipe] | flatten | compact
-  let has_pipe: bool = $args | is-not-empty
-  let has_save: bool = $save != null
-
-  if not ($has_pipe or $has_save) { return $content }
-  if $has_pipe { $content | run-external ...$args | to text | print }
-  if $has_save { $content | save --raw --force $save | return $save }
-}
-
 # ——— helpers —————————————————————————————————————————————————————————————————
 
 def error [msg: string ...code: string]: oneof<nothing, record<stdout: string>> -> error {
@@ -306,12 +224,4 @@ def error [msg: string ...code: string]: oneof<nothing, record<stdout: string>> 
 
 def _executables []: nothing -> oneof<record, list> {
   which | where type == external | get command | path parse | get stem | into completions
-}
-
-def _timezones []: nothing -> oneof<record, list> {
-  'date to-timezone ' | commandline complete | into completions
-}
-
-def _datetime_formats []: nothing -> record {
-  format date --list | reject Example | rename --column={Specification: value Description: description} | into completions
 }

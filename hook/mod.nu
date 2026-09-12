@@ -31,17 +31,8 @@ alias validate-target = do --capture-errors {||
 
 alias hook-getter = do --capture-errors {|target: oneof<string, cell-path>|
   $target | validate-target
-  {|_: oneof<nothing, string, cell-path>|
-    $env.config.hooks
-    | get --ignore-case --optional $target
-    | default []
-    | if $_ == null or ($in | is-empty) {
-      return $in
-    } else if $in has $_ {
-      get $_
-    } else if $in has name and $in.name has $_ {
-      where name == $_ | first
-    }
+  {|_?: oneof<nothing, int, cell-path>|
+    $env.config.hooks | get --ignore-case --optional $target | default [] | if $_ == null { } else { get --optional $_ }
   }
 }
 
@@ -191,9 +182,9 @@ export def --wrapped test [
   item: cell-path@_hook-elements # Which condition or code closure to run
   ...rest: string # Arguments to pass to the closure
 ]: nothing -> any {
-  match (invoke (hook-setter $target) $item) {
+  match (invoke (hook-getter $target) $item) {
     null => { error make --unspanned $'no closure found for ($target) at ($item)' }
-    $elt => { do --capture-errors $elt ...(test-args $target) }
+    $elt => { do --capture-errors $elt ...($rest | test-args $target) }
   }
 }
 
