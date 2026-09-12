@@ -68,7 +68,14 @@ export def "init oh-my-posh" [
     $p if ($p | path parse).extension not-in [toml yaml yml json jsonc] => { error make --unspanned $"invalid configuration file: '($p)'" }
     $p => { oh-my-posh init nu --config=($p) }
   }
-  $autoload | path join oh-my-posh.nu | run ($autoload | path basename --replace require-tty) | ignore
+
+  let f: path = $autoload | path join oh-my-posh.nu
+  $f | run ($autoload | path basename --replace require-tty) | ignore
+  if $nu.os-info.name == windows {
+    open --raw $f
+    | collect { lines | take until { str contains '$_omp_executable upgrade' } | str join (char newline) }
+    | save --force $f
+  }
 }
 
 # Initialize and auto-start the default Zellij session.

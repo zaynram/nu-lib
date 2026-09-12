@@ -44,9 +44,10 @@ alias xglob = glob --depth=3 --exclude=[
 
 alias nu-glob = do {|then?: closure|
   par-each {|d|
-    glob ($d | fix-path ** *.nu) --no-dir --depth=3 --exclude=$_exclude
-    | if $then != null { do --ignore-errors $then $d } else { path relative-to $d }
-  } | compact --empty | flatten | uniq
+    let p: path = $d | fix-path
+    glob $"($p)/**/*.nu" --no-dir --depth=3 --exclude=$_exclude
+    | if $then != null { do --ignore-errors $then $p } else { path relative-to $p }
+  } | flatten --all | compact | uniq
 }
 
 alias vars = do --ignore-errors { (scope variables | where name == '$user').0?.value }
@@ -95,7 +96,7 @@ export def --env lib [
   --get (-g) # Return the constructed path instead of opening it
 ]: nothing -> oneof<nothing, path> {
   let p: path = vars | get --ignore-case --optional $target
-    | default { [$modules $scripts] | nu-glob { where $it =~ $target } | first }
+    | default { [$modules $scripts] | nu-glob { where $it has $target } | first }
   if $get { return $p } else if $p != null { editor $p } else {
     error wrap --code=usr::lib::unresolved_target ...[
       $"could not find script or module matching '($target)'"
