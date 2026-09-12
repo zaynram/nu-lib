@@ -7,16 +7,27 @@ use ../util "path add"
 
 # ——— constants ———————————————————————————————————————————————————————————————
 
-export const bin: path = '/opt/homebrew/bin/'
-export const autoload: path = $nu.vendor-autoload-dirs.2
+export const bin: path = if $nu.os-info.name == windows {
+  $nu.home-dir | path join AppData Local Microsoft WindowsApps
+} else {
+  '/opt/homebrew/bin/'
+}
+export const autoload: path = if $nu.os-info.name == windows {
+  $nu.vendor-autoload-dirs.1
+} else {
+  $nu.vendor-autoload-dirs.2
+}
 export const plugins: path = $nu.data-dir | path join plugins (version).version
 export const modules: path = $nu.data-dir | path basename --replace nupm/modules
 export const scripts: path = $nu.data-dir | path basename --replace nupm/scripts
 
 const _path: list = [$bin $scripts]
+const _rtty: path = $autoload | path basename --replace require-tty
 
 alias vars = do --ignore-errors { (scope variables | where name == '$vendor').0?.value }
-alias rtty = do --ignore-errors { run-external ($autoload | path basename --replace require-tty) | ignore }
+alias rtty = do --ignore-errors {
+  if ($_rtty | path exists) { run $_rtty | ignore }
+}
 
 # ——— definitions —————————————————————————————————————————————————————————————
 
@@ -57,7 +68,14 @@ export def "init oh-my-posh" [
     $p if ($p | path parse).extension not-in [toml yaml yml json jsonc] => { error make --unspanned $"invalid configuration file: '($p)'" }
     $p => { oh-my-posh init nu --config=($p) }
   }
-  $autoload | path join oh-my-posh.nu | run ($autoload | path basename --replace require-tty) | ignore
+
+  let f: path = $autoload | path join oh-my-posh.nu
+  $f | run ($autoload | path basename --replace require-tty) | ignore
+  if $nu.os-info.name == windows {
+    open --raw $f
+    | collect { lines | take until { str contains '$_omp_executable upgrade' } | str join (char newline) }
+    | save --force $f
+  }
 }
 
 # Initialize and auto-start the default Zellij session.

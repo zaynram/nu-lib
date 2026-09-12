@@ -6,12 +6,16 @@
 
 use ../error
 use ../path
-use ../util [ editor "into completions" ]
+use ../util [ editor fix-path "into completions" ]
 
 # ——— constants —————————————————————————————————————————————————————————————
 
 export const bin: path = $nu.home-dir | path join .local bin
-export const lib: path = $nu.home-dir | path join library
+export const lib: path = if $nu.os-info.name == windows {
+  $nu.home-dir | path join desktop
+} else {
+  $nu.home-dir | path join library
+}
 export const data: path = $nu.data-dir | path dirname
 export const home: path = $nu.home-dir
 export const autoload: path = $nu.user-autoload-dirs.0?
@@ -27,6 +31,7 @@ const _exclude: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
 
 # ——— helpers ———————————————————————————————————————————————————————————————
 
+
 alias xglob = glob --depth=3 --exclude=[
   **/*.yazi/**
   `**/{.vscode,.git*,plugins,vale/styles}/**`
@@ -39,9 +44,10 @@ alias xglob = glob --depth=3 --exclude=[
 
 alias nu-glob = do {|then?: closure|
   par-each {|d|
-    glob $"($d)/**/*.nu" --no-dir --depth=3 --exclude=$_exclude
-    | if $then != null { do --ignore-errors $then $d } else { path relative-to $d }
-  } | compact --empty | flatten | uniq
+    let p: path = $d | fix-path
+    glob $"($p)/**/*.nu" --no-dir --depth=3 --exclude=$_exclude
+    | if $then != null { do --ignore-errors $then $p } else { path relative-to $p }
+  } | flatten --all | compact | uniq
 }
 
 alias vars = do --ignore-errors { (scope variables | where name == '$user').0?.value }
@@ -78,8 +84,8 @@ export def path [
   pred?: closure # Predicate to filter the elements included in the output list
   --all (-a) # Include all directories (cannot be combined with a predicate)
 ]: nothing -> list {
-  glob --no-file --depth=2 --exclude=[**/.vscode-server-insiders/**] $"($home)/**/bin"
-  | append (glob --no-file --no-symlink --exclude=[**/_internal/**] $"($scripts)/**")
+  glob --no-file --depth=2 --exclude=[**/.vscode-server-insiders/**] $"($home | fix-path ** bin)"
+  | append (glob --no-file --no-symlink --exclude=[**/_internal/**] $"($scripts | fix-path **)")
   | if $all { } else if $pred != null { where $pred } else { difference $env.PATH }
 }
 
@@ -90,7 +96,7 @@ export def --env lib [
   --get (-g) # Return the constructed path instead of opening it
 ]: nothing -> oneof<nothing, path> {
   let p: path = vars | get --ignore-case --optional $target
-    | default { [$modules $scripts] | nu-glob { where $it =~ $target } | first }
+    | default { [$modules $scripts] | nu-glob { where $it has $target } | first }
   if $get { return $p } else if $p != null { editor $p } else {
     error wrap --code=usr::lib::unresolved_target ...[
       $"could not find script or module matching '($target)'"
@@ -186,12 +192,6 @@ export def --env main [
 # ——— completions ———————————————————————————————————————————————————————————
 
 const _exclude: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
-alias nu-glob = do {|then?: closure|
-  par-each {|d|
-    glob $"($d)/**/*.nu" --no-dir --depth=3 --exclude=$_exclude
-    | if $then != null { do --ignore-errors $then $d } else { path relative-to $d }
-  } | compact --empty | flatten | uniq
-}
 alias replace-home = str replace $nu.home-dir '~'
 
 def _cell-path []: nothing -> oneof<record, list> {
@@ -214,7 +214,7 @@ def _autoload-target []: nothing -> oneof<record, list> {
   | into completions {completion_algorithm: substring}
 }
 def _config-target []: nothing -> oneof<record, list> {
-  xglob $"($config)/*"
+  xglob ($config | fix-path *)
   | wrap description
   | insert value {|row| $row.description | path basename }
   | into completions {
@@ -231,7 +231,7 @@ def _config-path [context: string]: nothing -> oneof<record, list> {
   | if ($in | is-empty) { return [] } else {
     let dir: path = $in | first
     let label: string = try { $dir | path relative-to $config } catch { $dir | replace-home }
-    xglob $"($dir)/**/*" --no-dir
+    xglob ($dir | fix-path ** *) --no-dir
     | path relative-to $dir
     | wrap value
     | insert description $label
