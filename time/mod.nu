@@ -82,9 +82,12 @@ export def modify [
 # Tags with their usage counts.
 @category productivity
 export def tags []: nothing -> table<name: string, count: int> {
-  $env.TIMEWARRIORDB? | default $DB | path join data tags.data
-  | open --raw | from json | transpose name count | update count { get count }
+  db | path join data tags.data | open --raw | from json | transpose name count | update count { get count }
 }
+
+# Database root in use: `$env.TIMEWARRIORDB`, or the default location.
+@category productivity
+export def db []: nothing -> path { $env.TIMEWARRIORDB? | default $DB }
 
 # Intervals of the current day.
 export alias today = list :day
