@@ -187,7 +187,8 @@ export def --env show [
 #
 # The repository information record will be passed to the closure as a positional.
 # Any pipeline input this function receives will be piped into the closure.
-export def exec [
+@category git
+export def x [
   name: string@_repo-names # The name of the repository to execute the closure in
   closure: closure # The closure to run from the repository root
   --suppress (-s) # Run the closure with `do --ignore-errors` to suppress errors
