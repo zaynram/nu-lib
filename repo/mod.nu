@@ -335,7 +335,7 @@ def _repo-names []: nothing -> record {
     )
   }
 }
-def _issue-numbers [context: string]: nothing -> oneof<list, record> {
+def _issue-numbers [buffer: string]: nothing -> oneof<list, record> {
   {
     options: {
       sort: true
@@ -343,7 +343,7 @@ def _issue-numbers [context: string]: nothing -> oneof<list, record> {
       completion_algorithm: substring
     }
     completions: (
-      match ($context | split words | last) {
+      match ($buffer | split words | last) {
         null => []
         $arg => {
           $"gh issue --repo=(resolve-repo-name $arg | format-repo-option) view "

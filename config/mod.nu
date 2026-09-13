@@ -185,13 +185,13 @@ export def prompt [
 
 # ——— completions ——————————————————————————————————————————————————————————————
 
-def is-vendor [context: string]: nothing -> bool { $context =~ '(^|\s)(-v|--vendor)(\s|$)' }
+def is-vendor [buffer: string]: nothing -> bool { $buffer =~ '(^|\s)(-v|--vendor)(\s|$)' }
 
-def _dirs [context: string]: nothing -> record {
-  scope (is-vendor $context) | columns | into completions {completion_algorithm: substring}
+def _dirs [buffer: string]: nothing -> record {
+  scope (is-vendor $buffer) | columns | into completions {completion_algorithm: substring}
 }
-def _auto [context: string]: nothing -> record {
-  glob ((scope (is-vendor $context)).autoload | path rejoin '*.nu') --no-dir
+def _auto [buffer: string]: nothing -> record {
+  glob ((scope (is-vendor $buffer)).autoload | path rejoin '*.nu') --no-dir
   | path parse
   | select stem parent
   | rename value description
@@ -203,10 +203,10 @@ def _apps []: nothing -> record {
   | insert value {|row| $row.description | path basename }
   | into completions {match_description: true, completion_algorithm: substring}
 }
-def _app-paths [context: string]: nothing -> oneof<record, list> {
-  $context
-  | split words
-  | where $it not-in [config app path]
+def _app-paths [buffer: string]: nothing -> oneof<record, list> {
+  $buffer
+  | split row (char space)
+  | where $it not-in [config app --path -p] and ($it | is-not-empty)
   | par-each { prepend $USER.config | path join }
   | where ($it | path type) == dir
   | if ($in | is-empty) { return [] } else {

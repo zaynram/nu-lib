@@ -130,8 +130,8 @@ export module time {
   # ——— completions —————————————————————————————————————————————————————————————
 
   #topiary: disable
-  def _timew-raw [context: string]: nothing -> record { # nu-lint-ignore: positional_to_pipeline
-    $context
+  def _timew-raw [buffer: string]: nothing -> record { # nu-lint-ignore: positional_to_pipeline
+    $buffer
     | str replace --regex '^time\s' 'timew '
     | commandline complete
     | str trim --right
@@ -395,10 +395,10 @@ def _common_dates []: nothing -> record {
   }
 }
 
-def _common-durations [context: string = '' --raw --abs]: [
+def _common-durations [buffer: string = '' --raw --abs]: [
   nothing -> oneof<list<duration>, record>
 ] {
-  let pos = $abs or $context =~ `--from[\s|=]\.+`
+  let pos = $abs or $buffer =~ `--from[\s|=]\.+`
   [1hr 6hr 12hr 1day 3day 5day 1wk 2wk 4wk]
   | if $pos { } else { par-each {|d| [$d ($d * -1)] } | flatten }
   | sort --reverse

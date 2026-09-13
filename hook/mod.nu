@@ -226,11 +226,11 @@ def _hook-types []: nothing -> record {
 }
 
 def _hook-indices [
-  context: string
+  buffer: string
   --value: closure
   --options: record = {}
 ]: nothing -> oneof<list, record> {
-  let ctx: list = $context | parse-context
+  let ctx: list = $buffer | parse-context
   let str: string = $ctx | prepend '$env.config.hooks' | str join .
   {
     options: (
@@ -251,8 +251,8 @@ def _hook-indices [
   }
 }
 
-def _hook-elements [context: string]: nothing -> oneof<list, record> {
-  _hook-indices $context --value={|x: record<index: int, item: any>|
+def _hook-elements [buffer: string]: nothing -> oneof<list, record> {
+  _hook-indices $buffer --value={|x: record<index: int, item: any>|
     if ($x.item | describe) =~ ^record {
       let parts: list = $in
       $x.item | columns | par-each { prepend $parts }

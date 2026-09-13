@@ -79,7 +79,7 @@ export def upgrade [
 # Show the results from the latest update run.
 @category system
 export def history [
-  target: path@_targets # The log file to target
+  target: string@_targets # The log file to target
   --age (-a) # Return the duration since last write, if the log file exists
   --throw (-t) # Throw an error if the log file is missing
 ]: nothing -> oneof<record, nothing, duration> {
@@ -92,7 +92,7 @@ export def history [
 # Install system packages with apt.
 @category system
 export def install [
-  ...names: string # Names of the packages to install
+  ...names: string@_apt # Names of the packages to install
 ]: nothing -> nothing {
   if ($names | is-empty) { error make --unspanned 'no packages were provided' }
   apt-get install --yes ...$names
@@ -101,7 +101,7 @@ export def install [
 # Remove system packages with apt, then clean up unused packages and the cache.
 @category system
 export def remove [
-  ...names: string@_removable # Names of the packages to remove
+  ...names: string@_apt # Names of the packages to remove
 ]: nothing -> nothing {
   if ($names | is-not-empty) { apt-get remove --yes ...$names }
   clean
@@ -117,7 +117,7 @@ export def clean []: nothing -> nothing {
 # Pass a command through to `apt-get` with elevated privileges.
 @category system
 export def --wrapped apt [
-  ...rest: string # Arguments for `apt-get`
+  ...rest: string@_apt # Arguments for `apt-get`
 ]: nothing -> nothing {
   apt-get ...$rest
 }
@@ -145,11 +145,14 @@ export def --env bump-nu []: nothing -> nothing { get-latest-nightly-build; relo
 
 def _targets []: nothing -> list { $LOG | columns }
 
-def _removable [context: string]: nothing -> list {
-  $context
-  | split row (char space)
-  | skip
-  | prepend [sudo apt-get remove]
-  | str join (char space)
-  | collect { commandline complete }
+# Package names for the apt verb in play (installed for remove/purge, available for install), else apt-get verbs.
+def _apt [buffer: string, token: record]: nothing -> list<string> {
+  let words: list<string> = $buffer | split row (char space) | skip while { $in not-in [apt install remove] }
+  let verb: string = match $words { [apt $v ..] => $v, [$v ..] => $v, _ => '' }
+  match $verb {
+    install => { ^apt-cache pkgnames $token.text err> (null-device) | lines }
+    remove | purge => { ^dpkg-query --show --showformat '${Package}\n' | lines }
+    _ if $words.0? == apt and ($words | length) <= 2 => [update upgrade full-upgrade install remove purge autoremove autoclean clean]
+    _ => []
+  }
 }
