@@ -1,7 +1,5 @@
 # General helpers and utility methods.
 
-# nu-lint-ignore-file: unchecked_get_index, require_main_with_stdin, add_doc_comment_exported_fn
-
 # ——— imports —————————————————————————————————————————————————————————————————
 
 use ($nu.data-dir | path basename --replace nupm/modules/session) edit
@@ -44,7 +42,7 @@ export def timestamp []: oneof<nothing, string, datetime> -> string {
   | insert value {|row| $row.description | path basename }
   | into completions {match_description: true}
 }
-export def "into completions" [
+export def "into completions" [ # nu-lint-ignore: add_doc_comment_exported_fn
   options: record = {
     sort: true
     case_sensitive: false

@@ -1,7 +1,5 @@
 # Timewarrior and Taskwarrior wrappers.
 
-# nu-lint-ignore-file: custom_log_command
-
 use ../util "into completions"
 
 const DATA = {
@@ -131,7 +129,7 @@ export module time {
   # ——— completions —————————————————————————————————————————————————————————————
 
   #topiary: disable
-  def _timew-raw [buffer: string]: nothing -> record { # nu-lint-ignore: positional_to_pipeline
+  def _timew-raw [buffer: string]: nothing -> record {
     $buffer
     | str replace --regex '^time\s' 'timew '
     | commandline complete
@@ -144,7 +142,7 @@ export module time {
 export module task {
   # Task management with the Taskwarrior CLI.
 
-  use ../repo # nu-lint-ignore: nu_parse_error
+  use ../repo
   # Add a task with the Taskwarrior (`task`) CLI.
   @category productivity
   export def --wrapped add [

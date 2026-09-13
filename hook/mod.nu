@@ -139,7 +139,7 @@ export def --env edit [
 ]: nothing -> record {
   if $overwrite == null and $update == null {
     error make --unspanned 'no overwrite value or update record was given'
-  } else if ($env.config.hooks | get --ignore-case --optional $ref | is-empty) {
+  } else if ($env.config.hooks | get --ignore-case --optional $ref | is-empty) { # nu-lint-ignore: get_optional_to_not_has
     error make --unspanned $'invalid hook reference: ($ref)'
   } else {
     let value = $overwrite | default { {|| merge $update } }
@@ -168,7 +168,7 @@ export def --env del [
 
 # Test a hook closure, optionally with custom arguments.
 @category env
-export def --wrapped test [
+export def --wrapped test [ # nu-lint-ignore: max_positional_params, missing_output_type
   target: cell-path@_hook-types # The type of hook to add the provided configurations to
   item: cell-path@_hook-elements # Which condition or code closure to run
   ...rest: string # Arguments to pass to the closure

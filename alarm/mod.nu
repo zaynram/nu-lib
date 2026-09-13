@@ -1,5 +1,8 @@
 # Named alarms that run a callback after a delay or at a given time.
 
+# nu-lint cannot parse the `job spawn` closure below, so its unused-symbol rules misfire here.
+# nu-lint-ignore-file: unused_parameter, unused_variable
+
 # ——— environment —————————————————————————————————————————————————————————————
 
 export-env {
@@ -28,7 +31,7 @@ export def --env set [
   let time: datetime = $now + $wait
 
   # topiary: disable
-  let text: string = { # nu-lint-ignore: unused_variable
+  let text: string = {
       prefix: $"(ansi rb)alarm(ansi rst)\("
       name: $"(ansi yb)name(ansi rst)=(ansi c)'($name)'(ansi rst)"
       sep: $"(ansi black_bold),(ansi rst)"
@@ -37,7 +40,7 @@ export def --env set [
     } | values | str join
 
   # topiary: disable
-  let id: int = job spawn --description $name { # nu-lint-ignore: nu_parse_error
+  let id: int = job spawn --description $name {
       sleep $wait
       if not $silent { clear --keep-scrollback | print $text }
       if $then != null { do --env --capture-errors $then | print }

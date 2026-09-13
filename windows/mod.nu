@@ -1,6 +1,6 @@
 # Utilities and optimization methods for clean separation of the Windows host environment when working in the WSL Debian environment.
 
-# nu-lint-ignore-file: kebab_case_commands, missing_output_type
+# nu-lint-ignore-file: missing_output_type
 
 const _save: path = $nu.data-dir | path join windows_env.msgpack
 
@@ -72,7 +72,7 @@ export def --wrapped "win which" [
   }
   match ($names | length) {
     0 => { return }
-    1 => { do $where $names.0 }
+    1 => { do $where $names.0 } # nu-lint-ignore: unchecked_cell_path_index
     _ => { $names | reduce --fold={} {|it acc| upsert $it { do $where $it } } }
   }
 }

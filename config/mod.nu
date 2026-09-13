@@ -1,8 +1,6 @@
 # Extensions to the builtin `config` commands: directories, environment variables, autoload files,
 # application configs and the prompt of the user and vendor scopes.
 
-# nu-lint-ignore-file: positional_to_pipeline
-
 # ——— imports —————————————————————————————————————————————————————————————————
 
 use ../error

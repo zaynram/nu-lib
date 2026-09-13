@@ -1,7 +1,5 @@
 # Package management for the system and provisioned tooling: upgrades, apt, plugins and the Nushell binary.
 
-# nu-lint-ignore-file: unhandled_external_error
-
 use ../mod.nu NU_LIB_DIRS
 use ../util null-device
 export use nightly-toolkit get-latest-nightly-build

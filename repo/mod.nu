@@ -2,8 +2,6 @@
 
 use ../path
 
-# nu-lint-ignore-file: string_param_as_path
-
 # ——— constants ———————————————————————————————————————————————————————————————
 
 const gstat_cols: list<string> = [

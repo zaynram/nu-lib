@@ -171,7 +171,7 @@ export def --env list [
 #
 ### By default, when no arguments or input are provided, the names of the loaded modules will be returned as a list of strings.
 @category core
-export def --env main [
+export def --env main [ # nu-lint-ignore: add_doc_comment_exported_fn
   name?: string@_module-names
   # Name of a module to define or show information about
   --all (-a)
