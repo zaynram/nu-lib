@@ -145,14 +145,13 @@ export def --env bump-nu []: nothing -> nothing { get-latest-nightly-build; relo
 
 def _targets []: nothing -> list { $LOG | columns }
 
-# Package names for the apt verb in play (installed for remove/purge, available for install), else apt-get verbs.
-def _apt [buffer: string, token: record]: nothing -> list<string> {
-  let words: list<string> = $buffer | split row (char space) | skip while { $in not-in [apt install remove] }
-  let verb: string = match $words { [apt $v ..] => $v, [$v ..] => $v, _ => '' }
-  match $verb {
-    install => { ^apt-cache pkgnames $token.text err> (null-device) | lines }
-    remove | purge => { ^dpkg-query --show --showformat '${Package}\n' | lines }
-    _ if $words.0? == apt and ($words | length) <= 2 => [update upgrade full-upgrade install remove purge autoremove autoclean clean]
-    _ => []
-  }
+# Complete through the shell's external completer as the equivalent `sudo apt-get` line.
+def _apt [buffer: string]: nothing -> oneof<list, table> {
+  let line: string = $buffer
+    | split row (char space)
+    | skip while { $in not-in [apt install remove] }
+    | if $in.0? == apt { skip } else { }
+    | prepend [sudo apt-get]
+    | str join (char space)
+  $env.config.completions.external.completer? | if $in == null { [] } else { do $in $line }
 }
