@@ -1,15 +1,14 @@
 # Internal module library hosting numerous developer and personal facing modules.
-use vendor
-use user
+use config
 
 export const NU_LIB_DIRS: list<path> = [
   (path self .)
-  $user.modules
-  $vendor.modules
+  $config.USER.modules
+  $config.VENDOR.modules
 ]
 export const NU_PLUGIN_DIRS: list<path> = [
-  $user.plugins
-  $vendor.plugins
+  $config.USER.plugins
+  $config.VENDOR.plugins
 ]
 
 # Initialize the shell environment variables for the internal module library.
@@ -26,4 +25,4 @@ export def --env env [
   if $show or not $load { return $e }
 }
 
-export-env { env --load; vendor env --load }
+export-env { env --load; config vars --vendor --load }

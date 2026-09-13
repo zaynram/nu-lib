@@ -2,8 +2,10 @@
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
-use ../vendor modules
-use ($modules | path join docgen)
+use ../config
+use ../path
+use ../util [ editor "into completions" ]
+use ($config.VENDOR.modules | path join docgen)
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -16,6 +18,7 @@ const SHORT: table = [
 const RE: record = {
   omit: '^(prelude|[_]{1}\w+|\w+\s{1}extern)$'
 }
+const EXCLUDE: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
 
 # ——— utilities ————————————————————————————————————————————————————————————————
 
@@ -37,6 +40,15 @@ def preserve-serialized-closure []: closure -> list<string> {
   | lines
   | str trim --left
   | append ['']
+}
+
+# Glob the `.nu` definitions under the piped directories, relative to each (or mapped by `$then`).
+alias nu-glob = do {|then?: closure|
+  par-each {|d|
+    let p: path = $d | path rejoin
+    glob $"($p)/**/*.nu" --no-dir --depth=3 --exclude=$EXCLUDE
+    | if $then != null { do --ignore-errors $then $p } else { path relative-to $p }
+  } | flatten --all | compact | uniq
 }
 
 alias build-mods-refs = par-each --keep-order {|row|
@@ -104,6 +116,19 @@ export def --env define [
   if not $overwrite and ($path | path exists) { error make --unspanned $"module '($name)' is already defined" }
   $block | preserve-serialized-closure | try { save --force --progress $path } catch { error make --unspanned 'unable to save module definition' }
   return $path
+}
+
+# Open a module or script definition file by name, or return its path.
+@category core
+export def edit [
+  target: string@_definitions # Name of the module or script to target
+  --get (-g) # Return the resolved path instead of opening it
+]: nothing -> oneof<nothing, path> {
+  [$config.USER.modules $config.USER.scripts]
+  | nu-glob { where $it has $target }
+  | sort-by {|p| $target not-in ($p | path split) } # exact segment matches first
+  | get --optional 0
+  | if $in == null { error make --unspanned $"no definition found for '($target)'" } else if $get { path expand } else { editor }
 }
 
 # List the modules loaded in the current session.
@@ -184,3 +209,8 @@ export def --env main [
 # ——— completions ——————————————————————————————————————————————————————————————
 
 def _module-names []: nothing -> list { 'use ' | commandline complete | where $it !~ '(.nu|/)$' }
+def _definitions []: nothing -> record {
+  [$config.USER.modules $config.USER.scripts] | each {|root|
+    $root | nu-glob | wrap value | insert description ($root | str replace $nu.home-dir '~')
+  } | flatten | into completions {sort: true, completion_algorithm: fuzzy, match_description: true}
+}
