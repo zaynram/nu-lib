@@ -35,8 +35,10 @@ export def fix-path [...segments: string]: path -> path {
 }
 
 
-# Serialize a datetime (default: now) in RFC 3339 format.
-export def timestamp []: oneof<nothing, datetime> -> string { default { date now } | format date %+ }
+# Serialize a datetime (default: now; strings are parsed as human dates) in RFC 3339 format.
+export def timestamp []: oneof<nothing, string, datetime> -> string {
+  match ($in | describe) { nothing => { date now } string => { date from-human } _ => { } } | format date %+
+}
 
 # Wrap an iterable containing custom completions into a record with completion options.
 # - `$in` will have elements converted to strings with `to text` then compacted (with `--empty`)
