@@ -1,3 +1,5 @@
+# Logging aliases over std/log with a compact, colored line format.
+
 use std/log
 
 export const FMT: string = $'(ansi wd)%DATE%(ansi rst)|%ANSI_START%%LEVEL%%ANSI_STOP%|%MSG%'

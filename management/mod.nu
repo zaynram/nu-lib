@@ -24,6 +24,7 @@ export const REGISTRY: record = {
 alias get-job = do {|id: int| ignore | job list | where id == $id | first }
 
 # Run the configured updates.
+@category system
 export def upgrade [
   --async (-a) # Spawn the update runner as a background job
   --silent (-s) # Do not return the results record after completion
@@ -65,6 +66,7 @@ export def upgrade [
 }
 
 # Show the results from the latest update run.
+@category system
 export def history [
   target: path@_targets # The log file to target
   --age (-a) # Return the duration since last write, if the log file exists
@@ -77,6 +79,7 @@ export def history [
 }
 
 # Reload all plugins to ensure latest version is loaded.
+@category plugin
 export def --env reload-plugins []: nothing -> nothing {
   for row in (plugin list --engine) {
     try { plugin stop $row.name; plugin rm $row.name }
@@ -91,6 +94,7 @@ export def --env reload-plugins []: nothing -> nothing {
 }
 
 # Update the Nushell binary and reload all plugin binaries.
+@category system
 export def --env bump-nu []: nothing -> nothing { get-latest-nightly-build; reload-plugins }
 
 # ——— completions ————————————————————————————————————————————————————————————

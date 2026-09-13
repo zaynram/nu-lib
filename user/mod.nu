@@ -64,6 +64,7 @@ def submit-path [
 # ——— definitions ———————————————————————————————————————————————————————————
 
 # Consume or initialize the user environment variables.
+@category env
 export def --env env [
   --with (-w): record = {
     XDG_CONFIG_HOME: $config
@@ -89,6 +90,7 @@ export def --env env [
 # Return a list of PATH directories satisfying a condition.
 #
 # If no predicate is provided, directories in the current environment's PATH will be excluded.
+@category path
 export def path [
   pred?: closure # Predicate to filter the elements included in the output list
   --all (-a) # Include all directories (cannot be combined with a predicate)
@@ -162,6 +164,7 @@ export def config [
 }
 
 # Navigate to (or print) a directory value from the `usr` constant.
+@category filesystem
 export def --env main [
   target?: cell-path@_cell-path # Cell-path of the property to retrieve
   --get (-g) # Return the directory path instead of navigating to it

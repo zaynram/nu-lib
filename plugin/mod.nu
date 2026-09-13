@@ -1,3 +1,5 @@
+# Install Nushell plugins from GitHub repositories.
+
 const REGEX: record = {
   gh-repo: `^(?<owner>\w[\w.-]*)/(?<name>\w[\w.-]*)$`
   nu-plugin: `^nu_plugin_(?<name>\w[\w.-]*)$`

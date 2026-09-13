@@ -19,6 +19,7 @@ export alias unmount = do --capture-errors {|p: path = $_mnt.path| if (is-mounte
 # ——— definitions ——————————————————————————————————————————————————————————————
 
 # Create or remove a filesystem mount for a configured device running Termux.
+@category filesystem
 export def mount [
   --name (-n): string = $_mnt.name # The username of the termux login
   --path (-p): path = $_mnt.path # The path of the termux filesystem mount

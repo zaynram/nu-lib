@@ -13,6 +13,7 @@ export-env {
 export alias device = run-external $SYCL
 
 # Show the `systemctl` status for the Ollama service.
+@category system
 export def status []: nothing -> record<state: string, spawned: oneof<datetime, string>> {
   systemctl status ipex-llm-ollama --no-pager --lines 0 out+err>|
   | find 'Active: ' --no-highlight
@@ -23,6 +24,7 @@ export def status []: nothing -> record<state: string, spawned: oneof<datetime, 
 }
 
 # Start the IPEX-LLM Ollama server.
+@category system
 export def serve []: nothing -> record {
   let desc: string = $'($NAME)_serve'
   job spawn --description=$desc { cd $HOME; bash start-ollama.sh out+err>| job send 0 }

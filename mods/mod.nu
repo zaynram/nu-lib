@@ -87,6 +87,7 @@ export-env {
 # ——— definitions ——————————————————————————————————————————————————————————————
 
 # Define a module inline and save it to a file.
+@category core
 export def --env define [
   name: string
   # The name of this module
@@ -147,6 +148,7 @@ export def --env list [
 # - Query module information, optionally for a single module (targeted by name).
 #
 ### By default, when no arguments or input are provided, the names of the loaded modules will be returned as a list of strings.
+@category core
 export def --env main [
   name?: string@_module-names
   # Name of a module to define or show information about

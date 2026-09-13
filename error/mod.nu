@@ -1,6 +1,9 @@
+# Helpers for raising errors.
+
 # ——— definitions —————————————————————————————————————————————————————————————
 
 # Simple error handler; shows message and code unspanned.
+@category core
 export def wrap [
   ...text: string # Error message to include in the rendered output (joined with `--char`)
   --code: string # An optional identifier to contextualize the error

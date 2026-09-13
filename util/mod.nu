@@ -27,6 +27,7 @@ def each-completion [c: closure]: [
 # ——— definitions —————————————————————————————————————————————————————————————
 
 # Ensure a joined path contains no backslashes on Windows; same as `path join` on other platforms.
+@category path
 export def fix-path [...segments: string]: path -> path {
   path join ...$segments | match $nu.os-info.name {
     windows => { str replace --all '\' '/' }
@@ -36,6 +37,7 @@ export def fix-path [...segments: string]: path -> path {
 
 
 # Serialize a datetime (default: now; strings are parsed as human dates) in RFC 3339 format.
+@category date
 export def timestamp []: oneof<nothing, string, datetime> -> string {
   match ($in | describe) { nothing => { date now } string => { date from-human } _ => { } } | format date %+
 }

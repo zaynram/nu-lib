@@ -32,6 +32,7 @@ alias rtty = do --ignore-errors {
 # ——— definitions —————————————————————————————————————————————————————————————
 
 # Consume or initialize the vendor environment variables.
+@category env
 export def --env env [
   --with (-w): record = {}
   # Merge these environment variables into the record, overwriting any existing values
@@ -48,6 +49,7 @@ export def --env env [
 # Return a list of PATH directories satisfying a condition.
 #
 # If no predicate is provided, directories in the current environment's PATH will be excluded.
+@category path
 export def path [
   pred?: closure # Predicate to filter the elements included in the output list
   --all (-a) # Include all directories (cannot be combined with a predicate)
@@ -58,6 +60,7 @@ export def path [
 const _exts: list = [toml yaml yml json jsonc]
 
 # Refresh the `oh-my-posh` prompt configuration.
+@category shells
 export def "init oh-my-posh" [
   --config: path
   # Path to the Oh-My-Posh prompt configuration file (defaults to `$env.POSH_CONFIG` if set)
@@ -79,6 +82,7 @@ export def "init oh-my-posh" [
 }
 
 # Initialize and auto-start the default Zellij session.
+@category shells
 export def start-zellij []: nothing -> nothing {
   if $env not-has ZELLIJ and ($env.ZELLIJ_AUTO_START? | into bool --relaxed) {
     let name: string = $env.ZELLIJ_AUTO_SESSION? | default auto

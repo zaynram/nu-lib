@@ -3,7 +3,7 @@
 # The `--from` argument uses regex matching on the first character
 # so `--from s` and `--from start` are both valid and will result
 # in the same behavior.
-@category filesystem
+@category path
 export def truncate [
   n: int = -1 # The number of segments to truncate to
   --root (-r): path # The base path to use as relative anchor
@@ -32,7 +32,7 @@ export def truncate [
 }
 
 # Select a path from the input interactively.
-@category platform
+@category path
 export def select [
   column: string = name # Column name to extract the path value from
   --message (-m): string = `no files to select from` # Error message if the input is empty

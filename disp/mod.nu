@@ -100,6 +100,7 @@ export def --wrapped main [
 
 # Report the display mode, container processes, VNC listeners, and tracked applications.
 @example 'inspect the session' { disp status }
+@category platform
 export def status []: nothing -> record<mode: string, xvnc: oneof<nothing, record>, openbox: oneof<nothing, record>, tint2: oneof<nothing, record>, mstsc: oneof<nothing, record>, listeners: oneof<nothing, int>, apps: table> {
   let procs: table = snapshot
   let m: string = mode $procs
@@ -113,6 +114,7 @@ export def status []: nothing -> record<mode: string, xvnc: oneof<nothing, recor
 
 # Return the environment record that applications are launched with.
 @example 'run a command under the display environment' { with-env (disp env) { xeyes } }
+@category env
 export def env []: nothing -> record { session-env (mode (snapshot)) }
 
 # Track running applications by name so `status` and `stop` cover them after a shell restart.
@@ -120,6 +122,7 @@ export def env []: nothing -> record { session-env (mode (snapshot)) }
 # Each name resolves to a process (exact name first, then a command-line match) and a
 # watcher job named after that process ends once the process disappears.
 @example 'adopt an application started elsewhere' { disp register xterm }
+@category platform
 export def register [...names: string@_running]: nothing -> record {
   let procs: table = snapshot
   let known: list<string> = $procs | tracked | get name
@@ -142,6 +145,7 @@ export def register [...names: string@_running]: nothing -> record {
 # Stop an application by name (tracked or not), or every tracked application when no name is given.
 @example 'stop one application' { disp stop xterm }
 @example 'stop all tracked applications' { disp stop }
+@category platform
 export def stop [app?: string@_tracked]: nothing -> record {
   let procs: table = snapshot
   let names: list<string> = tracked --procs=$procs --exclude=($CONTAINERS | values) | get name
@@ -151,6 +155,7 @@ export def stop [app?: string@_tracked]: nothing -> record {
 
 # Stop tracked applications and the display containers.
 @example 'tear the session down' { disp terminate }
+@category platform
 export def terminate []: nothing -> record {
   let procs: table = snapshot
   let names: list<string> = tracked --procs=$procs | get name | append ($CONTAINERS | values) | uniq
@@ -160,10 +165,12 @@ export def terminate []: nothing -> record {
 
 # Terminate, then ensure the display containers again.
 @example 'recover from a wedged container' { disp restart }
+@category platform
 export def restart []: nothing -> record { terminate | ignore; main }
 
 # Repair the WSLg display by forcibly restarting `msrdc`.
 @example 'restart the WSLg RDP client' { disp repair }
+@category platform
 export def repair []: nothing -> nothing {
   if (mode (snapshot)) != wslg { log warning 'detected non-WSLg display setup; results may vary' }
   powershell x 'Stop-Process -Name msrdc -Force -ErrorAction Ignore' | complete | match $in.exit_code {
@@ -174,6 +181,7 @@ export def repair []: nothing -> nothing {
 
 # Maximize a WSLg window by title through `utils.psm1`.
 @example 'maximize the window titled Claude' { disp maximize Claude }
+@category platform
 export def maximize [name?: string@_tracked]: nothing -> nothing {
   let psm: string = $DIR | path join utils.psm1 | path as-windows
   let arg: string = match $name { null => '' _ => { $name | str replace --all "'" "''" | $"'($in)'" } }

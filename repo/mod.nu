@@ -49,6 +49,7 @@ export-env {
 }
 
 # Load the `repo` module environment.
+@category env
 export def --env env [
   --find (-f)
   # Enable repository search behavior (sets `$env.repo.discovery` to `true`)
@@ -77,6 +78,7 @@ export def --env env [
 }
 
 # Add a project directory to the `$env.repo.path`.
+@category git
 export def --env push [
   --search (-s): list<directory> = [] # Search for all git repositories within these directories
   --preview (-p) # Return the hydrated entry without altering enviornment variables
@@ -103,6 +105,7 @@ export def --env push [
 }
 
 # List the configured `git` repository names, their directories, and their owners.
+@category git
 export def list [
   regex?: string # Filter the included repositories using regex
 ]: nothing -> table {
@@ -110,6 +113,7 @@ export def list [
 }
 
 # Aggregate a repository's issue and sub-issue hierarchy into a table.
+@category git
 export def tree [
   name?: string@_repo-names # The name of the repository the issue belongs to
   --number (-n): int@_issue-numbers # The number of a parent issue to show the children nodes for
@@ -138,6 +142,7 @@ export def tree [
 }
 
 # List the `git` repositories in the configured projects directory.
+@category git
 export def --env show [
   regex: string = .+ # Regex pattern to match repository directory names
   --dirty (-d) # Only include repositories with non-clean states

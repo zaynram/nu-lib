@@ -41,6 +41,7 @@ export-env {
 # ——— definitions ——————————————————————————————————————————————————————————————
 
 # Run a command on the Windows PATH, if it exists.
+@category platform
 export def --wrapped "win run" [
   name: string
   # The name of the application to run
@@ -77,7 +78,7 @@ export def --wrapped "win which" [
 }
 
 # Utilize the full Windows environment for a single command or load it into the session.
-@category environment
+@category env
 export def --env "win env" [
   --exec (-e): closure
   # Closure to run with the Windows environment loaded temporarily (overrides other flags)

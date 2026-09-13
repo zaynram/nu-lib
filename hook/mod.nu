@@ -96,6 +96,7 @@ alias invoke = do --env --capture-errors
 # ——— definitions ——————————————————————————————————————————————————————————————
 
 # Retreive one or more of the configured Nushell hooks.
+@category env
 export def --env main [
   target: oneof<string, cell-path>@_hook-types
   # The hook type to target
@@ -106,6 +107,7 @@ export def --env main [
 }
 
 # Retrieve a value from a hook by reference.
+@category env
 export def show [
   --strict (-s)
   # Throw an error if the named hook cannot be found
@@ -126,6 +128,7 @@ export def show [
 }
 
 # Interact with properties of configured hooks.
+@category env
 export def --env edit [
   ref: cell-path@_hook-refs
   # The full path of the hook to alter
@@ -148,6 +151,7 @@ export def --env edit [
 # Delete a hook from the environment configuration.
 #
 # The boolean returned indicates whether any element was removed.
+@category env
 export def --env del [
   target: cell-path@_hook-types # The type of hook to add the provided configurations to
   index: int@_hook-indices # Remove the configured hook at the specified index
@@ -163,6 +167,7 @@ export def --env del [
 }
 
 # Test a hook closure, optionally with custom arguments.
+@category env
 export def --wrapped test [
   target: cell-path@_hook-types # The type of hook to add the provided configurations to
   item: cell-path@_hook-elements # Which condition or code closure to run
@@ -175,6 +180,7 @@ export def --wrapped test [
 }
 
 # Add hook(s) to the current environment configuration.
+@category env
 export def --env add [
   target: cell-path@_hook-types # The type of hook to add the provided configurations to
   --index (-i): int@_hook-indices = -1 # Insert the record passed as pipeline input at this index (caution: overwrites existing elements)

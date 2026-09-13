@@ -1,4 +1,5 @@
 # nu-lint-ignore-file: custom_log_command
+# Timewarrior and Taskwarrior wrappers.
 
 use ../util "into completions"
 
@@ -8,10 +9,12 @@ const DATA = {
 }
 
 export module time {
+  # Time tracking with the Timewarrior CLI.
 
   # ——— definitions —————————————————————————————————————————————————————————————
 
   # Interact with the Timewarrior CLI.
+  @category productivity
   export def --wrapped main [
     ...rest: string@_timew-raw # Arguments to pass directly to the `timew` interface
   ]: nothing -> nothing { run-external timew ...$rest }
@@ -39,7 +42,7 @@ export module time {
   }
 
   # Convert a datetime and/or duration value into a `timew` interval.
-  @category datetime
+  @category date
   export def span [
     --from: datetime@_common-datetimes # Anchor date for the interval
     --span: duration@_common-durations # Timespan for the interval
@@ -62,7 +65,7 @@ export module time {
 
   # Summarize the Timewarrior data with automatic conversion to Nushell types.
   @category productivity
-  @category datetime
+  @category date
   export def --wrapped line [
     --from: datetime@_common-datetimes # Anchor bound for interval filtering
     --span: duration@_common-durations # Duration bound for interval filtering
@@ -104,6 +107,7 @@ export module time {
   # Continue tracking time for the an entry.
   export alias cont = timew continue
   # Return the tags data as a Nushell table.
+  @category productivity
   export def tags []: nothing -> table<name: string, count: int> {
     $DATA.time
     | path join tags.data
@@ -137,8 +141,11 @@ export module time {
 }
 
 export module task {
+  # Task management with the Taskwarrior CLI.
+
   use ../repo # nu-lint-ignore: nu_parse_error
   # Add a task with the Taskwarrior (`task`) CLI.
+  @category productivity
   export def --wrapped add [
     ...rest: string # The task description and additional arguments
     --context (-c): string@_contexts # Swap to this context (prior to adding this task)
@@ -190,6 +197,7 @@ export module task {
     }
   }
   # Swap to a different task context (or clear the current one).
+  @category productivity
   export def swap [
     context?: string # The context to set (pass 'none' or use `--clear` to unset the current context)
     --clear (-c) # Clear the current task context

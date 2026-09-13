@@ -1,3 +1,5 @@
+# Named alarms that run a callback after a delay or at a given time.
+
 # ——— environment —————————————————————————————————————————————————————————————
 
 export-env {
@@ -8,6 +10,7 @@ export-env {
 # ——— definitions —————————————————————————————————————————————————————————————
 
 # Set an alarm.
+@category productivity
 export def --env set [
   name: string@_empty # Descriptor for this alarm
   when: oneof<duration, datetime, string>@_suggest-when # When the timer will expire
@@ -48,6 +51,7 @@ export def --env set [
 }
 
 # Unset an alarm.
+@category productivity
 export def --env unset [
   name?: string@_alarms # Name of the alarm to abort
   --no-kill # Do not attempt to end the job process
@@ -71,6 +75,7 @@ export def --env unset [
 }
 
 # List the set alarms.
+@category productivity
 export def "alarm list" [
   regex: string = .+ # Regex to filter alarm names by
 ]: nothing -> table {
@@ -78,6 +83,7 @@ export def "alarm list" [
 }
 
 # Set an alarm to print a message to the terminal.
+@category productivity
 export def --env main [
   name?: string # Name of the alarm to set or check
   --set: oneof<datetime, duration> # Datetime or duration for the alarm to expire

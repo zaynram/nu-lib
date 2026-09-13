@@ -1,6 +1,7 @@
 # Utilities to ease working with elevated privilges in Nushell.
 
 # Elevate the current shell process.
+@category system
 export def --env --wrapped main [
   ...rest: string # Arguments to pass to the `nu` invocation
 ]: nothing -> nothing {
@@ -10,6 +11,7 @@ export def --env --wrapped main [
 }
 
 # Run a shell command in an elevated context.
+@category system
 export def --env --wrapped sh [
   ...rest: string # Arguments to pass with the invocation
   --script (-s): path # Run this script in an elevated context with the spread arguments passed through

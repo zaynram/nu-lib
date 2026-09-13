@@ -17,6 +17,7 @@ export alias acl = try {
   sudo apt-get autoclean --yes
 }
 # Run the automated cleanup scripts for apt, optionally uninstalling packages first.
+@category system
 export def arm [
   ...names: string@_removable-packages # Names of any packages to remove
 ]: nothing -> nothing {
