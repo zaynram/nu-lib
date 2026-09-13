@@ -6,7 +6,6 @@
 
 use ($nu.data-dir | path basename --replace nupm/modules/session) edit
 
-export use std/help
 export use std/util [ "path add" null-device ellie ]
 
 const EXE: path = $nu.current-exe | path expand --strict --no-symlink
