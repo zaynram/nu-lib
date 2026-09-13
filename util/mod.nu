@@ -192,6 +192,28 @@ export def bin-link [
   }
 }
 
+# Run an external command and return its stdout.
+#
+# On an auth failure (output matching `--pattern`) in an interactive session, run `--login` once and
+# retry; any other non-zero exit raises the captured output.
+export def --wrapped with-auth [
+  --login (-l): closure # Interactive login, e.g. `{|| ^td auth login }` or `{|| ^gh auth login }`
+  --pattern: string = '(?i)\b(401|403|unauthori[sz]ed|not (logged in|authenticated)|auth login)\b'
+  # Regex identifying an auth failure in the command's stdout or stderr
+  ...cmd: string # The command and its arguments
+]: nothing -> string {
+  def attempt [cmd: list<string>]: nothing -> record { run-external ...$cmd | complete }
+  def raise [cmd: list<string>]: record -> error {
+    error make --unspanned $"($cmd.0?) exited with code ($in.exit_code):\n($in.stdout)($in.stderr)"
+  }
+  attempt $cmd | if $in.exit_code == 0 {
+    return $in.stdout
+  } else if $nu.is-interactive and $login != null and $"($in.stdout)($in.stderr)" =~ $pattern {
+    do $login
+    attempt $cmd | if $in.exit_code == 0 { $in.stdout } else { raise $cmd }
+  } else { raise $cmd }
+}
+
 # ——— helpers —————————————————————————————————————————————————————————————————
 
 def error [msg: string ...code: string]: oneof<nothing, record<stdout: string>> -> error {
