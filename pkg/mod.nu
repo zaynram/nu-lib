@@ -1,4 +1,5 @@
-# Various management-related utilities for working with system and provisioned packages.
+# Package management for the system and provisioned tooling: upgrades, apt, plugins and the Nushell binary.
+# nu-lint-ignore-file: unhandled_external_error
 
 use ../mod.nu NU_LIB_DIRS
 use ../util null-device
@@ -21,23 +22,33 @@ export const REGISTRY: record = {
   bun: [[upgrade --canary] [--global update]]
 }
 
+# System package manager calls, run through `sudo` and included by `upgrade --system`.
+const SYSTEM: record = {
+  apt-get: [[update --yes] [upgrade --yes]]
+}
+
 alias get-job = do {|id: int| ignore | job list | where id == $id | first }
+alias apt-get = sudo apt-get
 
 # Run the configured updates.
 @category system
 export def upgrade [
   --async (-a) # Spawn the update runner as a background job
   --silent (-s) # Do not return the results record after completion
+  --system # Include the system package manager (needs a sudo prompt, so not with `--async`)
 ]: oneof<record, nothing> -> record {
   if $async {
-    job spawn --description=management-auto-upgrade {
+    if $system { error make --unspanned '`--system` cannot run in the background: sudo needs a prompt' }
+    job spawn --description=pkg-auto-upgrade {
       history upgrade --age
       | if $in == null or $in > 24hr { ignore | upgrade --silent }
     } | get-job $in
   } else {
     default {}
     | merge $REGISTRY
+    | merge (if $system { $SYSTEM } else { {} })
     | items {|bin args|
+      let cmd: list<string> = if $SYSTEM has $bin { [sudo $bin] } else { [$bin] }
       if (which $bin | is-empty) {
         [{output: $"command not found: '($bin)'" success: false}]
       } else if ($args | describe) !~ '^list<list<' {
@@ -46,7 +57,7 @@ export def upgrade [
         [{output: $"invalid arguments: ($repr) \(($type))" success: false}]
       } else {
         $args | each {|rest|
-          run-external $bin ...$rest out+err>|
+          run-external ...$cmd ...$rest out+err>|
           | complete
           | reject --optional stderr
           | rename --column={stdout: output exit_code: success}
@@ -78,6 +89,39 @@ export def history [
   try { $LOG | get $target | invoke } catch { handle }
 }
 
+# Install system packages with apt.
+@category system
+export def install [
+  ...names: string # Names of the packages to install
+]: nothing -> nothing {
+  if ($names | is-empty) { error make --unspanned 'no packages were provided' }
+  apt-get install --yes ...$names
+}
+
+# Remove system packages with apt, then clean up unused packages and the cache.
+@category system
+export def remove [
+  ...names: string@_removable # Names of the packages to remove
+]: nothing -> nothing {
+  if ($names | is-not-empty) { apt-get remove --yes ...$names }
+  clean
+}
+
+# Remove unused system packages and clean the apt cache.
+@category system
+export def clean []: nothing -> nothing {
+  apt-get autoremove --yes
+  apt-get autoclean --yes
+}
+
+# Pass a command through to `apt-get` with elevated privileges.
+@category system
+export def --wrapped apt [
+  ...rest: string # Arguments for `apt-get`
+]: nothing -> nothing {
+  apt-get ...$rest
+}
+
 # Reload all plugins to ensure latest version is loaded.
 @category plugin
 export def --env reload-plugins []: nothing -> nothing {
@@ -97,6 +141,15 @@ export def --env reload-plugins []: nothing -> nothing {
 @category system
 export def --env bump-nu []: nothing -> nothing { get-latest-nightly-build; reload-plugins }
 
-# ——— completions ————————————————————————————————————————————————————————————
+# ——— completions ——————————————————————————————————————————————————————————————
 
 def _targets []: nothing -> list { $LOG | columns }
+
+def _removable [context: string]: nothing -> list {
+  $context
+  | split row (char space)
+  | skip
+  | prepend [sudo apt-get remove]
+  | str join (char space)
+  | collect { commandline complete }
+}
