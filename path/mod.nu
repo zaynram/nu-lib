@@ -1,3 +1,39 @@
+# Path helpers extending the builtin `path` commands, with the std and std-rfc path extras.
+
+use std/util "path add"
+
+# `with-extension`, `with-parent`, `with-stem`
+export use std-rfc/path *
+
+# Prepend (or append) directories to `$env.PATH`.
+export alias add = path add
+
+def join-with [sep: string]: list<string> -> path {
+  path join | str replace --all --regex '[\\/]+' $sep
+}
+
+# Re-join a path with a uniform separator, appending any extra segments.
+#
+# Every run of `/` or `\` in the input and the segments collapses to `--sep`, so a
+# Windows path seen from WSL comes out forward-slashed by default.
+@category path
+export def rejoin [
+  ...segments: string # Additional segments to append
+  --sep (-s): string = '/' # Separator to join with
+]: [
+  nothing -> path
+  string -> path
+  list<string> -> list<path>
+] {
+  let input: oneof<nothing, string, list<string>> = $in
+  match ($input | describe | split words | first) {
+    nothing if ($segments | is-empty) => { error make --unspanned 'path rejoin: nothing to join' }
+    nothing => { $segments | join-with $sep }
+    string => { [$input] | append $segments | join-with $sep }
+    list => { $input | each {|p| [$p] | append $segments | join-with $sep } }
+  }
+}
+
 # Truncate a path by segment count or relativity to a base path.
 #
 # The `--from` argument uses regex matching on the first character

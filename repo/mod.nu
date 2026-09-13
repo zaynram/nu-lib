@@ -1,6 +1,6 @@
 # Repository aggregation utilities and resolvers (GitHub-only for now).
 
-use ../util fix-path
+use ../path
 
 # nu-lint-ignore-file: string_param_as_path
 
@@ -257,7 +257,7 @@ def discover-git-repos [
   root: directory = $nu.home-dir
   --depth: int = 3
 ]: nothing -> list<directory> {
-  glob ($root | fix-path ** .git) --depth=$depth --no-file --no-symlink | path dirname | uniq
+  glob ($root | path rejoin ** .git) --depth=$depth --no-file --no-symlink | path dirname | uniq
 }
 
 def collect-gstat-data [root: path]: nothing -> record {
