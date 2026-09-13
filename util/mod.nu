@@ -161,7 +161,7 @@ export def --env --wrapped reload [
   match-os {linux: {|| reset (if $erase { '-wc' } else { '-w' }) }}
   with-env ($in | default {}) {
     if $nu.is-interactive { hide-env --ignore-errors pid }
-    if $nu.is-login { %exec $EXE --login ...$rest } else { %exec $EXE ...$rest }
+    if $nu.is-login { exec $EXE --login ...$rest } else { exec $EXE ...$rest }
   }
 }
 

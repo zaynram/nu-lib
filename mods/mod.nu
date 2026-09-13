@@ -101,11 +101,12 @@ export def --env define [
   if not ($directory | path exists) { mkdir $directory }
   let path: path = $directory | path join mod.nu
   if not $overwrite and ($path | path exists) { error make --unspanned $"module '($name)' is already defined" }
-  $block | preserve-serialized-closure | try { %save --force --progress $path } catch { error make --unspanned 'unable to save module definition' }
+  $block | preserve-serialized-closure | try { save --force --progress $path } catch { error make --unspanned 'unable to save module definition' }
   return $path
 }
 
 # List the modules loaded in the current session.
+@category core
 export def --env list [
   name?: string@_module-names
   # The name of a module to return information about
