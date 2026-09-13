@@ -1,5 +1,6 @@
-# nu-lint-ignore-file: custom_log_command
 # Timewarrior and Taskwarrior wrappers.
+
+# nu-lint-ignore-file: custom_log_command
 
 use ../util "into completions"
 

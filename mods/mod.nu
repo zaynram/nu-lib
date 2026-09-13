@@ -42,13 +42,9 @@ def preserve-serialized-closure []: closure -> list<string> {
   | append ['']
 }
 
-# Glob the `.nu` definitions under the piped directories, relative to each (or mapped by `$then`).
-alias nu-glob = do {|then?: closure|
-  par-each {|d|
-    let p: path = $d | path rejoin
-    glob $"($p)/**/*.nu" --no-dir --depth=3 --exclude=$EXCLUDE
-    | if $then != null { do --ignore-errors $then $p } else { path relative-to $p }
-  } | flatten --all | compact | uniq
+# Glob the `.nu` definitions under the piped directories.
+def nu-glob []: list<path> -> list<path> {
+  par-each {|d| glob ($d | path rejoin ** *.nu) --no-dir --depth=3 --exclude=$EXCLUDE } | flatten | uniq | sort
 }
 
 alias build-mods-refs = par-each --keep-order {|row|
@@ -125,7 +121,8 @@ export def edit [
   --get (-g) # Return the resolved path instead of opening it
 ]: nothing -> oneof<nothing, path> {
   [$config.USER.modules $config.USER.scripts]
-  | nu-glob { where $it has $target }
+  | nu-glob
+  | where $it has $target
   | sort-by {|p| $target not-in ($p | path split) } # exact segment matches first
   | get --optional 0
   | if $in == null { error make --unspanned $"no definition found for '($target)'" } else if $get { path expand } else { editor }
@@ -211,6 +208,6 @@ export def --env main [
 def _module-names []: nothing -> list { 'use ' | commandline complete | where $it !~ '(.nu|/)$' }
 def _definitions []: nothing -> record {
   [$config.USER.modules $config.USER.scripts] | each {|root|
-    $root | nu-glob | wrap value | insert description ($root | str replace $nu.home-dir '~')
+    [$root] | nu-glob | path relative-to $root | wrap value | insert description ($root | str replace $nu.home-dir '~')
   } | flatten | into completions {sort: true, completion_algorithm: fuzzy, match_description: true}
 }

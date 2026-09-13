@@ -28,9 +28,8 @@ export def rejoin [
   let input: oneof<nothing, string, list<string>> = $in
   match ($input | describe | split words | first) {
     nothing if ($segments | is-empty) => { error make --unspanned 'path rejoin: nothing to join' }
-    nothing => { $segments | join-with $sep }
-    string => { [$input] | append $segments | join-with $sep }
     list => { $input | each {|p| [$p] | append $segments | join-with $sep } }
+    _ => { [$input] | append $segments | compact | join-with $sep }
   }
 }
 

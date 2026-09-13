@@ -1,7 +1,7 @@
 # Extensions to the builtin `config` commands: directories, environment variables, autoload files,
 # application configs and the prompt of the user and vendor scopes.
 
-# nu-lint-ignore-file: positional_to_pipeline, unsafe_dynamic_record_access
+# nu-lint-ignore-file: positional_to_pipeline
 
 # ——— imports —————————————————————————————————————————————————————————————————
 
@@ -11,7 +11,7 @@ use ../util [ editor "into completions" ]
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
-const lib: path = if $nu.os-info.name == windows {
+const LIB: path = if $nu.os-info.name == windows {
   $nu.home-dir | path join desktop
 } else {
   $nu.home-dir | path join library
@@ -20,11 +20,11 @@ const lib: path = if $nu.os-info.name == windows {
 # Directories of the user scope.
 export const USER: record = {
   bin: ($nu.home-dir | path join .local bin)
-  lib: $lib
+  lib: $LIB
   data: ($nu.data-dir | path dirname)
   home: $nu.home-dir
   autoload: $nu.user-autoload-dirs.0?
-  modules: ($lib | path join nushell)
+  modules: ($LIB | path join nushell)
   config: ($nu.default-config-dir | path dirname)
   plugins: ($nu.current-exe | path expand | path dirname)
   scripts: ($nu.data-dir | path join scripts)
@@ -83,7 +83,7 @@ def new-paths [vendor: bool]: nothing -> list<path> {
 }
 
 # Open a resolved file in the editor, or return its expanded path.
-def submit [target: oneof<nothing, string>, --get]: oneof<nothing, path> -> oneof<nothing, path> {
+def submit [target: oneof<nothing, string>, --get]: oneof<nothing, path> -> oneof<nothing, path> { # nu-lint-ignore: unused_parameter
   let p: oneof<nothing, path> = $in
   if ($p | is-empty) { error wrap --code=config::unresolved_target $"no items found for target: '($target)'" }
   $p | path expand | if $get { } else { editor }
@@ -111,7 +111,7 @@ export def --env vars [
 # Navigate to (or return) a directory of a scope; with no target, return them all.
 @category filesystem
 export def --env dir [
-  target?: cell-path@_dirs # Name of the directory to target
+  target?: string@_dirs # Name of the directory to target
   --vendor (-v) # Use the vendor scope
   --get (-g) # Return the path instead of navigating to it
 ]: nothing -> oneof<nothing, path, record> {
