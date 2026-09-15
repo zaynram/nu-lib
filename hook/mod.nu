@@ -126,11 +126,7 @@ export def is-enabled [
 ]: nothing -> bool {
   $ref | default $name | dispatch type --pipe {
     cell-path: {|| show $in disabled --strict=$strict --default=false }
-    string: {||
-      flatten-hooks --include=[$in]
-      | get --optional=(not $strict) $.0.disabled
-      | default false
-    }
+    string: {|| list $in --strict=$strict | get --optional 0.disabled | default false }
   } | not $in
 }
 

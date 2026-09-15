@@ -28,13 +28,13 @@ def default-include-modules [
   # Hoisted out of the row condition: evaluating `scope commands` per module cost ~120ms at login.
   let visible: list<int> = scope commands | get decl_id
   let overlays: list<string> = overlay list | get name
-  # An explicit closure, not a row condition: bare column names inside parenthesised subexpressions
-  # of a row condition parse as commands (`file`, `commands.decl_id`), not as `$it` fields.
+  # Bare column names inside the parenthesised legs would parse as commands (`file`, `commands.decl_id`);
+  # only the first leg may omit `$it`.
   default { scope modules }
   | (
     where name !~ $RE.omit
     and ($it.file | path exists)
-    and ($include_overlays or $it.name not-in overlays)
+    and ($include_overlays or $it.name not-in $overlays)
     and ($it.commands.decl_id | any { $visible has $in })
   ) | uniq-by module_id
 }
