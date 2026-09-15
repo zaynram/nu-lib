@@ -6,7 +6,11 @@ def "test formats elements by type" []: nothing -> nothing {
   assert equal $got [abc "1" "1.5" "3 KiB" "2 min" "2026-09-14T00:00:00+00:00" "true"]
 }
 
-def "test quotes strings with whitespace and compacts empties" []: nothing -> nothing {
+def "test quotes only strings that misparse as bare arguments and compacts empties" []: nothing -> nothing {
+  let quoted = ["b c" "a'b" 'a"b' "a(b" "a[b" "a{b" "a|b" "a;b" "$a" "-x" "--" "-1" "true" "null"]
+  assert equal ($quoted | completion into completions | get completions | where $it !~ '^"') [] 'every misparsing word is quoted'
+  let bare = [abc "1" "1.5" "3KiB" "2026-09-13_x" foo-bar x.nu "a#b" "a=b" "a:b" "a,b" "~/x" "*" "." "-" pre_execution.0 true1]
+  assert equal ($bare | completion into completions | get completions) $bare 'bare words stay bare'
   assert equal (["" "b c" null a] | completion into completions | get completions) ['"b c"' a]
   assert equal ([[value description]; ["b c" z]] | completion into completions | get completions) [[value description]; ['"b c"' z]]
 }

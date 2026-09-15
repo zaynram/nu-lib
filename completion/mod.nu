@@ -23,7 +23,7 @@ const OPTIONS: record = {
 # ——— definitions ——————————————————————————————————————————————————————————————
 
 # Wrap an iterable of custom completions into a record with completion options.
-# - elements are formatted to strings by type (strings containing whitespace are nuon-quoted) after `compact --empty`
+# - elements are formatted to strings by type after `compact --empty`; strings are nuon-quoted only when a bare argument would misparse
 # - `$options` merge over the defaults; set an option to `null` to fall back to the Nushell default
 @category core
 @example 'transform a list into a completions record' {
@@ -58,7 +58,8 @@ export def "into completions" [
     {||
       let value: any = $in
       match ($value | describe | str replace --regex '<.*' '') {
-        string => { if $value =~ '\s' { $value | to nuon } else { $value } }
+        # Quote only what misparses as a bare argument: whitespace, quotes, `( ) [ { } | ; $`, a leading dash, keywords.
+        string => { if $value =~ '[\s"\x27`()\[{}|;$]|^-.|^(true|false|null)$' { $value | to nuon } else { $value } }
         filesize => { $value | format filesize $repr.filesize }
         duration => { $value | format duration $repr.duration }
         datetime => { $value | format date $repr.datetime }
