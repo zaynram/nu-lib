@@ -4,7 +4,6 @@
 
 use ($nu.data-dir | path basename --replace nupm/modules/session) edit
 export use std/util [ "path add" null-device ellie ]
-use std-rfc "into list"
 use ../dispatch
 
 # ——— constants ————————————————————————————————————————————————————————————————
@@ -21,30 +20,20 @@ def each-completion [c: closure]: [
 
 # ——— definitions —————————————————————————————————————————————————————————————
 
-# Check for string matches case-insensitively.
-
-# Check for membership using cell-paths.
+# Check whether a cell-path resolves in the input, case-insensitively (`--not` inverts the test).
 @category core
 export def contains-key [
-  key: cell-path
-  # The property to test for membership in the input value
-  --strict (-s)
-  # For tables, require all members to contain the key
-  --not (-n)
-  # Invert the membership test (test for non-existence)
-]: oneof<record, table, list> -> bool {
-  let test: closure = { try { $in | get --ignore-case $key; not $not } catch { $not } }
-  let mult: closure = if $strict { {|| all $test } } else { {|| any $test } }
-  $in | dispatch type --pipe {table: $mult list: $test record: $test}
+  key: cell-path # The cell-path to test for
+  --not (-n) # Invert the test
+]: oneof<record, list> -> bool {
+  let value: any = $in
+  (try { $value | get --ignore-case $key | ignore; true } catch { false }) != $not
 }
 
 # Serialize a datetime (default: now; strings are parsed as human dates) in RFC 3339 format.
 @category date
 export def timestamp []: oneof<nothing, string, datetime> -> string {
-  dispatch type --default={|| } --pipe {
-    nothing: {|| date now }
-    string: {|| date from-human }
-  } | format date %+
+  dispatch type --pipe {nothing: {|| date now } string: {|| date from-human } _: {|| }} | format date %+
 }
 
 # Wrap an iterable containing custom completions into a record with completion options.
@@ -206,8 +195,7 @@ export def --wrapped with-auth [
 ]: nothing -> string {
   def attempt [cmd: list<string>]: nothing -> record { run-external ...$cmd | complete }
   def raise [cmd: list<string>]: record -> error {
-    $"($cmd.0?) exited with code ($in.exit_code):\n($in.stdout)($in.stderr)"
-    | error make --unspanned $in
+    error make --unspanned $"($cmd.0?) exited with code ($in.exit_code):\n($in.stdout)($in.stderr)"
   }
   attempt $cmd
   | if $in.exit_code == 0 {

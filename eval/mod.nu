@@ -13,7 +13,7 @@ export const EOL: string = char newline
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
-# Evalute a Nushell script or module code in the active terminal REPL.
+# Evaluate a Nushell script or module code in the active terminal REPL.
 @category shell
 export def main [
   ...files: path@_default-mods-and-scripts

@@ -25,13 +25,18 @@ const EXCLUDE: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
 def default-include-modules [
   --include-overlays
 ]: oneof<nothing, table<name: string, commands: list, file: string>> -> table<name: string, commands: list, file: string> {
+  # Hoisted out of the row condition: evaluating `scope commands` per module cost ~120ms at login.
+  let visible: list<int> = scope commands | get decl_id
+  let overlays: list<string> = overlay list | get name
+  # An explicit closure, not a row condition: bare column names inside parenthesised subexpressions
+  # of a row condition parse as commands (`file`, `commands.decl_id`), not as `$it` fields.
   default { scope modules }
-  | where (
-    $it.name !~ $RE.omit
-    and ($it.file | path exists)
-    and (scope commands | get decl_id | intersect $it.commands.decl_id | is-not-empty)
-    and ($include_overlays or (overlay list).name not-has $it.name)
-  ) | uniq-by module_id
+  | where {|m| (
+    $m.name !~ $RE.omit
+    and ($m.file | path exists)
+    and ($include_overlays or $m.name not-in $overlays)
+    and ($m.commands.decl_id | any {|id| $id in $visible })
+  )} | uniq-by module_id
 }
 
 def preserve-serialized-closure []: closure -> list<string> {
@@ -68,7 +73,6 @@ def module-file-shorthand []: [
 # ——— environment ——————————————————————————————————————————————————————————————
 
 export-env {
-  $env.mods_hist = history session
   $env.mods_home = $env.mods_home?
     | default { $env.NU_LIB_DIRS | where ($it | path exists) | first }
     | path expand --strict
@@ -76,16 +80,23 @@ export-env {
   $env.mods_refs = module-file-shorthand
   # Wrapped with `do` to ensure `$env.mods_used` does not pick up this import invocation.
   do --capture-errors --env {
+    # A pre_execution string hook flags module commands from the command line (string hooks may
+    # mutate `$env`); scanning `history --long` here instead cost ~25ms on every prompt.
     const module_command_regex: string = '\s*(use|hide|overlay\s+(use|hide))\s+(?<name>[\w\-]+)\s*'
-    alias recent-module-commands = try {
-      let after: datetime = 'a minute ago' | date from-human
-      history --long | where session_id == $env.mods_hist and start_timestamp > $after and command =~ $module_command_regex
-    } catch { [] }
-    use ../hook add; [
+    use ../hook add
+    [
+      [name condition code];
+      [
+        `mods::use_or_hide::flag-module-command`
+        {|| $env has mods_used }
+        $"$env.mods_dirty = \(commandline) =~ '($module_command_regex)'"
+      ]
+    ] | add pre_execution
+    [
       [name condition code];
       [
         `mods::use_or_hide::update-mods_used`
-        {|| $env has mods_used and (recent-module-commands | is-not-empty) }
+        {|| $env.mods_dirty? | default false }
         {|| list --update }
       ]
     ] | add pre_prompt

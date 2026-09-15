@@ -2,10 +2,8 @@
 
 use ../util [ "into completions" contains-key ]
 use ../dispatch
-use std structure
+use std/util structure
 use std/iter flat-map
-use std-rfc/iter only
-use std-rfc "into list"
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -29,14 +27,6 @@ export-env {
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
-def ensure-in-bounds [n: int]: oneof<table, list, nothing> -> int {
-  let len: int = into list | length
-  match $n {
-    $n if $n >= 0 and $n < $len => $n
-    $n if $n < 0 => { $len + $n }
-    $n if $n >= $len => { $len - 1 }
-  }
-}
 alias validate-target = do --capture-errors {||
   let key: cell-path;
   if ($env.config.hooks | contains-key $key) { return }
@@ -75,14 +65,13 @@ def hook-defaults [prefix: string]: [
   nothing -> list<any>
   oneof<string, list, table> -> table<ref: cell-path, code: oneof<string, closure>, name: string, disabled: bool>
 ] {
-  into list | enumerate | par-each {|row|
+  # `append []` rather than std-rfc's `into list`: the latter turns a record into a key/value table.
+  append [] | enumerate | each {|row|
     let ref: cell-path = $prefix | split row '.' | append $row.index | into cell-path
     let name: string = $"($prefix)[($row.index)]"
-    let cond: closure = {|| is-enabled ($ref) }
     $row.item | dispatch type --pipe {
-      string: {|| wrap code | merge {name: $name disabled: false condition: {|| is-enabled $ref } ref: $ref} }
+      'string|closure': {|| wrap code | merge {name: $name disabled: false condition: {|| is-enabled $ref } ref: $ref} }
       record: {|| default false disabled | default $ref ref | default $name name }
-      _: null
     }
   } | compact
 }
@@ -91,7 +80,9 @@ def flatten-hooks [
   pred?: closure
   --only: cell-path
   --include: list<string> = []
-]: nothing -> table<name: string, disabled: bool, condition: closure, code: oneof<string, closure>, ref: cell-path> {
+]: nothing -> table<name: string, disabled: bool, code: oneof<string, closure>, ref: cell-path> {
+  # `condition` is optional per hook, so it is not part of the declared row type: with
+  # `enforce-runtime-annotations` a declared column missing from any row is a runtime type mismatch.
   $env.config.hooks
   | select --ignore-case --optional ...$HOOK_TYPES
   | compact --empty
@@ -105,7 +96,7 @@ def flatten-hooks [
     closure => { where $pred }
     nothing if $only != null => { where ref == $only }
     nothing if $include != [] => { where name in $include }
-    _ => { where not $it.disabled }
+    _ => { where not disabled }
   }
 }
 
@@ -113,14 +104,14 @@ alias invoke = do --env --capture-errors $in
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
-# Retreive one or more of the configured Nushell hooks.
+# Retrieve one or more of the configured Nushell hooks.
 @category env
 export def --env main [
   target: oneof<string, cell-path>@_hook-types
   # The hook type to target
   index?: int@_hook-indices
-  # Retreive the configured hook record at this index
-]: nothing -> oneof<nothing, record, table<condition: closure, code: oneof<closure, string>>> {
+  # Retrieve the configured hook record at this index
+]: nothing -> oneof<nothing, record, table> {
   hook-getter $target | invoke $index
 }
 
@@ -134,7 +125,7 @@ export def is-enabled [
 ]: nothing -> bool {
   $ref | default $name | dispatch type --pipe {
     cell-path: {|| show $in disabled --default=false }
-    string: {|| flatten-hooks --include=[$in] | get $.0?.disabled | into bool --relaxed }
+    string: {|| flatten-hooks --include=[$in] | get --optional 0.disabled | default false }
   } | not $in
 }
 
@@ -154,18 +145,16 @@ export def show [
 ]: nothing -> oneof<nothing, any> {
   flatten-hooks --only=$ref
   | if $raw { } else {
-    let stringify: closure = {|| to nuon --serialize --raw-strings | str trim --char='"' }
-    $in | par-each {|| upsert code $stringify | upsert condition $stringify }
+    let stringify: closure = {|| if $in == null { } else { to nuon --serialize --raw-strings | str trim --char='"' } }
+    $in | each {|| upsert code $stringify | upsert condition $stringify }
   } | if $in == [] and $strict {
     error make {
       msg: 'no hook exists at the provided reference'
       code: 'internal::hook::invalid_cell-path_reference'
       label: {text: reference span: (metadata $ref).span}
     }
-  } else if ($cell | describe) == nothing {
-    first
   } else {
-    take 1 | only --optional=(not $strict) $cell
+    get --optional 0 | if $cell == null { } else { get --optional=(not $strict) $cell }
   } | default $default
 }
 
@@ -178,7 +167,7 @@ export def list [
   # Throw an error if the named hook(s) cannot be found
 ]: nothing -> oneof<list<any>, table> {
   flatten-hooks --include=$names | if $in != [] or not $strict { } else {
-    error make --unspanned {
+    error make {
       msg: 'no hook exists with the provided name(s)'
       code: 'internal::hook::unresolved_name'
       label: {text: 'name(s)' span: (metadata $names).span}
@@ -207,26 +196,15 @@ export def --env edit [
   }
 }
 
-# Delete a hook from the environment configuration.
-# The boolean returned indicates whether any element was removed.
+# Delete a hook from the environment configuration; returns whether anything was removed.
 @category env
 export def --env del [
   ref: cell-path@_hook-refs
   # The full path of the hook to remove
 ]: nothing -> bool {
-  let parts = $ref | into string | split row --number=3 '.' | skip
-  let target: string = $parts | first
-  hook-getter ($parts | first)
-  | invoke
-  | dispatch type --pipe {
-    record: {|n: string| reject --optional --ignore-case $n }
-    'list | table': {|n: string|
-      let idx: int = ensure-in-bounds ($n | into int)
-      $in | reject --optional $idx
-    }
-  } ($parts | last)
-  | try { let update: closure; hook-setter $target | invoke $update; true }
-  | into bool --relaxed
+  if ($env.config.hooks | contains-key --not $ref) { return false }
+  $env.config.hooks = $env.config.hooks | reject --ignore-case $ref
+  true
 }
 
 # Test a hook closure, optionally with custom arguments.
@@ -245,7 +223,7 @@ export def --wrapped test [
   | show --raw $ref $in
   | if $in == null {
     error make {
-      msg: 'no hook exists at the provided reference'
+      msg: $'no hook (if $condition { "condition" } else { "code" }) exists at the provided reference'
       code: 'internal::hook::invalid_cell-path_reference'
       label: {text: reference span: (metadata $ref).span}
     }
@@ -273,26 +251,19 @@ export def --env add [
   target: cell-path@_possible-hook-types
   # The type of hook to add the provided configurations to
   --index (-i): int@_hook-indices = -1
-  # Insert the record passed as pipeline input at this index (caution: overwrites existing elements)
+  # Insert the pipeline input before this index (negative counts from the end; the default appends)
 ]: [
   closure -> nothing
   list<closure> -> nothing
-  record<condition: closure, code: oneof<string, closure>> -> nothing
-  table<condition: closure, code: oneof<string, closure>> -> nothing
+  record -> nothing
+  table -> nothing
 ] {
-  let hooks: list = into list
-  let add: closure = match $index {
-    -1 => {|| append $hooks }
-    0 => {|| prepend $hooks }
-    $n => {||
-      let arr: list = into list | enumerate
-      let idx: int = $arr | ensure-in-bounds $n
-      $arr | reduce --fold=$hooks {|it acc|
-        if $it.index < $idx { prepend $it.item } else { append $it.item }
-      }
-    }
+  let hooks: list = append []
+  hook-setter $target | invoke {||
+    let list: list = append []
+    let idx: int = if $index < 0 { ($list | length) + $index + 1 } else { $index } | [0 $in] | math max
+    [...($list | take $idx) ...$hooks ...($list | skip $idx)]
   }
-  hook-setter $target | invoke $add
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————
@@ -307,7 +278,7 @@ const _options = {
 def _hook-types []: nothing -> record {
   [
     ...($env.config.hooks | columns | where $it != env_change)
-    ...($env.config.hooks.env_change | columns | where $it !~ ^__\w+ | par-each { prepend env_change | str join . })
+    ...($env.config.hooks.env_change | columns | where $it !~ ^__\w+ | each { prepend env_change | str join . })
   ]
   | sort-by --custom {|a b| $a not-has . and $b has . }
   | into completions {
@@ -320,7 +291,7 @@ def _hook-types []: nothing -> record {
 def _possible-hook-types []: nothing -> record {
   [
     ...($env.config.hooks | columns | where $it != env_change)
-    ...($env | columns | where $it !~ ^__\w+ | par-each { prepend env_change | str join . })
+    ...($env | columns | where $it !~ ^__\w+ | each { prepend env_change | str join . })
   ]
   | sort-by --custom {|a b| $a not-has . and $b has . }
   | into completions {
@@ -349,16 +320,6 @@ def _hook-indices [
     match_description: ($options.match_description? | default true)
     completion_algorithm: ($options.completion_algorithm? | default 'substring')
     case_sensitive: ($options.case_sensitive? | default false)
-  }
-}
-
-def _hook-elements [buffer: string]: nothing -> oneof<list, record> {
-  _hook-indices $buffer --value={|row: record<index: int, item: any>|
-    let index: int = $row.index
-    $row.item | dispatch type --pipe {
-      record: {|prefix: string| columns | reduce --fold=[] {|it acc| $"($prefix).($it).($row.index)" } }
-      _: {|prefix: string| $'($prefix).($index)' }
-    }
   }
 }
 

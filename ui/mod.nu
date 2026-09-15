@@ -59,12 +59,12 @@ const CONTAINERS: record<xvnc: string, openbox: string, tint2: string, mstsc: st
 #
 # Without `app` only the containers are ensured. An application already tracked as a
 # job is not started twice; an untracked process with the same name is killed first.
-# `--mode` (or `$env.DISP_SESSION_MODE`) overrides the detected session type for the call.
+# `--mode` (or `$env.UI_SESSION_MODE`) overrides the detected session type for the call.
 @category platform
-@example 'ensure the containers and report status' { disp }
-@example 'launch an application, passing arguments through' { disp xterm -fa Mono }
-@example 'launch under WSLg and maximize the window' { disp claude-desktop --maximize }
-@example 'force the session type for one launch' { disp --mode ssh xterm }
+@example 'ensure the containers and report status' { ui }
+@example 'launch an application, passing arguments through' { ui xterm -fa Mono }
+@example 'launch under WSLg and maximize the window' { ui claude-desktop --maximize }
+@example 'force the session type for one launch' { ui --mode ssh xterm }
 export def --wrapped main [
   app?: string@_apps # Executable name or path to launch
   --mode (-m): string@['ssh' 'xrdp' 'wslg'] # Override the session type
@@ -73,8 +73,8 @@ export def --wrapped main [
 ]: nothing -> record {
   if $mode != null and $mode not-in [ssh xrdp wslg] { error make --unspanned $"unknown session mode '($mode)'" }
   let override: record = $mode
-    | default { $env | get --ignore-case --optional $.disp_session_mode }
-    | wrap DISP_SESSION_MODE
+    | default { $env | get --ignore-case --optional $.ui_session_mode }
+    | wrap UI_SESSION_MODE
     | compact
   with-env $override {
     let procs: table = snapshot
@@ -99,7 +99,7 @@ export def --wrapped main [
 }
 
 # Report the display mode, container processes, VNC listeners, and tracked applications.
-@example 'inspect the session' { disp status }
+@example 'inspect the session' { ui status }
 @category platform
 export def status []: nothing -> record<mode: string, xvnc: oneof<nothing, record>, openbox: oneof<nothing, record>, tint2: oneof<nothing, record>, mstsc: oneof<nothing, record>, listeners: oneof<nothing, int>, apps: table> {
   let procs: table = snapshot
@@ -113,7 +113,7 @@ export def status []: nothing -> record<mode: string, xvnc: oneof<nothing, recor
 }
 
 # Return the environment record that applications are launched with.
-@example 'run a command under the display environment' { with-env (disp env) { xeyes } }
+@example 'run a command under the display environment' { with-env (ui env) { xeyes } }
 @category env
 export def env []: nothing -> record { session-env (mode (snapshot)) }
 
@@ -121,7 +121,7 @@ export def env []: nothing -> record { session-env (mode (snapshot)) }
 #
 # Each name resolves to a process (exact name first, then a command-line match) and a
 # watcher job named after that process ends once the process disappears.
-@example 'adopt an application started elsewhere' { disp register xterm }
+@example 'adopt an application started elsewhere' { ui register xterm }
 @category platform
 export def register [...names: string@_running]: nothing -> record {
   let procs: table = snapshot
@@ -143,8 +143,8 @@ export def register [...names: string@_running]: nothing -> record {
 }
 
 # Stop an application by name (tracked or not), or every tracked application when no name is given.
-@example 'stop one application' { disp stop xterm }
-@example 'stop all tracked applications' { disp stop }
+@example 'stop one application' { ui stop xterm }
+@example 'stop all tracked applications' { ui stop }
 @category platform
 export def stop [app?: string@_tracked]: nothing -> record {
   let procs: table = snapshot
@@ -154,7 +154,7 @@ export def stop [app?: string@_tracked]: nothing -> record {
 }
 
 # Stop tracked applications and the display containers.
-@example 'tear the session down' { disp terminate }
+@example 'tear the session down' { ui terminate }
 @category platform
 export def terminate []: nothing -> record {
   let procs: table = snapshot
@@ -164,12 +164,12 @@ export def terminate []: nothing -> record {
 }
 
 # Terminate, then ensure the display containers again.
-@example 'recover from a wedged container' { disp restart }
+@example 'recover from a wedged container' { ui restart }
 @category platform
 export def restart []: nothing -> record { terminate | ignore; main }
 
 # Repair the WSLg display by forcibly restarting `msrdc`.
-@example 'restart the WSLg RDP client' { disp repair }
+@example 'restart the WSLg RDP client' { ui repair }
 @category platform
 export def repair []: nothing -> nothing {
   if (mode (snapshot)) != wslg { log warning 'detected non-WSLg display setup; results may vary' }
@@ -180,12 +180,12 @@ export def repair []: nothing -> nothing {
 }
 
 # Maximize a WSLg window by title through `utils.psm1`.
-@example 'maximize the window titled Claude' { disp maximize Claude }
+@example 'maximize the window titled Claude' { ui maximize Claude }
 @category platform
 export def maximize [name?: string@_tracked]: nothing -> nothing {
   let psm: string = $DIR | path join utils.psm1 | path as-windows
   let arg: string = match $name { null => '' _ => { $name | str replace --all "'" "''" | $"'($in)'" } }
-  job spawn --description=disp-maximize { powershell x $"Import-Module '($psm)'; Set-WSLgFullscreen ($arg)" | ignore }
+  job spawn --description=ui-maximize { powershell x $"Import-Module '($psm)'; Set-WSLgFullscreen ($arg)" | ignore }
   sleep 1sec
 }
 
@@ -215,10 +215,10 @@ def mode [procs: table]: nothing -> string {
       $.ssh_connection
       $.xrdp_session
       $.display
-      $.disp_session_mode
+      $.ui_session_mode
     ) | compact
 
-  $e.disp_session_mode? | match $in {
+  $e.ui_session_mode? | match $in {
     null => { }
     ssh | xrdp | wslg => { return $in }
     $x => { log warning $"ignoring unknown session mode override '($x)'" }
