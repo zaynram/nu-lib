@@ -1,7 +1,6 @@
 # Utility module for working with Nushell hooks.
 
-use ../util [ "into completions" contains-key ]
-use ../dispatch
+use ../util [ "into completions" contains-key dispatch ]
 use std/util structure
 use std/iter flat-map
 
@@ -122,10 +121,16 @@ export def is-enabled [
   # The cell-path of the hook record to retrieve the value from
   --name (-n): string@_hook-names
   # Check the hook by name (useful for custom definitions when ref is inaccessible)
+  --strict (-s)
+  # Throw an error if the hook cannot be resolved
 ]: nothing -> bool {
   $ref | default $name | dispatch type --pipe {
-    cell-path: {|| show $in disabled --default=false }
-    string: {|| flatten-hooks --include=[$in] | get --optional 0.disabled | default false }
+    cell-path: {|| show $in disabled --strict=$strict --default=false }
+    string: {||
+      flatten-hooks --include=[$in]
+      | get --optional=(not $strict) $.0.disabled
+      | default false
+    }
   } | not $in
 }
 
@@ -235,7 +240,7 @@ export def --wrapped test [
         }
         string: {||
           [
-            r##'#!/usr/bin/env -S nu --stdin --no-config-file'##
+            '#!/usr/bin/env -S nu --stdin --no-config-file'
             $'def main []: ($input | describe) -> any { ($h) }'
           ] | save --raw --force $TEST_PATH
           $input | run --full-reparse $TEST_PATH ...$rest

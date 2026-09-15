@@ -31,12 +31,12 @@ def default-include-modules [
   # An explicit closure, not a row condition: bare column names inside parenthesised subexpressions
   # of a row condition parse as commands (`file`, `commands.decl_id`), not as `$it` fields.
   default { scope modules }
-  | where {|m| (
-    $m.name !~ $RE.omit
-    and ($m.file | path exists)
-    and ($include_overlays or $m.name not-in $overlays)
-    and ($m.commands.decl_id | any {|id| $id in $visible })
-  )} | uniq-by module_id
+  | (
+    where name !~ $RE.omit
+    and ($it.file | path exists)
+    and ($include_overlays or $it.name not-in overlays)
+    and ($it.commands.decl_id | any { $visible has $in })
+  ) | uniq-by module_id
 }
 
 def preserve-serialized-closure []: closure -> list<string> {
@@ -89,14 +89,14 @@ export-env {
       [
         `mods::use_or_hide::flag-module-command`
         {|| $env has mods_used }
-        $"$env.mods_dirty = \(commandline) =~ '($module_command_regex)'"
+        $"$env.__mods_dirty = \(commandline) =~ '($module_command_regex)'"
       ]
     ] | add pre_execution
     [
       [name condition code];
       [
         `mods::use_or_hide::update-mods_used`
-        {|| $env.mods_dirty? | default false }
+        {|| $env.__mods_dirty? | into bool --relaxed }
         {|| list --update }
       ]
     ] | add pre_prompt
@@ -182,7 +182,8 @@ export def --env list [
 #
 ### By default, when no arguments or input are provided, the names of the loaded modules will be returned as a list of strings.
 @category core
-export def --env main [ # nu-lint-ignore: add_doc_comment_exported_fn
+export def --env main [
+  # nu-lint-ignore: add_doc_comment_exported_fn
   name?: string@_module-names
   # Name of a module to define or show information about
   --all (-a)
@@ -220,5 +221,5 @@ def _module-names []: nothing -> list { 'use ' | commandline complete | where $i
 def _definitions []: nothing -> record {
   [$config.USER.modules $config.USER.scripts] | each {|root|
     [$root] | nu-glob | path relative-to $root | wrap value | insert description ($root | str replace $nu.home-dir '~')
-  } | flatten | into completions {sort: true, completion_algorithm: fuzzy, match_description: true}
+  } | flatten | into completions {sort: true completion_algorithm: fuzzy match_description: true}
 }

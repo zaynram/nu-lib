@@ -6,6 +6,7 @@
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use std/iter flat-map
+use ../util "into completions"
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -78,12 +79,19 @@ def _default-mods-and-scripts []: nothing -> oneof<record, list> {
       **/tests/*.nu
       **/test.nu
     ]
-    | str replace $env.PWD '.'
+    | str replace $nu.home-dir ~
     | wrap value
     | insert description {|row|
       $row.value
       | if $in ends-with $"(char psep)mod.nu" { path dirname } else { }
       | path basename
     }
-  } | uniq-by value | insert type directory
+  } | uniq-by value
+  | insert type directory
+  | into completions {
+    sort: true
+    case_sensitive: ($nu.os-info.name != windows)
+    completion_algorithm: substring
+    match_description: true
+  }
 }
