@@ -3,8 +3,11 @@
 # ——— imports —————————————————————————————————————————————————————————————————
 
 use ($nu.data-dir | path basename --replace nupm/modules/session) edit
-
 export use std/util [ "path add" null-device ellie ]
+use std-rfc "into list"
+use ../dispatch
+
+# ——— constants ————————————————————————————————————————————————————————————————
 
 const EXE: path = $nu.current-exe | path expand --strict --no-symlink
 
@@ -14,19 +17,34 @@ def each-completion [c: closure]: [
   nothing -> oneof<list<any>, table<value: any>>
   list<any> -> list<any>
   table<value: any> -> table<value: any>
-] {
-  match ($in | describe | split words | first) {
-    list => { par-each --keep-order $c }
-    table => { update value $c }
-  }
-}
+] { dispatch type --pipe {list: { par-each --keep-order $c } table: { update value $c }} }
 
 # ——— definitions —————————————————————————————————————————————————————————————
+
+# Check for string matches case-insensitively.
+
+# Check for membership using cell-paths.
+@category core
+export def contains-key [
+  key: cell-path
+  # The property to test for membership in the input value
+  --strict (-s)
+  # For tables, require all members to contain the key
+  --not (-n)
+  # Invert the membership test (test for non-existence)
+]: oneof<record, table, list> -> bool {
+  let test: closure = { try { $in | get --ignore-case $key; not $not } catch { $not } }
+  let mult: closure = if $strict { {|| all $test } } else { {|| any $test } }
+  $in | dispatch type --pipe {table: $mult list: $test record: $test}
+}
 
 # Serialize a datetime (default: now; strings are parsed as human dates) in RFC 3339 format.
 @category date
 export def timestamp []: oneof<nothing, string, datetime> -> string {
-  match ($in | describe) { nothing => { date now } string => { date from-human } _ => { } } | format date %+
+  dispatch type --default={|| } --pipe {
+    nothing: {|| date now }
+    string: {|| date from-human }
+  } | format date %+
 }
 
 # Wrap an iterable containing custom completions into a record with completion options.
@@ -42,7 +60,8 @@ export def timestamp []: oneof<nothing, string, datetime> -> string {
   | insert value {|row| $row.description | path basename }
   | into completions {match_description: true}
 }
-export def "into completions" [ # nu-lint-ignore: add_doc_comment_exported_fn
+export def "into completions" [
+  # nu-lint-ignore: add_doc_comment_exported_fn
   options: record = {
     sort: true
     case_sensitive: false
@@ -56,16 +75,23 @@ export def "into completions" [ # nu-lint-ignore: add_doc_comment_exported_fn
   list<any> -> record<options: record, completions: list<any>>
   table<value: any, description: string> -> record<options: record, completions: table<value: any, description: string>>
 ] {
-  {
-    options: ($options | compact)
-    completions: (
-      $in | compact --empty | match $quote {
-        auto => { each-completion { if $in =~ \s+ { to nuon --serialize --raw-strings } else { to text } } }
-        single => { each-completion { $"'($in | to nuon --no-commas)'" } }
-        double => { each-completion { $'"($in | to nuon --no-commas)"' } }
-        _ => { }
+  let completions: list = compact --empty
+  let format: closure = match $quote {
+    none => {|| to nuon --serialize }
+    auto => {||
+      dispatch type --pipe {
+        'int | float': { to text }
+        string: { if $in =~ \s+ { to nuon --serialize --raw-strings } else { } }
+        _: { to nuon --serialize --no-commas }
       }
-    )
+    }
+    single => {|| $"'($in | to nuon --no-commas)'" }
+    double => {|| $'"($in | to nuon --no-commas)"' }
+    _ => {|| to text }
+  }
+  return {
+    options: ($options | compact)
+    completions: ($completions | each-completion $format)
   }
 }
 
@@ -114,30 +140,6 @@ export def on-path [
   }
 }
 
-# Run closures based on the current execution platform.
-#
-@category platform
-export def --wrapped match-os [
-  record: oneof<record, record<linux: any, macos: any, windows: any, bsd: any>> = {}
-  # Mapping of OS names to values or closures
-  --default (-d): any = null
-  # Use this if no item was provided for the current platform
-  --execute (-e) = true
-  # If the resolved value is a closure, run it and return the result
-  --capture (-c) = true
-  # Capture any errors raised when executing a closure (only effective with `--execute`)
-  ...args: string
-  # Arguments to pass through to the closure
-]: oneof<record, nothing> -> oneof<nothing, any> {
-  default $record
-  | get --optional $nu.os-info.name
-  | default $default
-  | match ($in | describe) {
-    closure if $execute => { do --ignore-errors=(not $capture) $in ...$args }
-    _ => { return $in }
-  }
-}
-
 # Replace the current shell instance with a fresh one.
 #
 # Optionally, a record can be piped in which will be merged into
@@ -147,7 +149,7 @@ export def --env --wrapped reload [
   --erase (-e) # Erase the history (clear without keeping scrollback)
   ...rest: string # Additional arguments for the Nushell invocation
 ]: oneof<nothing, record> -> nothing {
-  match-os {linux: {|| reset (if $erase { '-wc' } else { '-w' }) }}
+  dispatch os {linux: {|| reset (if $erase { '-wc' } else { '-w' }) }}
   with-env ($in | default {}) {
     if $nu.is-interactive { hide-env --ignore-errors pid }
     if $nu.is-login { exec $EXE --login ...$rest } else { exec $EXE ...$rest }
@@ -159,7 +161,7 @@ export def --env --wrapped reload [
 export def bin-link [
   name: oneof<string, path>@_executables # The name of the binary to link
 ]: nothing -> path {
-  let config: record<link: path, regex: string> = match-os {
+  let config: record<link: path, regex: string> = dispatch os {
     linux: {
       link: $"/usr/bin/($name)"
       regex: $"^/\(bin|usr/bin)/($name)$"
@@ -181,7 +183,7 @@ export def bin-link [
   | get --optional 0.path
   | if $in == null { error "unable to detect source binary" } else {
     let path: path = $in
-    match-os {
+    dispatch os {
       linux: { sudo ln -s $path $config.link out+err>| complete }
       windows: { mklink $config.link $path out+err>| complete }
     } | if $in.exit_code? != 0 {
@@ -204,13 +206,16 @@ export def --wrapped with-auth [
 ]: nothing -> string {
   def attempt [cmd: list<string>]: nothing -> record { run-external ...$cmd | complete }
   def raise [cmd: list<string>]: record -> error {
-    error make --unspanned $"($cmd.0?) exited with code ($in.exit_code):\n($in.stdout)($in.stderr)"
+    $"($cmd.0?) exited with code ($in.exit_code):\n($in.stdout)($in.stderr)"
+    | error make --unspanned $in
   }
-  attempt $cmd | if $in.exit_code == 0 {
+  attempt $cmd
+  | if $in.exit_code == 0 {
     return $in.stdout
   } else if $nu.is-interactive and $login != null and $"($in.stdout)($in.stderr)" =~ $pattern {
     do $login
-    attempt $cmd | if $in.exit_code == 0 { $in.stdout } else { raise $cmd }
+    attempt $cmd
+    | if $in.exit_code == 0 { $in.stdout } else { raise $cmd }
   } else { raise $cmd }
 }
 
@@ -226,7 +231,7 @@ def error [msg: string ...code: string]: oneof<nothing, record<stdout: string>> 
     | insert code {
       $code
       | default --empty [internal_error]
-      | prepend [common util]
+      | prepend [internal util]
       | str join ::
     }
     | compact --empty
