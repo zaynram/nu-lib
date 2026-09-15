@@ -105,7 +105,7 @@ parse. The same rule keeps `rm` and `find` out of any module this one imports.
 
 ## Verification
 
-`nu todo/tests/todo.nu` checks the matcher offline against fixture rows and the read commands
-against the live account. Setting `WARRIOR_TASK_WRITE=1` additionally runs add, edit, done,
+`test todo/tests/suites` checks the matcher offline against fixture rows and the read commands
+against the live account. Setting `TODO_TEST_WRITE=1` additionally runs add, edit, done,
 reopen and rm on a throwaway task in Inbox. Static checks: `nu --ide-check` and `nu-lint` report
 nothing for `todo/mod.nu` and `util/mod.nu`.

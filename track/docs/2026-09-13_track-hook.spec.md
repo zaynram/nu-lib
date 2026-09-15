@@ -69,7 +69,7 @@ either entry with `hook edit` to switch tracking off.
 
 ## Verification
 
-`nu track/tests/track.nu` runs against a scratch Timewarrior database and a scratch repository: focus
+`test track/tests/suites` runs against a scratch Timewarrior database and a scratch repository: focus
 in and out of a repository, the first interval, no restart on the same focus, checkout detection, the
 idle trim, and the no-op outside a repository. Static checks: `nu --ide-check` and `nu-lint` report
 nothing for `track/mod.nu`. The live hook firing in an interactive shell is verified by use, not by
