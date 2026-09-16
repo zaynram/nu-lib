@@ -2,8 +2,9 @@
 use ../mod.nu *
 
 def "test formats elements by type" []: nothing -> nothing {
-  let got = [abc 1 1.5 3KiB 2min ("2026-09-14T00:00:00+00:00" | into datetime) true] | completion into completions | get completions
-  assert equal $got [abc "1" "1.5" "3 KiB" "2 min" "2026-09-14T00:00:00+00:00" "true"]
+  let actual = [abc 1 1.5 3KiB 2min 2026-09-14T00:00:00+00:00 true] | completion into completions | get completions
+  let expected = [abc "1" "1.5" "3 KiB" "2 min" "2026-09-14T00:00:00+00:00" "true"]
+  assert equal $actual $expected 'input order is preserved'
 }
 
 def "test quotes only strings that misparse as bare arguments and compacts empties" []: nothing -> nothing {
@@ -18,6 +19,11 @@ def "test quotes only strings that misparse as bare arguments and compacts empti
 def "test options merge over defaults and null restores the default" []: nothing -> nothing {
   let got = [1] | completion into completions {match_description: true sort: null} | get options
   assert equal $got {case_sensitive: false completion_algorithm: prefix match_description: true}
+}
+
+def "test a long list keeps its order" []: nothing -> nothing {
+  let big = 1..500 | each { $"w($in)" }
+  assert equal ($big | completion into completions {sort: false} | get completions) $big
 }
 
 def "test repr and to-string overrides" []: nothing -> nothing {

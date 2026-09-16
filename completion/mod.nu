@@ -1,12 +1,10 @@
 # Custom completion records: wrap a list, or a `value`/`description` table, with completion options.
 
-use ../dispatch
-
 # ——— constants ————————————————————————————————————————————————————————————————
 
 # Default representation per value type (`--repr` overrides).
 const REPR: record = {
-  number: $.display
+  number: $.display!
   filesize: KiB
   datetime: %+
   duration: min
@@ -45,31 +43,34 @@ export def "into completions" [
   --to-string (-t): closure
   # Custom element formatter, replacing the per-type default
   --repr (-r): record = {}
-  # Representation overrides: `number` (a `format number` cell-path), `filesize`, `datetime` and `duration` (format strings)
+  # Representation overrides: `number` (a `format number` cell-path), `filesize`, `date` and `duration` (format strings)
 ]: [
   list<any> -> record<options: record, completions: list<string>>
-  table<value: any, description: string> -> record<options: record, completions: table>
+  table<value: any, description: string> -> record<options: record, completions: table<value: string, description: string>>
 ] {
-  let completions: list = compact --empty
-  let repr: record = $REPR | merge $repr
-  # `default` would evaluate a closure argument as a lazy value instead of returning it.
-  let format: closure = if $to_string != null { $to_string } else { # nu-lint-ignore: if_null_to_default
-    # `match`, not `dispatch type`: this runs once per element and completion lists reach thousands of entries.
-    {||
-      let value: any = $in
-      match ($value | describe | str replace --regex '<.*' '') {
-        # Quote only what misparses as a bare argument: whitespace, quotes, `( ) [ { } | ; $`, a leading dash, keywords.
-        string => { if $value =~ '[\s"\x27`()\[{}|;$]|^-.|^(true|false|null)$' { $value | to nuon } else { $value } }
-        filesize => { $value | format filesize $repr.filesize }
-        duration => { $value | format duration $repr.duration }
-        datetime => { $value | format date $repr.datetime }
-        int | float => { $value | format number | get $repr.number }
-        _ => { $value | to text }
+  let value = compact --empty
+  let merged: record = $REPR | merge $repr
+  let table: bool = ($in | describe) starts-with table
+  let format: closure = $to_string | default {
+      # `match` built-in is ~20x faster than `dispatch type` so it wins here
+      return {||
+        let x: any; $x
+        # `$in` evaluate properly in the `match` argument subexpression
+        | match ($in | describe | str replace --regex '<.*' '') {
+          # `$in` in `match` guards errors at parse time, so we need bound variable here
+          string if $x =~ '[\s"\x27`()\[{}|;$]|^-.|^(true|false|null)$' => { to nuon }
+          string => { }
+          filesize => { format filesize $merged.filesize }
+          datetime => { format date $merged.datetime }
+          duration => { format duration $merged.duration }
+          number | int | float => { format number | get $merged.number }
+          _ => { to text }
+        }
       }
     }
-  }
-  {
+  return {
     options: ($OPTIONS | merge $options | compact)
-    completions: ($completions | dispatch type --pipe {table: {|| update value $format } _: {|| each $format }})
+    # `--keep-order`: completers that pass `sort: false` (time, hook) rely on the input order surviving.
+    completions: ($value | if $table { update value $format } else { par-each --keep-order $format })
   }
 }

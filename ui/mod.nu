@@ -5,7 +5,7 @@
 
 use ../log
 use ../windows [ powershell "powershell x" "path as-windows" "win home" "win which" ]
-use std null-device
+use std/util null-device
 
 # ——— constants ————————————————————————————————————————————————————————————————
 

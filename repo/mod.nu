@@ -49,16 +49,15 @@ export-env {
 # Load the `repo` module environment.
 @category env
 export def --env env [
-  --find (-f)
-  # Enable repository search behavior (sets `$env.repo.discovery` to `true`)
+  --discover (-d)
+  # Enable repository search behavior (sets `$env.repo.discovery` to `true` with `--load`)
   --load (-l)
   # Load the environment into the current process, if not done so already
-  --show (-s)
-  # Return the user environment, as a record
+  --return (-r)
+  # Return the value that would be set as `$env.repo` instead of setting it
 ]: nothing -> oneof<nothing, record> {
-  if $show or not $load { return $env.repo? }
   # Always reassign to pick up environment changes and gracefully handle [de-]serialization issues on load.
-  $env.repo = $env.repo?
+  let repo = $env.repo?
     | match ($in | describe | split words | first) {
       record => { }
       # Sensible defaults for missing or null values.
@@ -69,10 +68,11 @@ export def --env env [
       $t => { error make --unspanned $'received unknown type for `$env.repo`: ($t)' }
     } | into record
     # Upsert here the branches to ensure `$env.repo.discovery` is evaluated.
-    | upsert discovery { $in or $find }
+    | upsert discovery { $in or $discover }
     | if $in.discovery {
       upsert path { append (discover-git-repos | hydrate-git-context) | uniq-by name }
     } else { }
+  if $load { $env.repo = $repo } else { return $repo }
 }
 
 # Add a project directory to the `$env.repo.path`.
