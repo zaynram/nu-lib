@@ -47,7 +47,7 @@ s2: 2 define {
 s3: 3 link (first dev sync) {
   you -> dev: dev sync <slug>
   dev -> file: read
-  dev -> todoist: find content = slug in the mapped project (open, then completed)
+  dev -> todoist: find content = slug across projects, open then completed (error on more than one; report a wrong project)
   alt-found: found {
     dev -> file: "write reference.todoist {id url}"
   }
@@ -69,9 +69,9 @@ s4: 4 open {
   dev -> remote: ensure milestone "v0.4.0" (state from checked, due from due)
   dev -> remote: create issue, title = slug, body = dev <slug> --md (checklist from rows), milestone = v0.4.0
   dev -> file: "write reference.remote {index url branch = slug}"
-  dev -> todoist: set task description = markdown link to the issue
-  dev -> todoist: "rewrite the first line of the version target's description: -> <repo>#N ..."
-  dev."target set but no <repo>@<version> task in Todoist: error row, add it there first" {
+  dev -> todoist: "ticket description: link line replaced if present, else prepended (D12)"
+  dev -> todoist: "version target description: arrow line -> <repo>#N ... replaced if present, else prepended"
+  dev."target set but no <repo>@<target> task in Todoist: error naming --create-target, which adds it to the parent project" {
     class: rule
   }
 }
@@ -120,7 +120,7 @@ w2: W2 pruned in Todoist {
   dev -> you: error row, task gone, set aborted or clear the reference {
     class: drift
   }
-  dev."decision: report only, or auto-abort" {
+  dev."rule (2026-09-18): report only; auto-abort waits for usage to prove it" {
     class: rule
   }
 }
@@ -131,7 +131,7 @@ w3: W3 closed on the remote first {
   dev -> remote: issue closed, todoist unchecked
   dev -> todoist: complete the task
   dev -> file: status = done
-  dev."proposal: closure is accepted from any surface, reopening only from Todoist" {
+  dev."rule (2026-09-18): closure is accepted from any surface, reopening only from Todoist" {
     class: rule
   }
 }
@@ -140,7 +140,7 @@ w5: W5 version target renamed or released early {
   you -> todoist: (phone) rename "nu-fluency@v0.4.0" to "nu-fluency@v0.4.1"
   you -> dev: dev sync <slug>
   dev -> todoist: no task matches target v0.4.0
-  dev -> you: error row, target has no version task, nothing written {
+  dev -> you: error row naming --create-target, nothing written {
     class: drift
   }
   you -> todoist: check "nu-fluency@v0.4.0" while member tickets are open
