@@ -274,7 +274,8 @@ the second run reports no changes, `edit --add-task` then `edit --complete` roun
 offline test of `edit`'s write path: it has no dry run), then `todo rm` the created tasks.
 
 Implement the Todoist leg as a private function called from `sync`, all `td` traffic through the
-`todo` module; `edit --add-task`/`--complete` gain their Todoist calls here. Write
+`todo` module; every label about to be attached is checked against `todo labels` first (bindings,
+Scope); `edit --add-task`/`--complete` gain their Todoist calls here. Write
 `reference.todoist` back through the writer.
 
 Verification: ide-check 0; nu-lint clean; `test dev/tests/suites` all `ok`; the sync spec's guard
@@ -317,8 +318,10 @@ in the result row.
    `dev migrate --all`; then every `~/code/*/docs/tickets/*.toml` passes `tomllib` and
    `~/code/*/docs/issues/` is empty.
 2. `dev list` shows all 14 tickets (`dev query <slug> version` is `4.0.0` for each).
-3. `dev sync --all --dry-run` twice, identical output; then a real `dev sync` on one ticket chosen by
-   the user.
+3. `dev sync --all --dry-run` twice, identical output. `windows-portability-batch` is completed in
+   Todoist while its v3 file says `open` (probe 2026-09-19, left in place on purpose): its dry-run row
+   must show D6 closure in (`status = done`, issue closed) and it is the first real `dev sync`, so the
+   module is seen resolving it; then one more ticket chosen by the user.
 4. Grep guards across `dev/mod.nu`: `stor `, `query db`, `git commit`, `gh issue develop`, `...rest`,
    `<Nothing>` all absent; `^td` absent; `^gh` only inside the wrapper.
 5. Cutover: the user removes the nupm `issue` and `tasks` modules and any `use issue`/`use tasks`
