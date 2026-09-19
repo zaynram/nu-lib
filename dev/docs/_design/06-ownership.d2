@@ -106,13 +106,13 @@ local.ticket.body -> remote.issue: sync renders body
 local.ticket.rows -> remote.issue: sync renders checklist
 local.ticket.status -> remote.issue: "open | closed (completed | not planned); skipped while draft"
 remote.issue -> local.ticket.status: closed issue found by sync sets done | aborted
-remote.issue -> todoist.project.subtasks: "a box toggled on the host: todo done | reopen on the subtask, Todoist wins a conflict (D8)"
+remote.issue -> todoist.project.subtasks: "a box toggled on the host while the subtask is unchanged in Todoist: todo done | reopen on the subtask (D8)"
 remote.issue -> todoist.project.task: "sync writes the link line: replaced if present, else prepended (D12)"
 local.branch -> todoist.project.task: track hook, todo find <branch>
 
 todoist.parent.target -> remote.milestone: "sync ensures milestone: title, state from checked, due from due"
 local.ticket.target -> remote.issue: sync assigns the issue to the milestone
-local.ticket.target -> todoist.parent.target: "sync writes the arrow line -> <repo>#N #M: replaced if present, else prepended (D12); missing task errors naming --create-target"
+local.ticket.target -> todoist.parent.target: "sync writes the arrow line → <repo>#N #M: replaced if present, else prepended (D12); missing task errors naming --create-target"
 todoist.parent.target -> todoist.project.task: "grouping is implicit: same target string"
 
 # commands

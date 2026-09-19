@@ -164,7 +164,8 @@ Then implement, in this order, each as the minimum that passes:
 2. `dev [slug --repo --md]`: `open`, the checks listed under the spec's Behaviour (`version`, required
    keys and types, `status`, slug charset, stem match, attribution labels, `into datetime`); `--md`
    per the spec's `--md` bullet (`to md` for the two tables).
-3. `dev list [--status --repo]`: `files | each { open | select ... }`.
+3. `dev list [--status --repo]`: `files | each { dev $slug | select ... }` (the loader, so `date` is
+   a datetime and validation runs).
 4. `dev query [slug property: cell-path]`: `dev $slug | get $property`.
 5. The writer and `dev edit [slug --set --add-task --complete]`: merge `--set` (D14), rebuild in
    canonical order, compact nulls, `format date %F`, `to toml`, `save --force` to
@@ -234,7 +235,8 @@ Read first: `repo/mod.nu:229-260`, `todo/mod.nu:137-156`, `track/mod.nu:30-40`, 
 the bindings document's D7.
 
 Write: a registry column `aliases: list<string>` per row, empty by default, set with
-`repo push <dir> --alias <project>` or `--alias <project>/<section>` (append, `uniq`); `repo list`
+`[<dir>] | repo push --alias <project>` or `--alias <project>/<section>` (append, `uniq`; `push`
+takes its directories as pipeline input, `repo/mod.nu:80-88`); `repo list`
 shows it. `todo find --project` and the track hook resolve the Todoist project by trying the
 repository name first, then each alias in order (a `project/section` alias filters `todo list` to
 that section). One test per resolution step against a fake `$env.repo.path`. This is the seam
@@ -266,8 +268,8 @@ opt-in live (D9); the verification guard that replaces the core spec's `gh `/`^t
 
 Verification: every "ensure" step names its call; the idempotence argument is written per step;
 every W breakdown maps to a result row or an error; nothing weakens a bindings line; every step is
-under the bindings document's Scope "does" list and none under its "never does" list; the words
-"GitHub" and "forge" appear only where `gh` is named as the wired CLI; user approves before Phase 5a.
+under the bindings document's Scope "does" list and none under its "never does" list; the word
+"GitHub" appears only where `gh` is named as the wired CLI; user approves before Phase 5a.
 
 ## Phase 5a — Build: Todoist leg and `edit` write-through
 
@@ -285,9 +287,12 @@ the second run reports no changes, `edit --add-task` then `edit --complete` roun
 offline test of `edit`'s write path: it has no dry run), then `todo rm` the created tasks.
 
 Implement the Todoist leg as a private function called from `sync`, all `td` traffic through the
-`todo` module; every label about to be attached is checked against `todo labels` first (bindings,
-Scope); `edit --add-task`/`--complete` gain their Todoist calls here. Write
-`reference.todoist` back through the writer.
+`todo` module: `todo --json --long task view id:<id> --full` for `checked`, `content` and `isDeleted`
+(the only read that carries them), `todo list --parent` and `todo list --completed --since` for the
+rows, `todo add … --project <mapped>` for creation (bindings, Todoist leg and Write-through); every
+label about to be attached is checked against `todo labels` first (bindings, Scope);
+`edit --add-task`/`--complete` gain their Todoist calls here. Write `reference.todoist` back through
+the writer.
 
 Verification: ide-check 0; nu-lint clean; `test dev/tests/suites` all `ok`; the sync spec's guard
 grep; `dev sync --all --dry-run --skip [remote milestone]` run twice by the user shows the same
@@ -305,8 +310,8 @@ legs, D8), Phase 0 (`gh`, `elevate with-auth` L50),
 `repo/mod.nu:304-318`, `~/.local/share/nupm/modules/issue/mod.nu:209-213`, Phase 5a's leg as the pattern to copy.
 
 Tests first: offline: `dev alpha --md` body equals the expected string; the D8 toggle rule as a pure
-function over `(host box, Todoist state, mirror)` per row, parsed from a fake issue body (a conflict
-yields a report, not a call); the milestone decision (create/assign/state) from fake `gh api` rows; `--skip [todoist]` runs the remote legs alone. Live:
+function over `(host box, Todoist state, mirror)` per row, parsed from a fake issue body (only "host
+moved, Todoist did not" yields a call); the milestone decision (create/assign/state) from fake `gh api` rows; `--skip [todoist]` runs the remote legs alone. Live:
 D9 (user-driven `--dry-run` against a real issue, then one real sync).
 
 Implement the two legs as private functions, every `gh` call through one private wrapper using
@@ -325,16 +330,18 @@ in the result row.
 
 1. Rename the one dotted slug on every surface first: the Todoist task `v0.4.0-close-out`, the v3 file
    `v0-4-0-close-out.issue.toml` and its `issue.slug`, and the nu-fluency issue #8 title all become
-   `pre-version-ship-review` (D13). Then `dev migrate --all --dry-run`, hand-edit the two D2 files,
-   `dev migrate --all`; then every `~/code/*/docs/tickets/*.toml` passes `tomllib` and
-   `~/code/*/docs/issues/` is empty.
+   `pre-version-ship-review` (D13). Then `dev migrate --all --dry-run`, hand-edit the two files D2
+   refuses, `dev migrate --all`; then every `~/code/*/docs/tickets/*.toml` passes `tomllib` and no
+   `*.issue.toml` remains under `~/code/*/docs/issues/` (`_runbook/` and caches stay).
 2. `dev list` shows all 14 tickets (`dev query <slug> version` is `4.0.0` for each).
 3. `dev sync --all --dry-run` twice, identical output. `windows-portability-batch` is completed in
    Todoist while its v3 file says `open` (probe 2026-09-19, left in place on purpose): its dry-run row
    must show D6 closure in (`status = done`, issue closed) and it is the first real `dev sync`, so the
    module is seen resolving it; then one more ticket chosen by the user.
-4. Grep guards across `dev/mod.nu`: `stor `, `query db`, `git commit`, `gh issue develop`, `...rest`,
-   `<Nothing>` all absent; `^td` absent; `^gh` only inside the wrapper.
+4. Grep guards across `dev/mod.nu`: the Phase 2 pattern minus `gh ` and `\^td`, plus `git commit`
+   and `gh issue develop` absent; `^td` absent; `^gh` only inside the wrapper.
 5. Cutover: the user removes the nupm `issue` and `tasks` modules and any `use issue`/`use tasks`
-   lines in `~/.config/nushell`; `dev/docs/_design/` stays as the tracked design record.
+   lines in `~/.config/nushell`, and adds `export use dev` beside `export use todo` in the `custom`
+   module of `~/.config/nushell/login.nu` (nothing else registers `dev` with the shell);
+   `dev/docs/_design/` stays as the tracked design record.
 6. Commits: one per phase on `feat/dev-module`; push only when asked.

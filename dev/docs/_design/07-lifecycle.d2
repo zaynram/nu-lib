@@ -73,7 +73,7 @@ s4: 4 open {
   dev -> remote: create issue, title = slug, body = dev <slug> --md (checklist from rows), milestone = v0.4.0
   dev -> file: "write reference.remote {index url branch = slug}"
   dev -> todoist: "ticket description: link line replaced if present, else prepended (D12)"
-  dev -> todoist: "version target description: arrow line -> <repo>#N ... replaced if present, else prepended (D12)"
+  dev -> todoist: "version target description: arrow line → <repo>#N ... replaced if present, else prepended (D12)"
   dev."target set but no <repo>@<target> task: error naming dev sync <slug> --create-target, which adds it to the parent project with no section and no labels (D8)" {
     class: rule
   }
@@ -95,7 +95,7 @@ s5: 5 work {
   dev -> todoist: todo done id:<sub>
   dev -> file: "replace [[tasks]]"
   dev -> remote: update body
-  dev."box toggled on the host and in Todoist to different states: Todoist wins, the host toggle is reported (D8)" {
+  dev."subtask toggled in Todoist since the last sync: nothing applied, mirrored; with two states a conflict cannot occur (D8)" {
     class: rule
   }
   file."git switch -c <slug>: the track hook resolves the branch to the task" {
@@ -106,7 +106,7 @@ s5: 5 work {
 s6: 6 close {
   you -> todoist: check the ticket task (phone)
   you -> dev: dev sync <slug>
-  dev -> todoist: view id, checked = true
+  dev -> todoist: view id --full, checked = true
   dev -> file: status = done
   dev -> remote: close issue, reason completed
   abort: abort instead {
@@ -128,7 +128,7 @@ s6: 6 close {
 w1: W1 renamed in Todoist {
   you -> todoist: (phone) rename content to "slug-v2"
   you -> dev: dev sync <slug>
-  dev -> todoist: view id, content != slug
+  dev -> todoist: view id --full, content != slug
   dev -> you: error row, content drifted, nothing written {
     class: drift
   }
@@ -137,7 +137,7 @@ w1: W1 renamed in Todoist {
 w2: W2 pruned in Todoist {
   you -> todoist: delete the task (biweekly prune chore)
   you -> dev: dev sync <slug>
-  dev -> todoist: view id, not found
+  dev -> todoist: view id --full, isDeleted
   dev -> you: error row, task gone, set aborted or clear the reference {
     class: drift
   }
