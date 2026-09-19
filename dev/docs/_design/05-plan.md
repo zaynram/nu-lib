@@ -108,6 +108,12 @@ Test seam to copy: `time/tests/mod.nu` (module under test, `std/assert`, then th
 - Do not nest a module's env bootstrap behind `export use` and expect its `export-env` to run; it does
   not (verified 2026-09-18, `/tmp/t4.nu`); `source-env` or a direct `use` inside the parent's
   `export-env` is the working form.
+- Quote every string that starts with `-` when it is an argument to a Nushell-defined command:
+  `f -agent` is `nu::parser::unknown_flag`, `f '-agent'` is the string (verified 2026-09-19). Inside
+  list and record literals a bare `-agent` parses as a string, but quote it there too (the formatter
+  does). Nushell passes `-agent` and `'-agent'` identically to an external, so for `td` the quotes
+  change nothing: `td label create` takes no positional (`--name` only) and `td label update` reads a
+  dash-leading ref as an option, so it needs `-- '-agent'`.
 
 ## Phase 1 — Spec: `dev` core (completed 2026-09-18)
 
