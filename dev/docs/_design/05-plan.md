@@ -59,7 +59,7 @@ Old module, copy-worthy fragments only: slug discovery glob `~/.local/share/nupm
 - Do not wrap a record with std-rfc `into list` (it yields a key/value table); `append []` wraps any value into a list.
 - Bare column names inside a parenthesised subexpression of a `where` row condition parse as commands (`(file | path exists)` ran the external `file`); use `where {|r| (...) }` with the whole expression parenthesised.
 
-## Defaults the Phase 1 spec must confirm
+## Sync decisions D6 to D9 (settled in chat, transcribed by the Phase 4 spec)
 
 D1 to D5 and D10 to D15 live, rewritten by the user, in the spec's Decisions section and are authoritative. D6 to D9 below are the sync decisions settled in chat on 2026-09-17/18 (traced in `07-lifecycle.d2`); the Phase 4 spec transcribes them.
 
@@ -68,25 +68,13 @@ D1 to D5 and D10 to D15 live, rewritten by the user, in the spec's Decisions sec
 - D8 Remote projection: the issue body is `dev <slug> --md` (spec: title, outcome, requirements, constraints, output, landscape, bindings, the `## Tasks` checklist from `[[tasks]]`) and is sync-owned: hand edits are overwritten, discussion lives in comments. Version targets: `ticket.target = "<version>"` maps to the remote milestone titled `<version>` and the Todoist task `<repo>@<version>` in the parent project; sync ensures the milestone exists (creating it, state from the Todoist task's checked flag, due from its due date), assigns the issue to it, and maintains the arrow line of the version-target task's description (`→ <repo>#a #b`, the member issues) under the spec's D12 rule: replace the first line when it already is an arrow line, otherwise prepend, never touching a hand-written line. A missing version-target task is an error naming it and the flag that creates it: `dev sync <slug> --create-target` adds `<repo>@<version>` to the parent project of the repository's Todoist project (no section, no labels; the user curates those), then continues. The host is never read for rows: the checklist is write-only.
 - D9 Live sync tests: no scratch remote repository or Todoist project is named, so the remote leg is verified by the user against a real issue with `--dry-run` first; the Todoist leg uses the opt-in `DEV_SYNC_WRITE=1` pattern from `todo/tests/suites/todo.nu:27` (`TODO_TEST_WRITE=1`) and cleans up with `todo rm`.
 
-## Phase 1 — Session 4 spec: `dev` core
+## Phase 1 — Session 4 spec: `dev` core (completed 2026-09-15, amended through 2026-09-18)
 
-Deliverable: `_internal/dev/docs/<today>_dev-core.spec.md`. No code.
+Deliverable: `dev/docs/2026-09-15_dev-core.spec.md`. Written against `04-handoff-prompt.md` on 2026-09-15, rewritten by the user the same evening (D1 to D14), reviewed (D15), then amended on 2026-09-18 after the sync design thread: intro ownership list, D1 (one-tier rows), D2 (v3 tasks dropped), D12 (description line), D13 (slug charset, `+`, no dots), `ticket.target`, `reference.remote`, the `edit` write-through bullets, provider-neutral wording. The section list below is what it contains; the spec, not this plan, is authoritative on every point.
 
-Read first: `dev/docs/_design/04-handoff-prompt.md` (schema and contracts, quote them verbatim), Phase 0 above, `todo/docs/2026-09-13_todo-todoist.spec.md` (copy its section shape: Decisions, Contract, Naming, Verification), `~/code/nu-fluency/docs/issues/hooks-placement.issue.toml` (regular v3 sample) and `~/code/ramda-doc/docs/issues/polyglot-reference-autodoc-tooling.issue.toml` (irregular sample).
+Sections: Decisions (D1 to D5, D10 to D15), Schema (canonical key order, per-key table, the `hooks-placement` example that doubles as `dev/docs/example.toml`), Contracts (six signatures, behaviour bullets), Validation and error copy, Migration mapping (44 leaf paths, each mapped, dropped or refused), Tests (the Phase 2 and Phase 3 assertion lists), Naming, Verification.
 
-Write these sections:
-
-1. Decisions: D1 to D5 as confirmed, one line each.
-2. Schema: canonical key order for the record `dev` builds before `to toml` (`version`, then `issue` keys `name slug date status outcome requirements constraints extends output scope landscape bindings reference`, then `tasks`), one full example v4 file, per-key type and required/optional, the `status` enum, the `reference` block marked tool-owned.
-3. Contracts: the six signatures from the handoff (`dev`, `list`, `query`, `edit`, `new`, `migrate`) with input/output types and one example call each.
-4. Validation and error copy: a table of every error string; each names the next command (`run dev migrate <slug>`, `pass --repo`, `edit <path> then re-run dev migrate`).
-5. Migration mapping: v3 path to v4 path table (`issue.vision.outcome` to `issue.outcome`; `criteria.requirements/constraints` to `issue.requirements/constraints`; `vision.output` table or array to `[[issue.output]]`; `vision.scope.excluded[]` to `[[issue.scope.excluded]]`; `vision.landscape.internal[]` to `[[issue.landscape]] scope="internal" group="internal"`; `bindings.xvalue[]` to `[[issue.bindings]] kind="xvalue"`; `reference {index url branch}` to `reference.remote`; `tasks.N` to `[[tasks]]` per D1; `extends` kept) plus the refused shapes per D2.
-6. Tests: the assertion list Phase 2 and 3 will implement (see their checklists).
-7. Naming: the predeclaration rule, copied from the todo spec.
-
-Verification: no TBD or "open question" text (grep for `TBD|TODO|open question`); every contract has types on every parameter; the mapping table covers all 44 normalised leaf paths enumerated on 2026-09-15 over the 14 shipped files (each maps or is refused; the audit's E1 had counted 52 raw paths over 9 files); user reviews and approves before Phase 2.
-
-Guards: no fields, flags or commands beyond the handoff; if drafting exposes an unresolved choice, stop and resolve it in chat, then write.
+Gate: the user re-reads the amended spec and approves before Phase 2 starts (the 2026-09-15 approval predates the amendments).
 
 ## Phase 2 — Session 4 build A: schema, `dev`, `dev list`, `dev query`, `dev edit`
 
