@@ -73,7 +73,7 @@ s4: 4 open {
   dev -> remote: create issue, title = slug, body = dev <slug> --md (checklist from rows), milestone = v0.4.0
   dev -> file: "write reference.remote {index url branch = slug}"
   dev -> todoist: "ticket description: link line replaced if present, else prepended (D12)"
-  dev -> todoist: "version target description: arrow line → <repo>#N ... replaced if present, else prepended (D12)"
+  dev -> todoist: "version target description: arrow line → <repo>#N <repo>#M ... replaced if present, else prepended (D12)"
   dev."target set but no <repo>@<target> task: error naming dev sync <slug> --create-target, which adds it to the parent project with no section and no labels (D8)" {
     class: rule
   }

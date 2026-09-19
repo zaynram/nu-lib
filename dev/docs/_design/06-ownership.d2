@@ -112,7 +112,7 @@ local.branch -> todoist.project.task: track hook, todo find <branch>
 
 todoist.parent.target -> remote.milestone: "sync ensures milestone: title, state from checked, due from due"
 local.ticket.target -> remote.issue: sync assigns the issue to the milestone
-local.ticket.target -> todoist.parent.target: "sync writes the arrow line → <repo>#N #M: replaced if present, else prepended (D12); missing task errors naming --create-target"
+local.ticket.target -> todoist.parent.target: "sync writes the arrow line → <repo>#N <repo>#M: replaced if present, else prepended (D12); missing task errors naming --create-target"
 todoist.parent.target -> todoist.project.task: "grouping is implicit: same target string"
 
 # commands

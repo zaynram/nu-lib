@@ -65,10 +65,14 @@ completions}`; strings are nuon-quoted only when a bare argument would misparse.
 Import rule: std submodules only (`use std/assert`, `use std/util [repeat structure]`); `use std
 <name>` loads the whole root module (about 40 ms at login).
 
-`gh` 2.101.0: `issue create -R owner/repo -t <title> -F - -l <label>` (body on stdin, prints the
-URL); `issue edit <n> -R owner/repo -F -` (also `--milestone`, `--add-label`, `--remove-label`);
-`issue view <n> -R owner/repo --json number,url,state,title,body`; `issue list -R owner/repo --state
-all --json number,title,state,url --limit N`; `issue close <n> -R owner/repo --reason
+`gh` 2.101.0: `issue create -R owner/repo -t <title> -b <body> -l <label>` (prints the URL; `-F -`
+reads the body from stdin instead, which the bindings' wrapper cannot feed, so `-b` is the wired
+form); `issue edit <n> -R owner/repo -b <body>` (also `--milestone`, `--add-label`,
+`--remove-label`); `issue view <n> -R owner/repo --json number,url,state,stateReason,title,body`
+(`stateReason` is `COMPLETED` or `NOT_PLANNED` on a closed issue); `issue list -R owner/repo --state
+all -S <query> --json number,title,state,url --limit N` (`-S/--search` takes issue-search syntax,
+`in:title <slug>` matches substrings, so the exact title is filtered client-side);
+`issue close <n> -R owner/repo --reason
 {completed|"not planned"}`; `issue reopen <n> -R owner/repo`. Milestone endpoints (`gh api
 repos/{owner}/{repo}/milestones`) are unprobed; Phase 4 confirms them.
 
@@ -76,7 +80,14 @@ repos/{owner}/{repo}/milestones`) are unprobed; Phase 4 confirms them.
 {text|json|stream-json}`, `--json-schema <schema>` (structured output, returned as `structured_output`
 on the `result` element), `--system-prompt <text>`, `--tools ""` (no built-in tools),
 `--strict-mcp-config` (no MCP servers without `--mcp-config`); an `@<absolute path>` in the prompt is
-expanded by the CLI (all verified 2026-09-19 with one `haiku` run, $0.03).
+expanded by the CLI; `--setting-sources project` keeps user settings, plugins and hooks out of the
+run without touching the login ($0.005 a run with it, $0.18 without: the session hooks bill a second
+model); `--resume <uuid>` in place of `--session-id <uuid>` continues the session with the same
+structured-output flags (all verified 2026-09-19 with `haiku` runs).
+
+Tooling: `nu-lint` is installed (`nu-lint --format=compact <dir>`); `todo list --since` takes a
+datetime, not a string. `td` holds no token after a container restart (`NO_TOKEN`, 2026-09-19):
+live Todoist probes need `td auth login` by the user first.
 
 `td` 5.3.9: `td completed list [--project --since --until --limit --all --json --full]` has no
 parent filter; filter the `parent` column client-side; `--since` defaults to today, three-month
@@ -166,12 +177,16 @@ Then implement, in this order, each as the minimum that passes:
    `glob (dir | path join docs tickets '*.toml')` (pattern at `~/.local/share/nupm/modules/issue/mod.nu:344-349`).
 2. `dev [slug --repo --md]`: `open`, the checks listed under the spec's Behaviour (`version`, required
    keys and types, `status`, slug charset, stem match, attribution labels, `into datetime`); `--md`
-   per the spec's `--md` bullet (`to md` for the two tables).
+   per the spec's `--md` bullet (`to md` without `--pretty` for the three tables). The checks are
+   one private function returning the failed check's reason or null, because `edit` (before writing)
+   and `new` (on a reply) run the same checks with their own error copy.
 3. `dev list [--status --repo]`: `files | each { dev $slug | select ... }` (the loader, so `date` is
    a datetime and validation runs).
 4. `dev query [slug property: cell-path]`: `dev $slug | get $property`.
-5. The writer and `dev edit [slug --set --add-task --complete]`: merge `--set` (D14), rebuild in
-   canonical order, compact nulls, `format date %F`, `to toml`, `save --force` to
+5. The writer and `dev edit [slug --set --add-task --complete]`: refuse a `--set` key that is not
+   file-owned, merge `--set` (D14), run the checks on the merged record, rebuild in
+   canonical order, compact nulls, empty optional lists and an empty `scope`, `format date %F`,
+   `to toml`, `mkdir` the target's directory, `save --force` to
    `mktemp --tmpdir-path <same dir> --suffix .toml`, then `mv --force` over the original.
    `--add-task` and `--complete` only raise the "no Todoist task yet" error in this phase; their
    Todoist leg is Phase 5a.
@@ -180,7 +195,7 @@ Then implement, in this order, each as the minimum that passes:
 
 Verification: `nu --no-config-file --experimental-options=all --ide-check 500 dev/mod.nu | grep -c
 '"message"'` is 0; `nu-lint --format=compact dev` clean; `test dev/tests/suites` reports every test
-`ok`; `grep -nE 'stor |query db|git |gh |\^td|\.\.\.rest|<Nothing>' dev/mod.nu` is empty.
+`ok`; `grep -nE '\b(stor|git|gh) |query db|\^td|\.\.\.rest|<Nothing>' dev/mod.nu` is empty.
 
 Guards: export names per the spec's Naming; no cache; no `try {}` without `catch` on the write path;
 the temp file lives in the target directory so `mv` is a rename, not a copy.
@@ -210,15 +225,16 @@ Implement:
    fields split on `\n`, row fields parse as NUON against the Schema columns) and one private loop
    `_ask [field: record, --read: closure]` (reader defaults to `input --reedline` in the body;
    `loop { return }` with an output-type annotation fails ide-check, so leave the return type off),
-   `--prompt` runs the D5 generation call (`const SCHEMA` and `const INSTRUCTION` beside `EXAMPLE`;
+   `--prompt` runs the D5 generation call (`const SCHEMA` and `const INSTRUCTION`, both text, beside
+   the path `EXAMPLE`; `--json-schema` takes the schema inline;
    the reply is `from json | where type == result | first`, `structured_output` saved as JSON), wrap
    and validate per the spec's Behaviour, write through the Phase 2 writer, `--edit` calls `editor`.
    `const EXAMPLE: path = path self ./docs/example.toml`.
 2. `dev migrate [...slugs --all --dry-run --repo]`: read `docs/issues/<slug>.issue.toml`, refuse
-   `version != "3.0.0"` and the refused shapes naming the offending path, drop `tasks` (D2), map every
+   `version != "3.0.0"` and the refused shapes naming every refused path the file carries, drop `tasks` (D2), map every
    other leaf per the Migration mapping (`completed` becomes `done`; `extends` paths reduce to slugs),
    write `docs/tickets/<slug>.toml` through the writer, remove the source (D15), return
-   `table<slug from to changed>` with paths.
+   `table<slug from to>` with paths.
 
 Verification: same ide-check, nu-lint and test commands as Phase 2; additionally every
 `<scratch>/docs/tickets/*.toml` passes `tomllib`, and `<scratch>/docs/issues` holds only the refused
@@ -248,14 +264,19 @@ repository name first, then each alias in order (a `project/section` alias filte
 that section: `--section` on `todo list` filters client-side on the raw row's `sectionId`, which
 `hydrate` must keep, since `td task list` has no section flag; `--section` on `todo add` passes
 `td task add --section`). How much section handling is worth is gauged in this phase, not before
-(ruling 2026-09-19); the three registered repositories resolve by name, so this phase may also run
-after Phase 5a, before `_internal` (`development`) and the nupm registry are synced. One test per resolution step against a fake `$env.repo.path`. This is the seam
+(ruling 2026-09-19); the three registered repositories resolve by name, so nothing in Phases 4 to 6
+waits on this phase: it runs any time before `_internal` (`development`) and the nupm registry are
+synced. Two facts of the live `repo` module bind its design: `push` drops every directory already in
+the registry before hydrating (`repo/mod.nu:99`, `difference $env.repo.path.directory`), so `push
+--alias` cannot reach a registered row; and the registry crosses a process boundary as
+`"<discovery digit>@<dir>:<dir>…"` with rows rebuilt from git on read (`repo/mod.nu:27-43`), so a
+column that git cannot rebuild does not survive it. One test per resolution step against a fake `$env.repo.path`. This is the seam
 `dev sync` uses for `development` (sections map to `~/.config` and `~/library/nushell/_internal`) and
 `nupm-registry`; no `dev` code changes here.
 
 Verification: `test repo/tests/suites`, `test todo/tests/suites`, `test track/tests/suites` all
-`ok`; ide-check and nu-lint clean on the three modules. Merge to `main` before Phase 4; rebase
-`feat/dev-module` afterwards.
+`ok`; ide-check and nu-lint clean on the three modules. Merge to `main`, then rebase whichever `dev`
+branch is open.
 
 ## Phase 4 — Spec: `dev sync`
 
@@ -307,8 +328,13 @@ label about to be attached is checked against `todo labels` first (bindings, Sco
 the writer.
 
 Verification: ide-check 0; nu-lint clean; `test dev/tests/suites` all `ok`; the sync spec's guard
-grep; `dev sync --all --dry-run --skip [remote milestone]` run twice by the user shows the same
-output both times.
+grep; run by the user: `dev sync --all --dry-run --skip [remote milestone]`, then one real
+`dev sync <slug> --skip [remote milestone]` of a ticket they pick, then the same `--dry-run` for that
+slug reporting no changes (two dry runs agree by construction, so only a dry run after a real one
+shows the ensure steps are idempotent). Before the first live run: `td auth login` if the token is
+gone, `todo labels` contains `%deliverable` and `%actionable`, and `todo list --completed --project
+<p> --since <three months back>` returns rows through `hydrate` (`todo/mod.nu:233-245` selects
+`id content description priority url` without `?`; unprobed on completed rows).
 
 Guards: no resume files; no auto-commit; never print `td` tokens; the mirror is written only after
 the remote calls succeed.
@@ -332,8 +358,10 @@ once, applies the D8 toggles through the `todo` module, and only then renders an
 through the writer after the issue leg succeeds; the milestone leg writes nothing to the file.
 
 Verification: ide-check 0; nu-lint clean; `test dev/tests/suites` all `ok`; `^gh` appears only inside
-the wrapper; `dev sync --all --dry-run` run twice by the user against real repositories shows the
-same output both times.
+the wrapper; run by the user against real repositories: `dev sync --all --dry-run`, one real
+`dev sync <slug>`, then `dev sync <slug> --dry-run` reporting no changes. The D8 read-back is a step
+inside the run's one order (read body, apply toggles, mirror rows, render, write body), placed ahead
+of Phase 5a's mirror step rather than appended after it.
 
 Guards: as 5a; never print `gh` tokens; `reference.remote` is written per leg with any skip recorded
 in the result row.
@@ -346,11 +374,12 @@ in the result row.
    refuses, `dev migrate --all`; then every `~/code/*/docs/tickets/*.toml` passes `tomllib` and no
    `*.issue.toml` remains under `~/code/*/docs/issues/` (`_runbook/` and caches stay).
 2. `dev list` shows all 14 tickets (`dev query <slug> version` is `4.0.0` for each).
-3. `dev sync --all --dry-run` twice, identical output. `windows-portability-batch` is completed in
+3. `dev sync --all --dry-run`. `windows-portability-batch` is completed in
    Todoist while its v3 file says `open` (probe 2026-09-19, left in place on purpose): its dry-run row
    must show D6 closure in (`status = done`, issue closed) and it is the first real `dev sync`, so the
-   module is seen resolving it; then one more ticket chosen by the user.
-4. Grep guards across `dev/mod.nu`: the Phase 2 pattern minus `gh ` and `\^td`, plus `git commit`
+   module is seen resolving it; then one more ticket chosen by the user. After each real sync,
+   `dev sync <slug> --dry-run` reports no changes.
+4. Grep guards across `dev/mod.nu`: the Phase 2 pattern minus `gh` and `\^td`, plus `git commit`
    and `gh issue develop` absent; `^td` absent; `^gh` only inside the wrapper.
 5. Cutover: the user removes the nupm `issue` and `tasks` modules and any `use issue`/`use tasks`
    lines in `~/.config/nushell`, and adds `export use dev` beside `export use todo` in the `custom`
