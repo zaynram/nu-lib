@@ -195,7 +195,8 @@ Implement:
 
 1. `dev new [slug --name --interactive --continue --prompt --recover --files --edit]` (signature in
    D5): validate the slug (D13), build the record from the spec's example shape (name defaults to the
-   slug with `-`/`+` as spaces, title-cased), `--interactive` reads `input` per header field per D5,
+   slug with `-`/`+` as spaces, title-cased), `--interactive` prompts `name`, `outcome`, `requirements`
+   and `constraints` with `input` per D5 and the spec's Behaviour (lists take one item per line),
    `--prompt` per the spec's Behaviour, write through the Phase 2 writer, `--edit` calls `editor`.
    `const EXAMPLE: path = path self ./docs/example.toml`.
 2. `dev migrate [...slugs --all --dry-run --repo]`: read `docs/issues/<slug>.issue.toml`, refuse
@@ -209,7 +210,8 @@ Verification: same ide-check, nu-lint and test commands as Phase 2; additionally
 file.
 
 Guards: `--prompt` is not tested live (it costs a model call); test the parse-failure branch with a
-stub string instead. No generic shape mapper; refused shapes error.
+stub string instead. `--interactive` is not tested (`input --reedline` needs a terminal); the values
+it collects feed the same writer as the non-interactive path, which the tests cover. No generic shape mapper; refused shapes error.
 
 ## Phase 3b — `repo` aliases (own branch, `feat/repo-aliases` from `main`)
 
