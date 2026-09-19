@@ -202,7 +202,9 @@ Implement:
 1. `dev new [slug --name --interactive --continue --prompt --recover --files --edit]` (signature in
    D5): validate the slug (D13), build the record from the spec's example shape (name defaults to the
    slug with `-`/`+` as spaces, title-cased), `--interactive` prompts `name`, `outcome`, `requirements`
-   and `constraints` with `input` per D5 and the spec's Behaviour (lists take one item per line),
+   and `constraints` per D5 and the spec's Behaviour: one field table `{head desc default check}` and
+   one private loop `_ask [field: record, --read: closure]` (reader defaults to `input` in the body;
+   `loop { return }` with an output-type annotation fails ide-check, so leave the return type off),
    `--prompt` per the spec's Behaviour, write through the Phase 2 writer, `--edit` calls `editor`.
    `const EXAMPLE: path = path self ./docs/example.toml`.
 2. `dev migrate [...slugs --all --dry-run --repo]`: read `docs/issues/<slug>.issue.toml`, refuse
@@ -216,8 +218,9 @@ Verification: same ide-check, nu-lint and test commands as Phase 2; additionally
 file.
 
 Guards: `--prompt` is not tested live (it costs a model call); test the parse-failure branch with a
-stub string instead. `--interactive` is not tested (`input --reedline` needs a terminal); the values
-it collects feed the same writer as the non-interactive path, which the tests cover. No generic shape mapper; refused shapes error.
+stub string instead. `--interactive` is not tested end to end (`input --reedline` needs a terminal):
+`_ask` is tested with an injected `--read` closure (reject then accept, per the spec's Tests), and the
+values feed the same writer as the non-interactive path, which the tests cover. No generic shape mapper; refused shapes error.
 
 ## Phase 3b — `repo` aliases (own branch, `feat/repo-aliases` from `main`)
 
