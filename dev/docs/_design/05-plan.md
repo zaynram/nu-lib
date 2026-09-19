@@ -245,7 +245,11 @@ Write: a registry column `aliases: list<string>` per row, empty by default, set 
 takes its directories as pipeline input, `repo/mod.nu:80-88`); `repo list`
 shows it. `todo find --project` and the track hook resolve the Todoist project by trying the
 repository name first, then each alias in order (a `project/section` alias filters `todo list` to
-that section). One test per resolution step against a fake `$env.repo.path`. This is the seam
+that section: `--section` on `todo list` filters client-side on the raw row's `sectionId`, which
+`hydrate` must keep, since `td task list` has no section flag; `--section` on `todo add` passes
+`td task add --section`). How much section handling is worth is gauged in this phase, not before
+(ruling 2026-09-19); the three registered repositories resolve by name, so this phase may also run
+after Phase 5a, before `_internal` (`development`) and the nupm registry are synced. One test per resolution step against a fake `$env.repo.path`. This is the seam
 `dev sync` uses for `development` (sections map to `~/.config` and `~/library/nushell/_internal`) and
 `nupm-registry`; no `dev` code changes here.
 
@@ -287,10 +291,12 @@ decision table, D7), Phase 0, `todo/mod.nu:157-186`
 
 Tests first: offline: the D6 decision as a pure function; the row diff from fake `todo list` rows to
 the `[[tasks]]` mirror and closure action; `dev sync alpha --dry-run --skip [remote milestone]` with
-no Todoist project errors naming `td project add`.
-Opt-in live (`DEV_SYNC_WRITE=1`): sync a scratch ticket into a scratch Todoist project twice, assert
+no Todoist project errors naming `td project create --name`.
+Opt-in live (`DEV_SYNC_WRITE=1`), inside the D9 fixture (setup: `todo project create --name
+dev-sync-test`, error if it exists; teardown: `todo rm` every created task, then `todo project delete
+id:<id> --yes`; every name hardcoded): sync the scratch ticket `dev-sync-alpha` into it twice, assert
 the second run reports no changes, `edit --add-task` then `edit --complete` round-trip (there is no
-offline test of `edit`'s write path: it has no dry run), then `todo rm` the created tasks.
+offline test of `edit`'s write path: it has no dry run).
 
 Implement the Todoist leg as a private function called from `sync`, all `td` traffic through the
 `todo` module: `todo --json --long task view id:<id> --full` for `checked`, `content` and `isDeleted`

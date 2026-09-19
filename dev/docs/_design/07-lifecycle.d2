@@ -59,7 +59,7 @@ s3: 3 link (first dev sync) {
     dev -> file: "write reference.todoist {id url}"
   }
   dev -> todoist: list direct subtasks of id
-  dev -> file: "replace [[tasks]] wholesale"
+  dev -> file: "rebuild [[tasks]] from the reads"
   dev."status = draft: the remote leg is skipped (D6); afterwards matching is by reference.todoist.id (D7)" {
     class: rule
   }
