@@ -72,7 +72,7 @@ D1 to D5 and D10 to D15 live, rewritten by the user, in the spec's Decisions sec
 
 Deliverable: `_internal/dev/docs/<today>_dev-core.spec.md`. No code.
 
-Read first: `dev/docs/design/04-handoff-prompt.md` (schema and contracts, quote them verbatim), Phase 0 above, `todo/docs/2026-09-13_todo-todoist.spec.md` (copy its section shape: Decisions, Contract, Naming, Verification), `~/code/nu-fluency/docs/issues/hooks-placement.issue.toml` (regular v3 sample) and `~/code/ramda-doc/docs/issues/polyglot-reference-autodoc-tooling.issue.toml` (irregular sample).
+Read first: `dev/docs/_design/04-handoff-prompt.md` (schema and contracts, quote them verbatim), Phase 0 above, `todo/docs/2026-09-13_todo-todoist.spec.md` (copy its section shape: Decisions, Contract, Naming, Verification), `~/code/nu-fluency/docs/issues/hooks-placement.issue.toml` (regular v3 sample) and `~/code/ramda-doc/docs/issues/polyglot-reference-autodoc-tooling.issue.toml` (irregular sample).
 
 Write these sections:
 
@@ -207,5 +207,5 @@ Guards: as 5a; never print `gh` tokens; `reference.github` is written per leg wi
 2. `dev list` shows all 14 tickets with `version` 4.0.0 (add `version` to the list output only if this check needs it; otherwise `dev query <slug> version`).
 3. `dev sync --all --dry-run` twice, identical output; then a real `dev sync` on one ticket chosen by the user.
 4. Grep guards across `dev/mod.nu`: `stor `, `query db`, `git commit`, `gh issue develop`, `...rest`, `<Nothing>` all absent.
-5. Cutover: the user removes the nupm `issue` and `tasks` modules and any `use issue`/`use tasks` lines in `~/.config/nushell`; `dev/docs/design/` stays as the tracked design record (audit, plan, diagrams).
+5. Cutover: the user removes the nupm `issue` and `tasks` modules and any `use issue`/`use tasks` lines in `~/.config/nushell`; `dev/docs/_design/` stays as the tracked design record (audit, plan, diagrams).
 6. Commits: one per phase on `feat/dev-module`; push only when asked.
