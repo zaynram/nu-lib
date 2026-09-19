@@ -45,7 +45,7 @@ Import rule: std submodules only (`use std/assert`, `use std/util [repeat struct
 
 Strict TOML check: `python3 -c 'import tomllib,sys; tomllib.load(open(sys.argv[1],"rb"))' <file>` (used in the audit; 8 of 9 v3 files fail it).
 
-Old module, copy-worthy fragments only: slug discovery glob `~/.local/share/nupm/modules/issue/mod.nu:344-349`; URL to index parse `parse '{_}/issues/{index}'` at issue/mod.nu:217-222; `run-gh-with-repo` error shape at `repo/mod.nu:303-317`.
+Old module, copy-worthy fragments only: slug discovery glob `~/.local/share/nupm/modules/issue/mod.nu:344-349`; URL to index parse `parse '{_}/issues/{index}'` at issue/mod.nu:209-213; `run-gh-with-repo` error shape at `repo/mod.nu:304-318`.
 
 ### Anti-patterns (do not do)
 
@@ -66,7 +66,7 @@ D1 to D5 and D10 to D15 live, rewritten by the user, in the spec's Decisions sec
 - D6 Status and closure: `draft` is skipped (no GitHub leg; the Todoist task is still ensured so the phone can hold rows). `open` keeps the issue open; `done` closes it with reason completed and checks the Todoist task; `aborted` closes with reason not planned and checks the task too. Closure is accepted from any surface: a checked Todoist task or a closed issue found by sync sets the file's `status` (`done` for completed/checked, `aborted` for not-planned) and propagates to the others. Reopening is accepted from Todoist only (unchecking the task sets `status = open` and reopens the issue); an issue reopened on GitHub while the task is checked is reported, not applied. `reference.github.branch` is set to the slug on first create; no branch is created.
 - D7 Todoist model: the ticket is one task (`content` = slug) in the project named after the repository or one of its aliases (Phase 3b); resolution order is the project named after the repo, then each alias (`project` or `project/section`); the project must exist, else the error names `td project add <repo>`. On first link sync searches every project for the slug, errors when it is found in more than one, writes `reference.todoist` and reports a task found outside the expected project. Afterwards everything is matched by `reference.todoist.id`, never by content. `[[tasks]]` rows are the task's direct subtasks, mirrored wholesale from Todoist on every sync (content, description, attribution label, completed); local edits reach Todoist only through `edit --add-task` (`todo add --parent id:<id>`) and `edit --complete` (`todo done`). The kind label is set once at creation (`%deliverable` when `[[ticket.output]]` is non-empty, else `%actionable`) and then owned by Todoist. Tasks carrying a `?` label (`?seed`, `?stub`) are skipped. A task deleted or moved out of every mapped project, or whose `content` no longer equals the slug, is reported, not repaired (`# ponytail:` names this ceiling; the upgrade is `dev sync --relink`). A `done`/`aborted` ticket with no `reference.todoist` gets no task created.
 - D8 GitHub projection: the issue body is `dev <slug> --md` (spec: title, outcome, requirements, constraints, output, landscape, bindings, the `## Tasks` checklist from `[[tasks]]`, `## Notes` verbatim) and is sync-owned: hand edits are overwritten, discussion lives in comments. Version targets: `ticket.target = "<version>"` maps to the GitHub milestone titled `<version>` and the Todoist task `<repo>@<version>` in the parent project; sync ensures the milestone exists (creating it, state from the Todoist task's checked flag, due from its due date), assigns the issue to it, and rewrites only the first description line of the version-target task (the `→ <repo>#a #b` arrow list of member issues), leaving the rest. A missing version-target task is an error naming it, never auto-created. GitHub is never read for rows: the checklist is write-only.
-- D9 Live sync tests: no scratch GitHub repo or Todoist project is named, so the GitHub leg is verified by the user against a real issue with `--dry-run` first; the Todoist leg uses the opt-in `DEV_SYNC_WRITE=1` pattern from `todo/tests/suites/todo.nu:26` (`TODO_TEST_WRITE=1`) and cleans up with `todo rm`.
+- D9 Live sync tests: no scratch GitHub repo or Todoist project is named, so the GitHub leg is verified by the user against a real issue with `--dry-run` first; the Todoist leg uses the opt-in `DEV_SYNC_WRITE=1` pattern from `todo/tests/suites/todo.nu:27` (`TODO_TEST_WRITE=1`) and cleans up with `todo rm`.
 
 ## Phase 1 — Session 4 spec: `dev` core
 
@@ -161,7 +161,7 @@ Verification: `test repo/tests/suites`, `test todo/tests/suites`, `test track/te
 
 Deliverable: `_internal/dev/docs/<today>_dev-sync.spec.md`. No code. Also replace the placeholder sentence in the core spec's intro ("has its own spec, `dev/docs/<date>_dev-sync.spec.md` ... not written yet") with the real path.
 
-Read first: the core spec (intro ownership list, schema incl. `target`/`notes`, `reference` block, D1 rows, D2, D12 description line, D13 slugs, the `edit` write-through bullets), Phase 0 (`gh`, `td`, `todo`, `elevate with-auth` L50), D6 to D9 above, `06-ownership.d2` and `07-lifecycle.d2` (stages s1 to s6 and breakdowns W1 to W5: renamed task, pruned task, closed on GitHub first, half a sync, version target renamed or released early), `todo/mod.nu:137-186` (`find` and the `todoist` helper), `repo/mod.nu:303-317` (gh error shape), the Phase 3b alias resolution.
+Read first: the core spec (intro ownership list, schema incl. `target`/`notes`, `reference` block, D1 rows, D2, D12 description line, D13 slugs, the `edit` write-through bullets), Phase 0 (`gh`, `td`, `todo`, `elevate with-auth` L50), D6 to D9 above, `06-ownership.d2` and `07-lifecycle.d2` (stages s1 to s6 and breakdowns W1 to W5: renamed task, pruned task, closed on GitHub first, half a sync, version target renamed or released early), `todo/mod.nu:137-186` (`find` and the `todoist` helper), `repo/mod.nu:304-318` (gh error shape), the Phase 3b alias resolution.
 
 Write: the contract `dev sync [...slugs --all --dry-run --skip: list<string> = []] -> table<slug todoist github milestone result>`; the algorithm as ordered "ensure" steps per leg so re-running is a no-op:
 
@@ -177,7 +177,7 @@ Verification: every "ensure" step names the exact `todo`/`gh` call from Phase 0 
 
 Files: extend `_internal/dev/mod.nu` and `_internal/dev/tests/suites/dev.nu`.
 
-Read first: Phase 4 spec (Todoist leg, D6 decision table, D7), Phase 0 API list, `todo/mod.nu:157-186` (`todoist` helper), `todo/tests/suites/todo.nu:26` (`TODO_TEST_WRITE` gate).
+Read first: Phase 4 spec (Todoist leg, D6 decision table, D7), Phase 0 API list, `todo/mod.nu:157-186` (`todoist` helper), `todo/tests/suites/todo.nu:27` (`TODO_TEST_WRITE` gate).
 
 Tests first: offline: the D6 decision table as a pure function; the row-diff function given fake `todo list` rows produces the `[[tasks]]` mirror and the closure/reopen action; `dev sync alpha --dry-run --skip [github milestone]` with no Todoist project errors naming `td project add`; `dev edit alpha --add-task` on a fixture with a fake `reference.todoist` calls the write path (assert through the dry-run row, not a live call). Opt-in live (`DEV_SYNC_WRITE=1`): sync a scratch ticket into a scratch Todoist project twice, assert the second run reports no changes, `edit --add-task` then `edit --complete` round-trip through Todoist, then `todo rm` the created tasks.
 
@@ -191,7 +191,7 @@ Guards: no resume files; no auto-commit; never print `td` tokens; the mirror is 
 
 Files: extend `_internal/dev/mod.nu` and `_internal/dev/tests/suites/dev.nu`.
 
-Read first: Phase 4 spec (GitHub and milestone legs, D8), Phase 0 (`gh`, `elevate with-auth` L50), `repo/mod.nu:303-317`, `issue/mod.nu:217-222` (URL to index parse), Phase 5a's leg as the pattern to copy.
+Read first: Phase 4 spec (GitHub and milestone legs, D8), Phase 0 (`gh`, `elevate with-auth` L50), `repo/mod.nu:304-318`, `issue/mod.nu:209-213` (URL to index parse), Phase 5a's leg as the pattern to copy.
 
 Tests first: offline: `dev alpha --md` body equals the expected string; the milestone decision (create/assign/state) from fake `gh api` rows; `--skip [todoist]` runs the GitHub legs alone. Live: verified by the user with `--dry-run` against a real issue first, then one real sync on a ticket they choose (no scratch GitHub repo).
 
