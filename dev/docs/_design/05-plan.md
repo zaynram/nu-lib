@@ -73,7 +73,10 @@ all --json number,title,state,url --limit N`; `issue close <n> -R owner/repo --r
 repos/{owner}/{repo}/milestones`) are unprobed; Phase 4 confirms them.
 
 `claude` 2.1.278: `-p/--print`, `--session-id <uuid>`, `-r/--resume <session-id>`, `--output-format
-{text|json|stream-json}` (only with `--print`).
+{text|json|stream-json}`, `--json-schema <schema>` (structured output, returned as `structured_output`
+on the `result` element), `--system-prompt <text>`, `--tools ""` (no built-in tools),
+`--strict-mcp-config` (no MCP servers without `--mcp-config`); an `@<absolute path>` in the prompt is
+expanded by the CLI (all verified 2026-09-19 with one `haiku` run, $0.03).
 
 `td` 5.3.9: `td completed list [--project --since --until --limit --all --json --full]` has no
 parent filter; filter the `parent` column client-side; `--since` defaults to today, three-month
@@ -200,13 +203,16 @@ the named v3 files into the scratch repository's `docs/issues`.
 
 Implement:
 
-1. `dev new [slug --name --interactive --continue --prompt --recover --files --edit]` (signature in
-   D5): validate the slug (D13), build the record from the spec's example shape (name defaults to the
-   slug with `-`/`+` as spaces, title-cased), `--interactive` prompts `name`, `outcome`, `requirements`
-   and `constraints` per D5 and the spec's Behaviour: one field table `{head desc default check}` and
-   one private loop `_ask [field: record, --read: closure]` (reader defaults to `input` in the body;
+1. `dev new [slug --name --interactive --prompt --recover --files --edit]` (signature in D5):
+   validate the slug (D13), build the record from the spec's example shape (name defaults to the slug
+   with `-`/`+` as spaces, title-cased), `--interactive` prompts every `ticket` field per D5 and the
+   spec's Behaviour: one field table `{head desc default check}` (required fields reject empty, list
+   fields split on `\n`, row fields parse as NUON against the Schema columns) and one private loop
+   `_ask [field: record, --read: closure]` (reader defaults to `input --reedline` in the body;
    `loop { return }` with an output-type annotation fails ide-check, so leave the return type off),
-   `--prompt` per the spec's Behaviour, write through the Phase 2 writer, `--edit` calls `editor`.
+   `--prompt` runs the D5 generation call (`const SCHEMA` and `const INSTRUCTION` beside `EXAMPLE`;
+   the reply is `from json | where type == result | first`, `structured_output` saved as JSON), wrap
+   and validate per the spec's Behaviour, write through the Phase 2 writer, `--edit` calls `editor`.
    `const EXAMPLE: path = path self ./docs/example.toml`.
 2. `dev migrate [...slugs --all --dry-run --repo]`: read `docs/issues/<slug>.issue.toml`, refuse
    `version != "3.0.0"` and the refused shapes naming the offending path, drop `tasks` (D2), map every
