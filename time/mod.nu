@@ -1,6 +1,6 @@
 # Time tracking with the Timewarrior CLI: typed intervals, completions and datetime conversion.
 
-use ../util "into completions"
+use ../completion "into completions"
 
 # ——— constants ——————————————————————————————————————————————————————————————
 

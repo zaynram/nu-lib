@@ -1,7 +1,8 @@
 # Package management for the system and provisioned tooling: upgrades, apt, plugins and the Nushell binary.
 
-use ../mod.nu NU_LIB_DIRS
-use ../util null-device
+use std/util null-device
+use ../prelude NU_LIB_DIRS
+
 export use nightly-toolkit get-latest-nightly-build
 
 # Ephemeral log file holding the output of the latest run.
@@ -123,8 +124,12 @@ export def --wrapped apt [
 
 # Reload all plugins to ensure latest version is loaded.
 @category plugin
-export def --env reload-plugins []: nothing -> nothing {
-  for row in (plugin list --engine) {
+export def --env reload-plugins [
+  ...names: string@_plugin-names
+  # Only reload plugins matching one of these names, if provided
+]: nothing -> nothing {
+  let queue: table = plugin list | if $names == [] { } else { where name in $names }
+  for row in $queue {
     try { plugin stop $row.name; plugin rm $row.name }
     try {
       plugin add $row.filename
@@ -152,5 +157,14 @@ def _apt [buffer: string]: nothing -> oneof<list, table> {
     | if $in.0? == apt { skip } else { }
     | prepend [sudo apt-get]
     | str join (char space)
-  $env.config.completions.external.completer? | if $in == null { [] } else { do $in $line }
+  $line | commandline complete --type=command
+}
+
+def _plugin-names []: nothing -> table {
+  plugin list
+  | select name filename version
+  | insert description {|row|
+    $'[($row.version)] ($row.filename)'
+  } | rename --column={name: value}
+  | select value description
 }

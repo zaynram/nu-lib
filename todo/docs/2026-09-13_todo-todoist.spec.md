@@ -1,7 +1,8 @@
 # `todo`: Todoist tasks over `td`
 
 Module `_internal/todo`. Replaces the Taskwarrior submodule of the former `_internal/warrior`; the
-name avoids `task`, which is Taskwarrior's binary. Shared helper: `util with-auth`.
+name avoids `task`, which is Taskwarrior's binary. Shared helpers: `elevate with-auth` (moved from
+`util` on 2026-09-18) and `util attempt`.
 
 ## Purpose
 
@@ -14,18 +15,21 @@ against a project's tasks. The tracking hook (next session) and the `dev` sync c
 ## Contract
 
 ```nu
-# util/mod.nu
+# elevate/mod.nu
 # Run an external command and return its stdout. On an auth failure in an interactive session run
 # `--login` once and retry; any other non-zero exit raises the captured output.
 export def --wrapped with-auth [
+  name: string
   --login (-l): closure
-  --pattern: string = '(?i)\b(401|403|unauthori[sz]ed|not (logged in|authenticated)|auth login)\b'
-  ...cmd: string
+  --pattern: string = $UNAUTHORIZED # '(?i)\b(401|403|unauthori[sz]ed|not (logged in|authenticated)|auth login)\b'
+  --strict (-s) = false
+  ...rest: string
 ]: nothing -> string
 ```
 
-# Pass arguments to `td`; `--json` and `--ndjson` output is parsed.
-export def --wrapped main [...rest: string@_td]: nothing -> any
+# Pass arguments to `td`; `--json` and `--ndjson` output is parsed, and task-shaped rows (a `content`
+# column) are hydrated like `list`; `--long` keeps every column.
+export def --wrapped main [...rest: string@_td --json (-j) --ndjson (-n) --long (-l)]: nothing -> oneof<nothing, string, table>
 
 # Tasks as rows.
 export def list [
@@ -88,8 +92,10 @@ export def find [
   threshold are dropped; the highest score wins; a tie for the top score yields null. Without pipeline
   input the candidates are `list --project`, and without `--project` the project is the basename of
   the repository root, or an error outside a repository.
-- Every `td` call goes through `with-auth`. `td` writes errors as JSON to stderr with exit code 1, and
-  reports auth failures with a `td auth login` hint, which the default pattern matches.
+- Writes (`done`, `reopen`, `rm`, `browse`) and plain passthrough go through `with-auth`; JSON reads
+  go through `util attempt --merge` and raise on a non-zero exit. `td` writes errors as JSON to
+  stderr with exit code 1, and reports auth failures with a `td auth login` hint, which the default
+  pattern matches.
 - `with-auth` never prompts outside interactive sessions; it raises instead.
 
 ## Naming

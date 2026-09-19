@@ -4,7 +4,7 @@ use ../path
 
 # ——— constants ———————————————————————————————————————————————————————————————
 
-const gstat_cols: list<string> = [
+const COLS: list<string> = [
   name
   state
   branch
@@ -43,7 +43,7 @@ export-env {
     }
   }
   # Skip remaining initialization unless de-serializing or setting defaults.
-  if $env not-has repo or ($env.repo | describe) == string { env --load }
+  if $env not-has repo or ($env.repo? | describe) == string { env --load }
 }
 
 # Load the `repo` module environment.
@@ -255,7 +255,8 @@ def discover-git-repos [
   root: directory = $nu.home-dir
   --depth: int = 3
 ]: nothing -> list<directory> {
-  glob ($root | path rejoin ** .git) --depth=$depth --no-file --no-symlink | path dirname | uniq
+  let exclude: list<string> = $env.repo_exclude!? | default ['**/.*/**']
+  glob --depth=$depth --no-file --no-symlink --exclude=$exclude ($root | path rejoin ** .git) | path dirname | uniq
 }
 
 def collect-gstat-data [root: path]: nothing -> record {
@@ -267,7 +268,7 @@ def collect-gstat-data [root: path]: nothing -> record {
   | rename --column={repo_name: name}
   | insert path $root
   # Reorders columns for neater rendering
-  | select ...$gstat_cols
+  | select ...$COLS
 }
 
 def parse-status-lines []: string -> record {

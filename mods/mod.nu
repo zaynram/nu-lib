@@ -4,16 +4,18 @@
 
 use ../config
 use ../path
-use ../util [ editor "into completions" ]
-use ($config.VENDOR.modules | path join docgen)
+use ../util editor
+use ../completion "into completions"
+use ../prelude NU_LIB_DIRS
+use docgen
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
 const SHORT: table = [
   [prefix segments replace];
-  [null $nu.home-dir ~]
-  [$.mods_home? null @]
-  [$.nupm_home? modules '$']
+  [null [$nu.home-dir] ~]
+  [$.mods_home!? [] @]
+  [$.nupm_home!? [modules] '$']
 ]
 const RE: record = {
   omit: '^(prelude|[_]{1}\w+|\w+\s{1}extern)$'
@@ -53,9 +55,8 @@ def nu-glob []: list<path> -> list<path> {
 }
 
 alias build-mods-refs = par-each --keep-order {|row|
-  if $row.prefix? != null { $env | get --ignore-case --optional $row.prefix }
-  | if ($row.segments? | is-not-empty) { append $row.segments } else { default [] }
-  | path join
+  match $row.prefix { null => '' $p => { $env | get $p | to text } }
+  | path join ...$row.segments
   | wrap find
   | insert replace $row.replace
 }

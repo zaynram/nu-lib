@@ -4,6 +4,8 @@ use std/log
 
 export const FMT: string = $'(ansi wd)%DATE%(ansi rst)|%ANSI_START%%LEVEL%%ANSI_STOP%|%MSG%'
 
+export-env { $env.NU_LOG_FORMAT = $FMT }
+
 # Log a critical message using the library format.
 export alias critical = log critical --format=$FMT
 # Log a debug message using the library format.

@@ -1,11 +1,11 @@
-# Extensions to the builtin `config` commands: directories, environment variables, autoload files,
-# application configs and the prompt of the user and vendor scopes.
+# Extensions to the builtin `config` commands structured around `user`/`vendor` scoping.
 
 # ——— imports —————————————————————————————————————————————————————————————————
 
 use ../error
 use ../path
-use ../util [ editor "into completions" ]
+use ../util editor
+use ../completion "into completions"
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -31,16 +31,16 @@ export const USER: record = {
 
 # Directories of the vendor scope.
 export const VENDOR: record = {
-  bin: (if $nu.os-info.name == windows {
-    $nu.home-dir | path join AppData Local Microsoft WindowsApps
-  } else {
-    '/opt/homebrew/bin/'
-  })
-  autoload: (if $nu.os-info.name == windows {
-    $nu.vendor-autoload-dirs.1
-  } else {
-    $nu.vendor-autoload-dirs.2
-  })
+  bin: (
+    if $nu.os-info.name == windows {
+      $nu.home-dir | path join AppData Local Microsoft WindowsApps
+    } else if $nu.os-info.name == macos {
+      '/opt/homebrew/bin/'
+    } else if $nu.os-info.name == linux {
+      '/home/linuxbrew/.linuxbrew/bin'
+    }
+  )
+  autoload: (if $nu.os-info.name == windows { $nu.vendor-autoload-dirs.1 } else { $nu.vendor-autoload-dirs.2 })
   plugins: ($nu.data-dir | path join plugins (version).version)
   modules: ($nu.data-dir | path basename --replace nupm/modules)
   scripts: ($nu.data-dir | path basename --replace nupm/scripts)
@@ -81,13 +81,16 @@ def new-paths [vendor: bool]: nothing -> list<path> {
 }
 
 # Open a resolved file in the editor, or return its expanded path.
-def submit [target: oneof<nothing, string>, --get]: oneof<nothing, path> -> oneof<nothing, path> { # nu-lint-ignore: unused_parameter
+def submit [target: oneof<nothing, string> --get]: oneof<nothing, path> -> oneof<nothing, path> {
+  # nu-lint-ignore: unused_parameter
   let p: oneof<nothing, path> = $in
   if ($p | is-empty) { error wrap --code=config::unresolved_target $"no items found for target: '($target)'" }
   $p | path expand | if $get { } else { editor }
 }
 
 # ——— definitions ——————————————————————————————————————————————————————————————
+
+export use std/config env-conversions
 
 # Show or load a scope's environment variables, PATH additions included.
 @category env
@@ -116,7 +119,7 @@ export def --env dir [
   let s: record = scope $vendor
   if $target == null { return $s }
   let p: oneof<nothing, path> = $s | get --ignore-case --optional $target
-  if $p == null { error wrap --code=config::dir::invalid_target $"no directory named '($target)'" }
+  if $p == null { error wrap --code=config::dir::unresolved_target $"no directory named '($target)'" }
   if $get { $p } else { cd $p }
 }
 
@@ -154,7 +157,7 @@ export def app [
   if $path != null { $path } else {
     let files: list = try { xglob **/* --no-dir } | default []
     match ($files | length) {
-      0 => { error make --unspanned $"no config files found for '($target)'" }
+      0 => { error wrap --code=config::app::unresolved_target $"no config files found for '($target)'" }
       1 => { $files | first }
       _ => { $files | path truncate --root . | path select }
     }
@@ -168,8 +171,12 @@ export def prompt [
 ]: nothing -> nothing {
   match ($config | default --empty $env.POSH_CONFIG?) {
     null => { oh-my-posh init nu }
-    $p if ($p | path type) != file => { error make --unspanned $"file not found: '($p)'" }
-    $p if ($p | path parse).extension not-in [toml yaml yml json jsonc] => { error make --unspanned $"invalid configuration file: '($p)'" }
+    $p if ($p | path type) != file => {
+      error wrap --code=config::prompt::unresolved_config $"file not found: '($p)'"
+    }
+    $p if ($p | path parse).extension not-in [toml yaml yml json jsonc] => {
+      error wrap --code=config::prompt::unknown_configuration_format $"unexpected configuration file format: '($p)'"
+    }
     $p => { oh-my-posh init nu --config=($p) }
   }
   let f: path = $VENDOR.autoload | path join oh-my-posh.nu
@@ -199,7 +206,7 @@ def _apps []: nothing -> record {
   xglob ($USER.config | path rejoin '*')
   | wrap description
   | insert value {|row| $row.description | path basename }
-  | into completions {match_description: true, completion_algorithm: substring}
+  | into completions {match_description: true completion_algorithm: substring}
 }
 def _app-paths [buffer: string]: nothing -> oneof<record, list> {
   $buffer
@@ -214,6 +221,6 @@ def _app-paths [buffer: string]: nothing -> oneof<record, list> {
     | path relative-to $dir
     | wrap value
     | insert description $label
-    | into completions {sort: true, match_description: true, completion_algorithm: substring}
+    | into completions {sort: true match_description: true completion_algorithm: substring}
   }
 }

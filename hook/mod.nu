@@ -1,8 +1,9 @@
 # Utility module for working with Nushell hooks.
 
-use ../util [ "into completions" contains-key dispatch ]
 use std/util structure
 use std/iter flat-map
+use ../dispatch
+use ../completion "into completions"
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -22,13 +23,14 @@ export-env {
   $env.config.hooks = $env.config.hooks
     | default [] pre_prompt pre_execution
     | default {} env_change
+  if not ($TEST_PATH | path exists) { touch $TEST_PATH }
 }
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 alias validate-target = do --capture-errors {||
   let key: cell-path;
-  if ($env.config.hooks | contains-key $key) { return }
+  if ($env.config.hooks | get --optional --ignore-case $key) != null { return }
   error make --unspanned $'hook not found: ($key)'
 }
 
@@ -39,7 +41,13 @@ alias hook-getter = do --capture-errors {|target: cell-path|
 }
 
 alias hook-setter = do {|target: cell-path|
-  {|_: closure| $env.config.hooks = $env.config.hooks | upsert $target $_ }
+  let type: string = $target | into string | split row . | skip | first
+  {|_: closure|
+    $env.config.hooks = $env.config.hooks | match $type {
+        display_output | command_not_found => { upsert $type { do $_ | first } }
+        _ => { upsert $target $_ }
+      }
+  }
 }
 
 def add-descriptions [
@@ -88,6 +96,11 @@ def flatten-hooks [
   | transpose type items
   | flat-map {|row|
     get $.items | match $row.type {
+      command_not_found | display_output => {
+        let code: oneof<nothing, closure, string>;
+        let ref: cell-path = [$row.type] | into cell-path
+        [{name: $row.type disabled: ($code == null) condition: {|| is-enabled $ref } code: $code ref: $ref}]
+      }
       env_change => { transpose name value | flat-map {|x| $x.value | hook-defaults $'($row.type).($x.name)' } }
       _ => { hook-defaults $row.type }
     }
@@ -95,7 +108,7 @@ def flatten-hooks [
     closure => { where $pred }
     nothing if $only != null => { where ref == $only }
     nothing if $include != [] => { where name in $include }
-    _ => { where not disabled }
+    _ => { where not $it.disabled }
   }
 }
 
@@ -188,7 +201,7 @@ export def --env edit [
 ]: nothing -> record {
   if $overwrite == null and $update == null {
     error make --unspanned 'no overwrite value or update record was given'
-  } else if ($env.config.hooks | contains-key --not $ref) {
+  } else if $overwrite == null and ($env.config.hooks | get --optional --ignore-case $ref) == null {
     error make --unspanned $'invalid hook reference: ($ref)'
   } else {
     let value = $overwrite | default { {|| merge $update } }
@@ -203,9 +216,9 @@ export def --env del [
   ref: cell-path@_hook-refs
   # The full path of the hook to remove
 ]: nothing -> bool {
-  if ($env.config.hooks | contains-key --not $ref) { return false }
+  if ($env.config.hooks | get --optional --ignore-case $ref) == null { return false }
   $env.config.hooks = $env.config.hooks | reject --ignore-case $ref
-  true
+  return true
 }
 
 # Test a hook closure, optionally with custom arguments.
@@ -251,19 +264,27 @@ export def --wrapped test [
 export def --env add [
   target: cell-path@_possible-hook-types
   # The type of hook to add the provided configurations to
+  value?: oneof<string, closure, record>
+  # The configuration to add to the hook type (appended to pipeline input if present)
   --index (-i): int@_hook-indices = -1
   # Insert the pipeline input before this index (negative counts from the end; the default appends)
-]: [
-  closure -> nothing
-  list<closure> -> nothing
-  record -> nothing
-  table -> nothing
-] {
-  let hooks: list = append []
+  --dedupe (-d)
+  # Check for the existence of the hooks and only add them if not found
+]: oneof<nothing, list<oneof<closure, string>>, table<name: string, code: oneof<closure, string>>> -> nothing {
+  let hooks: list = if $value != null { append $value } else { } | match $in {
+      [_ ..] if $dedupe => {
+        let names: list<string> = ignore | _hook-names | get $.completions.value
+        $in | where ($it | describe) !~ ^record or $it.name? not-in $names
+      }
+      [_ ..] => { }
+      _ => { return null }
+    } | compact
   hook-setter $target | invoke {||
-    let list: list = append []
-    let idx: int = if $index < 0 { ($list | length) + $index + 1 } else { $index } | [0 $in] | math max
-    [...($list | take $idx) ...$hooks ...($list | skip $idx)]
+    let all: list = append []
+    let idx: int = $index
+      | if $in >= 0 { } else { $in + ($all | length) + 1 }
+      | prepend 0 | math max
+    [...($all | take $idx) ...$hooks ...($all | skip $idx)]
   }
 }
 

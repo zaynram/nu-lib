@@ -2,10 +2,12 @@
 
 # ——— imports —————————————————————————————————————————————————————————————————
 
-use ($nu.data-dir | path basename --replace nupm/modules/session) edit
-export use std/util [ "path add" null-device ellie ]
-export use ../dispatch
-export use ../completion "into completions"
+use std/util [ "path add" null-device ]
+use std/iter flat-map
+
+use ../dispatch
+use ../completion "into completions"
+use ../error post-complete
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -13,20 +15,13 @@ const EXE: path = $nu.current-exe | path expand --strict --no-symlink
 
 # ——— definitions —————————————————————————————————————————————————————————————
 
-# Check whether a cell-path resolves in the input, case-insensitively (`--not` inverts the test).
-@category core
-@example 'check for an environment variable' {
-  $env | contains-key HOME
-} --result=($nu.os-info.name != windows)
-export def contains-key [
-  key: cell-path # The cell-path to test for
-  --not (-n) # Invert the test
-]: oneof<record, list> -> bool {
-  try { get --ignore-case $key; true } catch { false }
-  | return ($in != $not)
-}
-
-export alias not-contains-key = contains-key --not
+# Check for the existence of a value at a cell-path.
+export def contains [
+  cell: cell-path
+  # The cell-path to check for a value at:
+  # - Adding `?` suffix will make this always return `true`
+  # - Adding a `!` suffix will make the check case-insensitive
+]: oneof<list, record, table> -> bool { try { get $cell; return true } catch { return false } }
 
 # Serialize a datetime (default: now; strings are parsed as human dates) in RFC 3339 format.
 @category date
@@ -34,31 +29,45 @@ export def timestamp []: oneof<nothing, string, datetime> -> string {
   dispatch type --pipe {nothing: {|| date now } string: {|| date from-human } _: {|| }} | format date %+
 }
 
+# Run an external command and return its `complete` record.
+export def --wrapped attempt [
+  name: string
+  # The name or path of the external command to run
+  ...rest: string
+  # Arguments to pass to the external command
+  --check (-c)
+  # Raise an error on non-zero `exit_code`; otherwise return `stdout`
+  --merge (-m)
+  # Merge `stdout` and `stderr` together into `stdout`
+]: [
+  oneof<nothing, string> -> oneof<string, record<stdout: string, stderr: string, exit_code: int>, error>
+] {
+  if $merge {
+    run-external $name ...$rest out+err>|
+  } else {
+    run-external $name ...$rest
+  } | complete
+  | if $check { post-complete $name } else { }
+}
+
 # Open a file in the default editor or the editor pane of an active Zellij session.
 @category core
-export def --wrapped editor [
-  --cwd (-d): directory = . # Set the working directory for the editor session
-  ...rest: string # Pass arguments to the wrapped editor
-]: oneof<nothing, path, list<path>> -> nothing {
-  if $rest not-has `--help` {
-    let rest: list = append $rest | compact --empty | default --empty [$cwd] | path expand
-    if $env has ZELLIJ {
-      edit --workspace=$cwd $rest.0? ...($rest | skip 1)
-    } else if $nu.os-info.name != windows and (on-path editor) {
-      cd $cwd
-      run-external editor ...$rest
-    } else {
-      cd $cwd
-      run-external $env.config.buffer_editor ...$rest
-    }
-  } else {
-    if $env has ZELLIJ {
-      help editor
-    } else if $nu.os-info.name != windows and (on-path man editor) {
-      man editor
-    } else {
-      help $env.config.buffer_editor
-    }
+export def editor [
+  --cd: directory # Set the working directory for the editor session
+  --depth (-d): int = 1 # Depth to recurse when expanding glob expressions
+  ...rest: glob # Files or glob expressions for the files to edit
+]: oneof<nothing, path, list<path>, table<name: path>> -> nothing {
+  if $cd != null { cd $cd }
+  $in | match ($in | describe) {
+    nothing | string | list<any> | list<string> => { }
+    _ => { get $.name? | compact }
+  } | append ($rest | into string | path expand)
+  | flat-map { if ($in | path exists) { } else { glob --depth=$depth $in } }
+  | default --empty '.'
+  | match ($env | select $.zellij!? $.editor!? $.config.buffer_editor? | compact) {
+    {zellij: _} => { zellij-edit ...$in }
+    {config: {buffer_editor: $e}} | {editor: $e} => { run-external $e ...$in }
+    _ => { error make --unspanned 'unable to detect editor binary' }
   }
 }
 
@@ -133,30 +142,6 @@ export def bin-link [
   }
 }
 
-# Run an external command and return its stdout.
-#
-# On an auth failure (output matching `--pattern`) in an interactive session, run `--login` once and
-# retry; any other non-zero exit raises the captured output.
-export def --wrapped with-auth [
-  --login (-l): closure # Interactive login, e.g. `{|| ^td auth login }` or `{|| ^gh auth login }`
-  --pattern: string = '(?i)\b(401|403|unauthori[sz]ed|not (logged in|authenticated)|auth login)\b'
-  # Regex identifying an auth failure in the command's stdout or stderr
-  ...cmd: string # The command and its arguments
-]: nothing -> string {
-  def attempt [cmd: list<string>]: nothing -> record { run-external ...$cmd | complete }
-  def raise [cmd: list<string>]: record -> error {
-    error make --unspanned $"($cmd.0?) exited with code ($in.exit_code):\n($in.stdout)($in.stderr)"
-  }
-  attempt $cmd
-  | if $in.exit_code == 0 {
-    return $in.stdout
-  } else if $nu.is-interactive and $login != null and $"($in.stdout)($in.stderr)" =~ $pattern {
-    do $login
-    attempt $cmd
-    | if $in.exit_code == 0 { $in.stdout } else { raise $cmd }
-  } else { raise $cmd }
-}
-
 # ——— helpers —————————————————————————————————————————————————————————————————
 
 def error [msg: string ...code: string]: oneof<nothing, record<stdout: string>> -> error {
@@ -174,6 +159,41 @@ def error [msg: string ...code: string]: oneof<nothing, record<stdout: string>> 
     }
     | compact --empty
   error make --unspanned $details
+}
+
+def get-editor-name []: nothing -> string {
+  $env.config.buffer_editor? | default $env.editor!? | default '/usr/bin/nano'
+}
+
+def get-editor-pane-id [editor?: string]: nothing -> oneof<nothing, int> {
+  zellij action list-panes --json
+  | from json
+  | where {|pane|
+    if $pane.is_suppressed { return false }
+    if $pane.title =~ '^(editor$|(E|e)diting:\s)' { return true }
+    $pane.pane_command? | $in != null and $in =~ ($editor | default { get-editor-name })
+  } | get $.0?.id
+}
+
+def zellij-edit [...rest: path]: nothing -> nothing {
+  let editor: string = get-editor-name
+  # ensures flags are sorted after paths
+  let args: list = $rest | sort --reverse
+  # if editor pane is detected, focus it so it gets replaced instead of currently focused
+  get-editor-pane-id $editor | if ($in | describe) == int { zellij action focus-pane-id $in }
+  # count only non-option arguments (currently should be all of them; defense-in-depth)
+  match ($rest | where $it !~ '^-+' | length) {
+    0 => { error make --unspanned 'no paths were provided' }
+    1 => {|p: path ...opts: string| zellij edit --in-place $p ...$opts }
+    _ => {|...rest: string|
+      # use same prefix to ensure future stacked calls use the same pane regardless of any current
+      let name: string = $'Editing: ($rest | first | path basename), ...'
+      zellij run --name=($name) --in-place --close-on-exit -- $editor ...$rest
+    }
+    # capture any errors so they propagate back to the initial caller
+  } | do --capture-errors $in ...$args
+  # print the terminal identifier string for saliency while still returning `null`
+  | print
 }
 
 # ——— completions —————————————————————————————————————————————————————————————

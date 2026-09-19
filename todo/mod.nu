@@ -1,6 +1,9 @@
 # Todoist tasks with the `td` CLI: typed rows, completions, slug matching and an auth retry.
 
-use ../util ["into completions" with-auth]
+# ——— imports ——————————————————————————————————————————————————————————————————
+
+use std/util null-device
+use ../completion "into completions"
 
 # ——— constants ——————————————————————————————————————————————————————————————
 
@@ -10,14 +13,16 @@ const COMMANDS: list<string> = [task project label section comment completed tod
 
 # Pass arguments to `td`; `--json` and `--ndjson` output is parsed.
 @category productivity
-export def --wrapped main [ # nu-lint-ignore: missing_output_type
+export def --wrapped main [
+  # nu-lint-ignore: missing_output_type
   ...rest: string@_td # Arguments for `td`
-]: nothing -> any {
-  td ...$rest | match ($rest | where $it in ['--json' '--ndjson'] | get --optional 0) {
-    '--json' => { from json }
-    '--ndjson' => { lines | each { from json } }
-    _ => { }
-  }
+  --json (-j) # Request data in JSON and convert to Nushell types before returning
+  --ndjson (-n) # Behaves the same as `--json`
+  --long (-l) # Return all columns (only works with `--[nd]json`)
+]: nothing -> oneof<nothing, string, table> {
+  if $json or $ndjson {
+    todoist --json ...$rest | if ($in | columns) has content { hydrate null --long=$long } else { }
+  } else { run-external td ...$rest }
 }
 
 # Tasks as rows with the project name resolved and `due` as a datetime.
@@ -31,17 +36,25 @@ export def list [
   --since: datetime # With `--completed`: lower bound (default: today; at most three months back)
 ]: nothing -> table<id: string, content: string, description: string, labels: list<string>, project: string, parent: oneof<nothing, string>, due: oneof<nothing, datetime>, priority: int, url: string> {
   if $completed {
-    td completed list --all --json ...(opt '--project' $project) ...(opt '--since' ($since | format-due))
+    todoist --json --options={
+      project: $project
+      since: ($since | format-due)
+    } completed list --all
   } else {
-    td task list --all --json ...(opt '--project' $project) ...(opt '--parent' $parent) ...(opt '--filter' $filter) ...(opt '--label' ($label | join-labels))
-  } | from json | get results | hydrate $project
+    todoist --json --options={
+      project: $project
+      parent: $parent
+      filter: $filter
+      label: ($label | join-labels)
+    } task list --all
+  } | hydrate $project
 }
 
 # One task as a row.
 @category productivity
 export def view [
   ref: string@_tasks # Task id, `id:<id>`, or exact content
-]: nothing -> record { td task view $ref --json | from json | [$in] | hydrate null | first }
+]: nothing -> record { todoist --json task view $ref | hydrate null | first }
 
 # Create a task; returns its row.
 @category productivity
@@ -54,8 +67,14 @@ export def add [
   --due: oneof<datetime, string> # Due date; a string passes through as the Todoist due string
   --priority: int # 1 (p1, urgent) to 4 (p4)
 ]: nothing -> record {
-  td task add $content --json ...(opt '--project' $project) ...(opt '--description' $description) ...(opt '--labels' ($labels | join-labels)) ...(opt '--parent' $parent) ...(opt '--due' ($due | format-due)) ...(opt '--priority' ($priority | format-priority))
-  | from json | [$in] | hydrate $project | first
+  todoist --json --options={
+    project: $project
+    description: $description
+    labels: ($labels | join-labels)
+    parent: $parent
+    due: ($due | format-due)
+    priority: ($priority | format-priority)
+  } task add $content | hydrate $project | first
 }
 
 # Update fields of a task; returns its row.
@@ -69,28 +88,46 @@ export def edit [
   --no-due # Remove the due date
   --priority: int # 1 (p1, urgent) to 4 (p4)
 ]: nothing -> record {
-  td task update $ref --json ...(opt '--content' $content) ...(opt '--description' $description) ...(opt '--labels' ($labels | join-labels)) ...(opt '--due' ($due | format-due)) ...(if $no_due { ['--no-due'] } else { [] }) ...(opt '--priority' ($priority | format-priority))
-  | from json | [$in] | hydrate null | first
+  todoist --json --options={
+    content: $content
+    description: $description
+    labels: ($labels | join-labels)
+    due: ($due | format-due)
+    priority: ($priority | format-priority)
+    no_due: $no_due
+  } task update $ref | hydrate null | first
 }
 
 # Complete tasks.
 @category productivity
-export def done [...refs: string@_tasks]: nothing -> nothing { for ref in $refs { td task complete $ref | ignore } }
+export def done [...refs: string@_tasks]: nothing -> nothing {
+  for ref in $refs { todoist --auth task complete $ref }
+}
 # Reopen completed tasks.
 @category productivity
-export def reopen [...refs: string@_tasks]: nothing -> nothing { for ref in $refs { td task uncomplete $ref | ignore } }
+export def reopen [...refs: string@_tasks]: nothing -> nothing {
+  for ref in $refs { todoist --auth task uncomplete $ref }
+}
 # Delete tasks.
 @category productivity
-export def rm [...refs: string@_tasks]: nothing -> nothing { for ref in $refs { td task delete $ref --yes | ignore } }
+export def rm [...refs: string@_tasks]: nothing -> nothing {
+  for ref in $refs { todoist --auth task delete $ref --yes }
+}
 # Open a task in the browser.
 @category productivity
-export def browse [ref: string@_tasks]: nothing -> nothing { td task browse $ref | ignore }
+export def browse [ref: string@_tasks]: nothing -> nothing {
+  todoist --auth task browse $ref | ignore
+}
 # Projects with their ids and urls.
 @category productivity
-export def projects []: nothing -> table<id: string, name: string, url: string> { td project list --json | from json | get results | select id name url }
+export def projects []: nothing -> table<id: string, name: string, url: string> {
+  todoist --json project list | select $.id? $.name? $.url?
+}
 # Labels with their ids.
 @category productivity
-export def labels []: nothing -> table<id: string, name: string> { td label list --json | from json | get results | select id name }
+export def labels []: nothing -> table<id: string, name: string> {
+  todoist --json label list | select $.id? $.name?
+}
 
 # Best-effort match of a slug against candidate rows (pipeline input) or the project's open tasks.
 #
@@ -106,53 +143,105 @@ export def find [
   | insert score {|row| score $slug $row.content }
   | where score >= $threshold
   | sort-by --reverse score
-  | if ($in | is-empty) or (($in | length) > 1 and $in.0.score == $in.1.score) { null } else {
-    first | select --optional id content score url
+  | let scored: table;
+  match ($scored | length) {
+    0 => null
+    2.. if $scored.0?.score == $scored.1?.score => null
+    _ => { $scored | first | select $.id? $.content? $.score? $.url? }
   }
 }
 
 # ——— helpers ————————————————————————————————————————————————————————————————
 
 # Run `td` through the auth retry.
-def --wrapped td [...args: string]: nothing -> string { with-auth --login {|| ^td auth login } td ...$args }
-
-# A flag with its value, or nothing when the value is null.
-def opt [flag: string value: oneof<nothing, string, int>]: nothing -> list<string> { if $value == null { [] } else { [$flag ($value | into string)] } }
-def join-labels []: oneof<nothing, list<string>> -> oneof<nothing, string> { if ($in | is-empty) { null } else { str join ',' } }
-def format-due []: oneof<nothing, datetime, string> -> oneof<nothing, string> { if ($in | describe) == datetime { format date %F } else { } }
-# App priority 1 (p1) to 4 (p4) as the `td` flag value.
-def format-priority []: oneof<nothing, int> -> oneof<nothing, string> { if $in == null { null } else { $'p($in)' } }
-def repo-name []: nothing -> string {
-  ^git rev-parse --show-toplevel | complete
-  | if $in.exit_code == 0 { $in.stdout | str trim | path basename } else { error make --unspanned 'not inside a repository: pass `--project`' }
+def --wrapped todoist [
+  ...rest: string
+  # Arguments to pass through to `td`
+  --options: record = {}
+  # Convert to options and add to arguments
+  --json
+  # Enables structured output
+  --ndjson
+  # Enables structured output
+  --auth
+  # Use the authentication guard
+]: nothing -> oneof<string, table> {
+  let struct: bool = $json or $ndjson
+  $options
+  | into options --fold=($rest | if $struct { append '--json' } else { })
+  | if $auth or not $struct {
+    use ../elevate with-auth
+    with-auth --login={|| run-external td auth login } td ...$in
+  } else {
+    let args;
+    use ../util attempt
+    attempt --merge td ...$args | get $.stdout
+  } | if $struct {
+    from json | collect {|| if $in has results { get $.results } else { append [] } }
+  } else { }
 }
-def tokens []: string -> list<string> { str lowercase | split row --regex '[-/@.]+' | where $it != '' | uniq }
+
+# Converts input record to flags with their values, or nothing when the value is `null` or `false`.
+# Record values evaluating to `true` will have their values dropped but the flag itself kept.
+# - If you want to pass `true` directly, set its option name to the string `'true'` instead.
+def "into options" [
+  --fold: list<oneof<nothing, string>> = []
+  # Value-less flags; `null` items will be ignored
+]: record -> list<string> {
+  transpose name value
+  | where value not-in [null false]
+  | update name { if $in starts-with '--' { } else { $"--($in)" } }
+  | update value { match ($in | describe) { bool => null _ => { into string } } }
+  | reduce --fold=($fold | compact --empty) {|row| append [$row.name $row.value] | compact }
+}
+
+def join-labels []: oneof<nothing, list<string>> -> oneof<nothing, string> {
+  if ($in | describe) == list<string> { str join , }
+}
+
+def format-due []: oneof<nothing, datetime, string> -> oneof<nothing, string> {
+  match ($in | describe) { datetime => { format date %F } string => { } }
+}
+
+# App priority 1 (p1) to 4 (p4) as the `td` flag value.
+def format-priority []: oneof<nothing, int> -> oneof<nothing, string> {
+  match ($in | describe) { int => $'p($in)' }
+}
+
+def repo-name []: nothing -> string {
+  use ../util attempt
+  try { attempt --check git rev-parse --show-toplevel } catch {
+    error make --unspanned 'not inside a repository: pass `--project`'
+  } | str trim | path basename
+}
+
+def tokens []: string -> list<string> {
+  str lowercase | split row --regex '[-/@.]+' | compact --empty | uniq
+}
+
 def score [slug: string content: string]: nothing -> float {
   if $slug == $content { return 1.0 }
-  let a: list<string> = $slug | tokens
-  let b: list<string> = $content | tokens
-  let both: int = $a | where $it in $b | length
-  let union: int = ($a | length) + ($b | length) - $both
-  if $union == 0 { 0.0 } else { $both / $union | into float }
+  $slug | tokens | do {|b: list<string>|
+    let both: int = $in | where $b has $it | length
+    ($in | length) + ($b | length) - $both
+    | if $in == 0 { 0 } else { $both / $in }
+  } ($content | tokens)
+  | into float
 }
 
 # Rows of `td` task JSON: project name (`$name` when given, otherwise resolved), `due` as a datetime, app priority.
-def hydrate [name: oneof<nothing, string>]: list -> table {
-  let rows: list = $in
-  let names: record = if $name != null or ($rows | is-empty) { {} } else { projects | each {|p| {$p.id: $p.name} } | into record }
-  $rows | each {|row|
-    {
-      id: $row.id
-      content: $row.content
-      description: $row.description
-      labels: ($row.labels? | default [])
-      project: ($name | default ($names | get --optional $row.projectId))
-      parent: $row.parentId?
-      due: ($row.due?.date? | if $in == null { } else { into datetime })
-      priority: (5 - $row.priority)
-      url: $row.url
-    }
-  }
+def hydrate [name: oneof<nothing, string> --long = false]: table -> table {
+  let rows: table = $in
+  # one `td project list` call, and only when a name has to be resolved
+  let projects: table = if $name == null and ($rows | is-not-empty) { projects } else { [] }
+  $rows | if $long { } else {
+    select $.id $.content $.description $.labels? $.projectId? $.parentId? $.due.date? $.priority $.url
+  } | rename --column={projectId: project parentId: parent due.date: due}
+  | default [] labels
+  | update $.project {|row| $name | default { $projects | where id == $row.project | get $.0?.name } }
+  | update $.priority { into int | 5 - $in }
+  # `--long` keeps `due` as the raw record
+  | if $long { } else { update $.due { if $in != null { into datetime } } }
 }
 
 # ——— completions —————————————————————————————————————————————————————————————
@@ -162,6 +251,17 @@ def _td [buffer: string]: nothing -> oneof<list, record> {
   $env.config.completions.external.completer? | if $in == null { [] } else { do $in $line }
   | default --empty { if ($line | split row --regex '\s+' | length) <= 2 { $COMMANDS } else { [] } }
 }
-def _projects []: nothing -> record { projects | select name url | rename value description | into completions {completion_algorithm: substring} }
-def _labels []: nothing -> record { labels | get name | into completions {completion_algorithm: substring} }
-def _tasks []: nothing -> record { list | select content project | rename value description | into completions {completion_algorithm: substring, match_description: true} }
+def _projects []: nothing -> record {
+  projects | select name url
+  | rename value description
+  | into completions {completion_algorithm: substring}
+}
+def _labels []: nothing -> record {
+  labels | get name
+  | into completions {completion_algorithm: substring}
+}
+def _tasks []: nothing -> record {
+  list | select content project
+  | rename value description
+  | into completions {completion_algorithm: substring match_description: true}
+}

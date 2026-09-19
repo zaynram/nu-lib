@@ -331,6 +331,7 @@ def ensure [m: string procs: table]: nothing -> string {
       if (do $down tint2) { spawn tint2 --with $vars { tint2 } }
     }
     wslg => { if (do $down mstsc.exe) and (spawn-mstsc) { return 'xrdp' } }
+    xrdp => 'xrdp' # Don't respawn when detected inside an `xrdp` session
   }
   return $m
 }

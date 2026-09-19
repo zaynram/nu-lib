@@ -1,5 +1,5 @@
 # Suite of validation tools to assist with custom command definitions and parameter validation.
-#
+
 # Return values are closures intentionally:
 # - Calling `error make` from a nested scope causes error duplication as it propagates upwards.
 # - Returning raw details records would require each consumer to typecheck the return value
@@ -26,11 +26,13 @@ export def string [
   # Error labels for validation errors; the input and regex pattern will be included if this is empty
   --inner: list<record> = []
   # Inner error(s) to include in the error details for validation errors
+  --help: string
+  # Requirement description or other helpful information for additional context
 ]: string -> closure {
   if (($regex != null and $in =~ $regex) or $enum has $in) != $not { let s: string; {|| $s } } else {
     let value: record = metadata | {text: string span: $in.span}
     let check: record = if $regex != null { {text: regex span: (metadata $regex).span} } else { {text: enum span: (metadata $enum).span} }
     let labels: table<text: string, span: record> = $labels | default --empty [$value $check]
-    {|| error make ({msg: $message code: $code labels: $labels inner: $inner} | compact --empty) }
+    {|| error make ({msg: $message code: $code labels: $labels inner: $inner help: $help} | compact --empty) }
   }
 }

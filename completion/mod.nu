@@ -1,5 +1,7 @@
 # Custom completion records: wrap a list, or a `value`/`description` table, with completion options.
 
+export use std/util structure
+
 # ——— constants ————————————————————————————————————————————————————————————————
 
 # Default representation per value type (`--repr` overrides).
@@ -73,4 +75,29 @@ export def "into completions" [
     # `--keep-order`: completers that pass `sort: false` (time, hook) rely on the input order surviving.
     completions: ($value | if $table { update value $format } else { par-each --keep-order $format })
   }
+}
+
+# Convert a commandline buffer into a list of token spans.
+export def "into spans" [
+  --long (-l)
+  # Return the full `structure` table instead of only the token texts
+  --unalias (-u)
+  # Replace the first span with its alias expansion's first word, if found
+  --raw (-r)
+  # Disable insertion of empty quotes for trailing whitespace
+]: string -> list<string> {
+  let buffer: string;
+  structure $in | if $unalias {
+    update $.0.text {|name: string|
+      scope aliases
+      | where name == $name
+      | get $.0?.expansion
+      | match $in { null => $name _ => { split words | first } }
+    }
+  } else { }
+  | if not $raw and $buffer =~ '\s+$' {
+    let pos: int = $buffer | str length --chars | $in - 1
+    $in | append {text: '' kind: none span: {start: $pos end: $pos}}
+  } else { }
+  | if $long { } else { get $.text }
 }

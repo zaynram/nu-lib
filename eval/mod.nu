@@ -6,7 +6,7 @@
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use std/iter flat-map
-use ../util "into completions"
+use ../completion "into completions"
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -44,8 +44,11 @@ export def main [
         {parent: $p stem: mod extension: nu} => { $p | path dirname }
         {parent: $p stem: $s extension: nu} => $p
       } | $'${indent}${keyword} ($in)($psep)${relative}${rest}'
-      try { open --raw $row.path } catch { if $errors { error make --unspanned } }
-      | str replace --all --regex $find $replace
+      try {
+        open --raw $row.path | str replace --all --regex $find $replace
+      } catch {
+        if $errors { error make --unspanned }
+      }
     } | compact code
 
   for row in $queue {

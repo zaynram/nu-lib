@@ -18,7 +18,8 @@ def "test live reads" []: nothing -> nothing {
   assert ('nu-over-bash-hooks' in $open.content) 'list by project'
   assert equal ($open | get project | uniq) [nu-fluency] 'project column from the flag'
   assert equal (todo view nu-over-bash-hooks | get project) nu-fluency 'view resolves the project name'
-  assert ((todo task list --project nu-fluency --json | get results | length) > 0) 'passthrough parses json'
+  assert ((todo task list --project nu-fluency --json | get content) has nu-over-bash-hooks) 'passthrough hydrates task json'
+  assert ((todo --json project list | get name) has Inbox) 'passthrough parses other json untouched'
   assert equal (todo find nu-over-bash-hooks --project nu-fluency | get score) 1.0 'find against the live project'
 }
 
