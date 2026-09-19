@@ -4,6 +4,8 @@
 #   - shape: sequence_diagram; actors declared first, in the order they are read
 #   - one group per lifecycle stage, numbered; breakdown groups prefixed "W"
 #   - a message label names the exact command or API call; a quoted note names a rule
+#   - quote any label containing ; # { } [ ] (an unquoted # starts a comment; an unquoted ; ends the statement and the stray tail becomes a
+#     node and d2 0.7.1 then emits an overflowed SVG height with no lifelines, found 2026-09-19)
 #   - class drift marks messages that end in an error row instead of a write
 
 shape: sequence_diagram
@@ -48,7 +50,7 @@ s2: 2 define {
 s3: 3 link (first dev sync) {
   you -> dev: dev sync <slug>
   dev -> file: read
-  dev -> todoist: find content = slug across projects, open then completed (error on more than one; report a wrong project)
+  dev -> todoist: "find content = slug across projects, open then completed (error on more than one; report a wrong project)"
   alt-found: found {
     dev -> file: "write reference.todoist {id url}"
   }
@@ -87,6 +89,15 @@ s5: 5 work {
   dev -> file: "replace [[tasks]]"
   you -> dev: dev sync <slug>
   dev -> remote: update body (checklist reflects checked rows)
+  you -> remote: "(browser) tick the box for 'write docs' in ## Tasks"
+  you -> dev: dev sync <slug>
+  dev -> remote: read body, box differs from the mirror, subtask unchanged in Todoist
+  dev -> todoist: todo done id:<sub>
+  dev -> file: "replace [[tasks]]"
+  dev -> remote: update body
+  dev."box toggled on the host and in Todoist to different states: Todoist wins, the host toggle is reported (D8)" {
+    class: rule
+  }
   file."git switch -c <slug>: the track hook resolves the branch to the task" {
     class: rule
   }
@@ -136,7 +147,7 @@ w2: W2 pruned in Todoist {
 }
 
 w3: W3 closed on the remote first {
-  you -> remote: merge PR with "closes #N"
+  you -> remote: "merge PR with 'closes #N'"
   you -> dev: dev sync <slug>
   dev -> remote: issue closed, todoist unchecked
   dev -> todoist: complete the task

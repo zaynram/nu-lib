@@ -239,29 +239,31 @@ Verification: `test repo/tests/suites`, `test todo/tests/suites`, `test track/te
 Deliverable: `dev/docs/<today>_dev-sync.spec.md`. No code. Replace the placeholder sentence in the
 core spec's intro with the real path.
 
-Read first: the bindings document (every commitment, D6 to D9, the breakdown table, and "Left to the
-sync spec", which is this phase's decision list), the core spec (Ownership, D1, D12, D13, Behaviour
+Read first: the bindings document in full, its Scope section first (mandatory: every commitment, D6
+to D9, the breakdown table, and "Left to the sync spec", which is this phase's decision list), the core spec (Ownership, D1, D12, D13, Behaviour
 for `edit`), Phase 0 (`gh`, `td`, `todo`, `elevate with-auth`), `06-ownership.d2` and
 `07-lifecycle.d2`, `todo/mod.nu:137-186`, `repo/mod.nu:304-318`, the Phase 3b alias resolution.
 
 Write, following the todo spec's section shape (Purpose, Decisions, Contract, Behaviour, Naming,
 Verification): the contract from the bindings document's "Command surface"; the algorithm as ordered
 "ensure" steps per leg (Todoist, remote issue, milestone) so re-running is a no-op, each step naming
-the exact `todo`/`gh` call; the dry-run and result row shapes; error copy for every case in the
+the exact `todo`/`gh` call, with the D8 checklist read-back placed before the row mirror; the dry-run and result row shapes; error copy for every case in the
 bindings document's breakdown table; the report-only cases as result rows; the `gh api` milestone
 calls confirmed against `gh api --help`; the remote reads per leg and their cost; tests split into
 offline (the D6 decision table as a pure function, row diff, body rendering, milestone decision) and
 opt-in live (D9); the verification guard that replaces the core spec's `gh `/`^td` grep.
 
 Verification: every "ensure" step names its call; the idempotence argument is written per step;
-every W breakdown maps to a result row or an error; nothing weakens a bindings line; the words
+every W breakdown maps to a result row or an error; nothing weakens a bindings line; every step is
+under the bindings document's Scope "does" list and none under its "never does" list; the words
 "GitHub" and "forge" appear only where `gh` is named as the wired CLI; user approves before Phase 5a.
 
 ## Phase 5a — Build: Todoist leg and `edit` write-through
 
 Files: extend `_internal/dev/mod.nu` and `_internal/dev/tests/suites/dev.nu`.
 
-Read first: the sync spec (Todoist leg, D6 decision table, D7), Phase 0, `todo/mod.nu:157-186`
+Read first: the bindings document's Scope section (mandatory), the sync spec (Todoist leg, D6
+decision table, D7), Phase 0, `todo/mod.nu:157-186`
 (`todoist` helper), `todo/tests/suites/todo.nu:27` (write gate).
 
 Tests first: offline: the D6 decision as a pure function; the row diff from fake `todo list` rows to
@@ -287,15 +289,18 @@ the remote calls succeed.
 
 Files: extend `_internal/dev/mod.nu` and `_internal/dev/tests/suites/dev.nu`.
 
-Read first: the sync spec (remote and milestone legs, D8), Phase 0 (`gh`, `elevate with-auth` L50),
+Read first: the bindings document's Scope section (mandatory), the sync spec (remote and milestone
+legs, D8), Phase 0 (`gh`, `elevate with-auth` L50),
 `repo/mod.nu:304-318`, `~/.local/share/nupm/modules/issue/mod.nu:209-213`, Phase 5a's leg as the pattern to copy.
 
-Tests first: offline: `dev alpha --md` body equals the expected string; the milestone decision
-(create/assign/state) from fake `gh api` rows; `--skip [todoist]` runs the remote legs alone. Live:
+Tests first: offline: `dev alpha --md` body equals the expected string; the D8 toggle rule as a pure
+function over `(host box, Todoist state, mirror)` per row, parsed from a fake issue body (a conflict
+yields a report, not a call); the milestone decision (create/assign/state) from fake `gh api` rows; `--skip [todoist]` runs the remote legs alone. Live:
 D9 (user-driven `--dry-run` against a real issue, then one real sync).
 
 Implement the two legs as private functions, every `gh` call through one private wrapper using
-`with-auth --login {|| ^gh auth login } gh ...` that errors with stderr. Write `reference.remote` back
+`with-auth --login {|| ^gh auth login } gh ...` that errors with stderr. The issue leg reads the body
+once, applies the D8 toggles through the `todo` module, and only then renders and writes the body. Write `reference.remote` back
 through the writer after the issue leg succeeds; the milestone leg writes nothing to the file.
 
 Verification: ide-check 0; nu-lint clean; `test dev/tests/suites` all `ok`; `^gh` appears only inside

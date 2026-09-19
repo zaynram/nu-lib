@@ -1,7 +1,7 @@
 # Ownership map for the dev module: which surface owns which datum.
 # Source: dev/docs/2026-09-18_dev-sync.bindings.md (Ownership table) and the core spec's Ownership.
 # Conventions (every D2 file in this repo):
-#   - kebab-case identifiers, human labels after the colon; quote labels containing braces
+#   - kebab-case identifiers, human labels after the colon; quote labels containing ; # { } [ ]
 #   - one top-level container per surface, named after the surface
 #   - classes carry meaning: owner (solid, thick), mirror (dashed), projection (dotted)
 #   - edge labels name the command or sync step that moves the datum
@@ -84,7 +84,7 @@ local: local repository {
 remote: remote host (projection) {
   issue: issue {
     class: projection
-    label: "issue\ntitle = slug\nbody = dev <slug> --md (sync-owned)\n## Tasks checklist is write-only"
+    label: "issue\ntitle = slug\nbody = dev <slug> --md (sync-owned)\n## Tasks rendered from rows;\nonly its box state is read back (D8)"
   }
   milestone: milestone {
     class: projection
@@ -106,6 +106,7 @@ local.ticket.body -> remote.issue: sync renders body
 local.ticket.rows -> remote.issue: sync renders checklist
 local.ticket.status -> remote.issue: "open | closed (completed | not planned); skipped while draft"
 remote.issue -> local.ticket.status: closed issue found by sync sets done | aborted
+remote.issue -> todoist.project.subtasks: "a box toggled on the host: todo done | reopen on the subtask, Todoist wins a conflict (D8)"
 remote.issue -> todoist.project.task: "sync writes the link line: replaced if present, else prepended (D12)"
 local.branch -> todoist.project.task: track hook, todo find <branch>
 
