@@ -36,7 +36,7 @@ distinct leaf paths are enumerated in the spec's Migration mapping.
 
 `_internal/todo` (`todo/mod.nu`): `main [...rest --json --ndjson --long]` L16 is the `td` passthrough
 (`--json` parses and hydrates task-shaped rows); `list [--project --label --parent --filter
---completed --since]` L30 returns `table<id content description labels project parent due priority
+--completed --since]` L30 (`--parent` is ignored with `--completed`, L38-43) returns `table<id content description labels project parent due priority
 url>`; `view [ref]` L55; `add [content --project --description --labels --parent --due --priority]
 -> record` L61; `edit [ref --content --description --labels --due --no-due --priority]` L82; `done
 [...refs]` L103; `reopen [...refs]` L108; `rm [...refs]` L113; `projects [] -> table<id name url>`
@@ -142,7 +142,7 @@ def "after each" []: record -> nothing { rm --recursive --force $in.root }
 
 def "test list empty" []: record -> nothing {
   let t: record = $in
-  $env.repo = {discovery: false cache: null path: [{name: scratch owner: me directory: $t.root}]}
+  $env.repo = {discovery: false path: [{name: scratch owner: me directory: $t.root}]}
   assert equal (dev list) []
 }
 ```
@@ -268,11 +268,10 @@ decision table, D7), Phase 0, `todo/mod.nu:157-186`
 
 Tests first: offline: the D6 decision as a pure function; the row diff from fake `todo list` rows to
 the `[[tasks]]` mirror and closure action; `dev sync alpha --dry-run --skip [remote milestone]` with
-no Todoist project errors naming `td project add`; `dev edit alpha --add-task` on a fixture with a
-fake `reference.todoist` reaches the write path (asserted through the dry-run row, not a live call).
+no Todoist project errors naming `td project add`.
 Opt-in live (`DEV_SYNC_WRITE=1`): sync a scratch ticket into a scratch Todoist project twice, assert
-the second run reports no changes, `edit --add-task` then `edit --complete` round-trip, then `todo rm`
-the created tasks.
+the second run reports no changes, `edit --add-task` then `edit --complete` round-trip (there is no
+offline test of `edit`'s write path: it has no dry run), then `todo rm` the created tasks.
 
 Implement the Todoist leg as a private function called from `sync`, all `td` traffic through the
 `todo` module; `edit --add-task`/`--complete` gain their Todoist calls here. Write
