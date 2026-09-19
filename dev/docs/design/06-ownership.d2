@@ -1,0 +1,127 @@
+# Ownership map for the dev module: which surface owns which data.
+# Conventions (proposed for every D2 file in this repo):
+#   - kebab-case identifiers, human labels after the colon
+#   - one top-level container per surface, named after the surface
+#   - classes carry meaning: owner (solid, thick), mirror (dashed), projection (dotted)
+#   - edge labels name the command or sync step that moves the data
+#   - direction: right; layout: elk (handles nested containers)
+
+direction: right
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+
+classes: {
+  owner: {
+    style: {
+      stroke-width: 3
+    }
+  }
+  mirror: {
+    style: {
+      stroke-dash: 5
+    }
+  }
+  projection: {
+    style: {
+      stroke-dash: 2
+      opacity: 0.8
+    }
+  }
+  decision: {
+    style: {
+      fill: "#fff3cd"
+    }
+  }
+}
+
+todoist: Todoist (source of truth) {
+  parent: parent project (or the aliased project itself) {
+    target: version target {
+      class: owner
+      label: "version target\ncontent = <repo>@<version>\n^next | ^upcoming, :ready | :blocked | :current, #type\nchecked, due\ndescription: first line is the projected member list"
+    }
+  }
+  project: project named after the repo, or its alias {
+    task: ticket task {
+      class: owner
+      label: "task\ncontent = slug\nlabel %deliverable | %actionable\nchecked, due, priority"
+    }
+    subtasks: rows {
+      class: owner
+      label: "direct subtasks\ncontent, description,\n-human | -agent | -mixed,\nchecked"
+    }
+    task -> subtasks: parent
+  }
+}
+
+local: local repository {
+  ticket: docs/tickets/<slug>.toml {
+    body: ticket body {
+      class: owner
+      label: "outcome, requirements, constraints,\noutput, scope, landscape,\nbindings, extends, notes"
+    }
+    status: status {
+      class: owner
+      label: "status\ndraft | open | done | aborted"
+    }
+    target: target {
+      class: owner
+      label: "target = <version>\n(membership lives here:\nTodoist has no slot for it)"
+    }
+    reference: "[ticket.reference]" {
+      class: mirror
+      label: "reference\ntodoist {id url}\ngithub {index url branch}"
+    }
+    rows: "[[tasks]]" {
+      class: mirror
+      label: "[[tasks]]\nreplaced wholesale by sync"
+    }
+  }
+  branch: git branch {
+    label: "git branch = slug\n(track hook resolves it\nto the ticket task)"
+  }
+}
+
+github: github (projection) {
+  issue: issue {
+    class: projection
+    label: "issue\ntitle = slug\nbody = dev <slug> --md\nwith a task-list checklist"
+  }
+  milestone: milestone {
+    class: projection
+    label: "milestone\ntitle = <version>\nopen | closed, due"
+  }
+}
+
+dev: dev commands {
+  new: new
+  edit: edit
+  sync: sync
+}
+
+# data movement
+todoist.project.task -> local.ticket.reference: sync stores id and url
+todoist.project.subtasks -> local.ticket.rows: sync mirrors
+todoist.project.task <-> local.ticket.status: "checked <-> done"
+local.ticket.body -> github.issue: sync renders body
+local.ticket.rows -> github.issue: sync renders checklist
+local.ticket.status -> github.issue: "open | closed (completed | not planned)"
+github.issue -> todoist.project.task: sync writes the issue link as description
+local.branch -> todoist.project.task: track hook, todo find <branch>
+
+todoist.parent.target -> github.milestone: "sync ensures milestone: title, state, due"
+local.ticket.target -> github.issue: sync assigns the issue to the milestone
+local.ticket.target -> todoist.parent.target: "sync rewrites the first description line: -> <repo>#N #M"
+todoist.parent.target -> todoist.project.task: "grouping is implicit: same version string"
+
+# commands
+dev.new -> local.ticket: writes a draft
+dev.edit -> local.ticket.body: "--set"
+dev.edit -> local.ticket.status: "--set {status: ...}"
+dev.edit -> local.ticket.target: "--set {target: v0.4.0}"
+dev.edit -> todoist.project.subtasks: "--add-task, --complete (write-through)"
+dev.sync -> todoist.project: "ensure task, pull rows, mirror status"
+dev.sync -> github.issue: "ensure issue, body, state"
