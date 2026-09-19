@@ -27,7 +27,7 @@ you: You {
 todoist: Todoist
 dev: dev
 file: docs/tickets/<slug>.toml
-github: github issue
+remote: remote issue
 
 s1: 1 capture (any surface) {
   you -> todoist: add task "slug" in the repo project, label ?stub or ?seed
@@ -57,7 +57,7 @@ s3: 3 link (first dev sync) {
   }
   dev -> todoist: list direct subtasks of id
   dev -> file: "replace [[tasks]] wholesale"
-  dev."status = draft: the github leg is skipped" {
+  dev."status = draft: the remote leg is skipped" {
     class: rule
   }
 }
@@ -66,9 +66,9 @@ s4: 4 open {
   you -> dev: "dev edit <slug> --set {status: open, target: v0.4.0}"
   you -> dev: dev sync <slug>
   dev -> todoist: find version target "<repo>@v0.4.0" in the parent project
-  dev -> github: ensure milestone "v0.4.0" (state from checked, due from due)
-  dev -> github: create issue, title = slug, body = dev <slug> --md (checklist from rows, notes verbatim), milestone = v0.4.0
-  dev -> file: "write reference.github {index url branch = slug}"
+  dev -> remote: ensure milestone "v0.4.0" (state from checked, due from due)
+  dev -> remote: create issue, title = slug, body = dev <slug> --md (checklist from rows), milestone = v0.4.0
+  dev -> file: "write reference.remote {index url branch = slug}"
   dev -> todoist: set task description = markdown link to the issue
   dev -> todoist: "rewrite the first line of the version target's description: -> <repo>#N ..."
   dev."target set but no <repo>@<version> task in Todoist: error row, add it there first" {
@@ -85,7 +85,7 @@ s5: 5 work {
   dev -> todoist: list direct subtasks
   dev -> file: "replace [[tasks]]"
   you -> dev: dev sync <slug>
-  dev -> github: update body (checklist reflects checked rows)
+  dev -> remote: update body (checklist reflects checked rows)
   file."git switch -c <slug>: the track hook resolves the branch to the task" {
     class: rule
   }
@@ -96,10 +96,10 @@ s6: 6 close {
   you -> dev: dev sync <slug>
   dev -> todoist: view id, checked = true
   dev -> file: status = done
-  dev -> github: close issue, reason completed
+  dev -> remote: close issue, reason completed
   abort: abort instead {
     you -> dev: "dev edit <slug> --set {status: aborted}"
-    dev -> github: close issue, reason not planned
+    dev -> remote: close issue, reason not planned
     dev -> todoist: complete the task
   }
 }
@@ -125,10 +125,10 @@ w2: W2 pruned in Todoist {
   }
 }
 
-w3: W3 closed on github first {
-  you -> github: merge PR with "closes #N"
+w3: W3 closed on the remote first {
+  you -> remote: merge PR with "closes #N"
   you -> dev: dev sync <slug>
-  dev -> github: issue closed, todoist unchecked
+  dev -> remote: issue closed, todoist unchecked
   dev -> todoist: complete the task
   dev -> file: status = done
   dev."proposal: closure is accepted from any surface, reopening only from Todoist" {
@@ -145,7 +145,7 @@ w5: W5 version target renamed or released early {
   }
   you -> todoist: check "nu-fluency@v0.4.0" while member tickets are open
   you -> dev: dev sync --all
-  dev -> github: close milestone v0.4.0, open issues stay assigned
+  dev -> remote: close milestone v0.4.0, open issues stay assigned
   dev."mirrors Todoist: a closed milestone with open issues is allowed on both sides" {
     class: rule
   }
@@ -154,11 +154,11 @@ w5: W5 version target renamed or released early {
 w4: W4 half a sync {
   you -> dev: dev sync <slug>
   dev -> todoist: ensure task, pull rows (ok)
-  dev -> github: create issue (auth fails)
+  dev -> remote: create issue (auth fails)
   dev -> you: result row names the failed leg and next command {
     class: drift
   }
   you -> dev: dev sync <slug> again
   dev -> todoist: ensure steps find nothing to do
-  dev -> github: create issue (ok)
+  dev -> remote: create issue (ok)
 }

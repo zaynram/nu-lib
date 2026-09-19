@@ -61,7 +61,7 @@ local: local repository {
   ticket: docs/tickets/<slug>.toml {
     body: ticket body {
       class: owner
-      label: "outcome, requirements, constraints,\noutput, scope, landscape,\nbindings, extends, notes"
+      label: "outcome, requirements, constraints,\noutput, scope, landscape,\nbindings, extends"
     }
     status: status {
       class: owner
@@ -73,7 +73,7 @@ local: local repository {
     }
     reference: "[ticket.reference]" {
       class: mirror
-      label: "reference\ntodoist {id url}\ngithub {index url branch}"
+      label: "reference\ntodoist {id url}\nremote {index url branch}"
     }
     rows: "[[tasks]]" {
       class: mirror
@@ -85,7 +85,7 @@ local: local repository {
   }
 }
 
-github: github (projection) {
+remote: remote host (projection) {
   issue: issue {
     class: projection
     label: "issue\ntitle = slug\nbody = dev <slug> --md\nwith a task-list checklist"
@@ -106,14 +106,14 @@ dev: dev commands {
 todoist.project.task -> local.ticket.reference: sync stores id and url
 todoist.project.subtasks -> local.ticket.rows: sync mirrors
 todoist.project.task <-> local.ticket.status: "checked <-> done"
-local.ticket.body -> github.issue: sync renders body
-local.ticket.rows -> github.issue: sync renders checklist
-local.ticket.status -> github.issue: "open | closed (completed | not planned)"
-github.issue -> todoist.project.task: sync writes the issue link as description
+local.ticket.body -> remote.issue: sync renders body
+local.ticket.rows -> remote.issue: sync renders checklist
+local.ticket.status -> remote.issue: "open | closed (completed | not planned)"
+remote.issue -> todoist.project.task: sync writes the issue link as description
 local.branch -> todoist.project.task: track hook, todo find <branch>
 
-todoist.parent.target -> github.milestone: "sync ensures milestone: title, state, due"
-local.ticket.target -> github.issue: sync assigns the issue to the milestone
+todoist.parent.target -> remote.milestone: "sync ensures milestone: title, state, due"
+local.ticket.target -> remote.issue: sync assigns the issue to the milestone
 local.ticket.target -> todoist.parent.target: "sync rewrites the first description line: -> <repo>#N #M"
 todoist.parent.target -> todoist.project.task: "grouping is implicit: same version string"
 
@@ -124,4 +124,4 @@ dev.edit -> local.ticket.status: "--set {status: ...}"
 dev.edit -> local.ticket.target: "--set {target: v0.4.0}"
 dev.edit -> todoist.project.subtasks: "--add-task, --complete (write-through)"
 dev.sync -> todoist.project: "ensure task, pull rows, mirror status"
-dev.sync -> github.issue: "ensure issue, body, state"
+dev.sync -> remote.issue: "ensure issue, body, state"
