@@ -15,7 +15,7 @@ const HOOK_TYPES: list = [
   command_not_found
 ]
 
-const TEST_PATH: path = $nu.temp-dir | path join test-hook.nu
+const TEST_PATH: path = $nu.cache-dir | path join test-hook.nu
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
@@ -23,7 +23,7 @@ export-env {
   $env.config.hooks = $env.config.hooks
     | default [] pre_prompt pre_execution
     | default {} env_change
-  if not ($TEST_PATH | path exists) { touch $TEST_PATH }
+  touch $TEST_PATH
 }
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
