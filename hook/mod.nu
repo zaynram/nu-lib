@@ -15,15 +15,12 @@ const HOOK_TYPES: list = [
   command_not_found
 ]
 
-const TEST_PATH: path = $nu.cache-dir | path join test-hook.nu
-
 # ——— environment ——————————————————————————————————————————————————————————————
 
 export-env {
   $env.config.hooks = $env.config.hooks
     | default [] pre_prompt pre_execution
     | default {} env_change
-  touch $TEST_PATH
 }
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
@@ -229,7 +226,7 @@ export def --wrapped test [
   --condition (-c)
   # Test the condition evaluation instead of the code execution
   --input (-i): any = null
-  # Pass this value as input to the code or condition (only supported for closures, not strings)
+  # Pass this value as input to the code or condition
   ...rest: string
   # Arguments to pass to the closure
 ]: nothing -> oneof<nothing, any> {
@@ -248,11 +245,10 @@ export def --wrapped test [
           $input | do --capture-errors $h ...$rest
         }
         string: {||
-          [
-            '#!/usr/bin/env -S nu --stdin --no-config-file'
-            $'def main []: ($input | describe) -> any { ($h) }'
-          ] | save --raw --force $TEST_PATH
-          $input | run --full-reparse $TEST_PATH ...$rest
+          $input | match ($in | describe) {
+            string | nothing => { }
+            _ => { to nuon --serialize --raw-strings }
+          } | ^$nu.current-exe --stdin --no-config-file --commands $"from nuon | ($h)"
         }
       }
     )
