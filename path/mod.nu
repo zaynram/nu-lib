@@ -26,7 +26,7 @@ export def rejoin [
   list<string> -> list<path>
 ] {
   let input: oneof<nothing, string, list<string>> = $in
-  match ($input | describe | split words | first) {
+  match ($input | describe | str replace --regex '<.*' '') {
     nothing if ($segments | is-empty) => { error make --unspanned 'path rejoin: nothing to join' }
     list => { $input | each {|p| [$p] | append $segments | join-with $sep } }
     _ => { [$input] | append $segments | compact | join-with $sep }
