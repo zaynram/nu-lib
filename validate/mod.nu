@@ -64,32 +64,37 @@ def under [at: string ...dead: string]: nothing -> bool {
   false
 }
 
+# One failure row. `reason` is a `format pattern` filled from `fields`, which always carry `at`.
+def failure [rule: string at: string reason: string fields: record = {}]: nothing -> record {
+  {path: $at rule: $rule reason: ({at: $at ...$fields} | format pattern $reason)}
+}
+
 # The failures of one rule at one place. `enum`, `pattern` and `max-length` judge each element of a list.
 def verdicts [rule: record at: string value: any]: nothing -> list<record> {
   if $value == null {
-    return (if ($rule.required? | default false) { [{path: $at rule: required reason: $"($at) is missing"}] } else { [] })
+    return (if ($rule.required? | default false) { [(failure required $at '{at} is missing')] } else { [] })
   }
   if not (fits $value $rule.type) {
-    return [{path: $at rule: type reason: $"($at) must be ($rule.type), got ($value | describe)"}]
+    return [(failure type $at '{at} must be {want}, got {got}' {want: $rule.type got: ($value | describe)})]
   }
   let listed: bool = ($value | describe) =~ '^(list|table)'
   mut found: list<record> = []
   if $listed and $rule.max-items? != null and ($value | length) > $rule.max-items {
-    $found ++= [{path: $at rule: max-items reason: $"($at) has ($value | length) items, max ($rule.max-items)"}]
+    $found ++= [(failure max-items $at '{at} has {n} items, max {max}' {n: ($value | length) max: $rule.max-items})]
   }
   if $rule.enum? == null and $rule.pattern? == null and $rule.max-length? == null { return $found }
-  let help: string = if $rule.help? == null { '' } else { $": ($rule.help)" }
+  let help: string = if $rule.help? == null { '' } else { $rule | format pattern ': {help}' }
   let places: list<record> = if $listed { $value | enumerate | each {|e| {at: $"($at).($e.index)" value: $e.item} } } else { [{at: $at value: $value}] }
   for p in $places {
     # `pattern` and `max-length` judge strings only, so a `string|bool` key can carry them.
     let text: bool = ($p.value | describe) == string
     if $rule.enum? != null and $p.value not-in $rule.enum {
-      $found ++= [{path: $p.at rule: enum reason: $"($p.at) must be one of ($rule.enum | str join ', '), got '($p.value)'($help)"}]
+      $found ++= [(failure enum $p.at "{at} must be one of {want}, got '{got}'{help}" {want: ($rule.enum | str join ', ') got: $p.value help: $help})]
     } else if $rule.pattern? != null and $text and $p.value !~ $rule.pattern {
-      let why: string = if $rule.help? == null { $"does not match ($rule.pattern)" } else { $"is not valid($help)" }
-      $found ++= [{path: $p.at rule: pattern reason: $"($p.at) '($p.value)' ($why)"}]
+      let reason: string = if $rule.help? == null { "{at} '{got}' does not match {want}" } else { "{at} '{got}' is not valid{help}" }
+      $found ++= [(failure pattern $p.at $reason {got: $p.value want: $rule.pattern help: $help})]
     } else if $rule.max-length? != null and $text and ($p.value | str length) > $rule.max-length {
-      $found ++= [{path: $p.at rule: max-length reason: $"($p.at) is ($p.value | str length) characters, max ($rule.max-length)($help)"}]
+      $found ++= [(failure max-length $p.at '{at} is {n} characters, max {max}{help}' {n: ($p.value | str length) max: $rule.max-length help: $help})]
     }
   }
   $found
@@ -166,7 +171,7 @@ export def rules [
       if ($held | describe) !~ '^(record|table)' { continue }
       for key in ($held | columns | where $it not-in $names) {
         let at: string = [$box.at $key] | compact --empty | str join .
-        $found ++= [{path: $at rule: unknown reason: $"($at) is not a known key"}]
+        $found ++= [(failure unknown $at '{at} is not a known key')]
       }
     }
   }
