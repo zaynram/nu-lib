@@ -50,6 +50,18 @@ export def pred [
   | each {|| $in.then? | return-or-exec $do --errors=$errors --input=$input ...$rest }
 }
 
+# The value of the first arm naming `type`, else of the first naming `_`, wrapped in a list
+# so that an arm holding `null` stays distinguishable from no arm at all.
+def arm-for [arms: record type: string]: nothing -> list<any> {
+  mut fallback: list<any> = []
+  for arm in ($arms | transpose type value) {
+    let names: list<string> = $arm.type | split row '|' | str trim
+    if $type in $names { return [$arm.value] }
+    if ($fallback | is-empty) and _ in $names { $fallback = [$arm.value] }
+  }
+  $fallback
+}
+
 # Dispatch based on the outermost type of an item.
 #
 # Precedence: an arm naming the type, then the `_` arm, then `--default`.
@@ -75,15 +87,10 @@ export def type [
   let do: bool = $exec or $pipe or $input != null
   # Not `split words`: hyphenated names such as `cell-path` must survive intact.
   let type: string = $in | describe | str replace --regex '<.*' ''
-  let table: table<type: list<string>, value: any> = $arms
-    | transpose type value
-    | update type { split row '|' | str trim }
-  [
-    ...($table | where type has $type)
-    ...($table | where type has _)
-    ...(if $default != null { [{type: [_] value: $default}] })
-  ] | compact
-  | get $.0?.value
+  # One walk with an early `return`: entering `update` and two `where` closures costs more
+  # than scanning the handful of arms by hand.
+  let matched: list<any> = arm-for $arms $type
+  if ($matched | is-empty) { $default } else { $matched.0 }
   | return-or-exec $do --errors=$errors --input=(if $pipe { $value } else { $input }) ...$rest
 }
 
