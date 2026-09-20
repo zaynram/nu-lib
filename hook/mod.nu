@@ -76,9 +76,9 @@ def hook-defaults [prefix: string]: [
   append [] | enumerate | each {|row|
     let ref: cell-path = $prefix | split row '.' | append $row.index | into cell-path
     let name: string = $"($prefix)[($row.index)]"
-    $row.item | dispatch type --pipe {
-      'string|closure': {|| wrap code | merge {name: $name disabled: false condition: {|| is-enabled $ref } ref: $ref} }
-      record: {|| default false disabled | default $ref ref | default $name name }
+    $row.item | match ($in | describe | str replace --regex '<.*' '') {
+      string | closure => { wrap code | merge {name: $name disabled: false condition: {|| is-enabled $ref } ref: $ref} }
+      record => { default false disabled | default $ref ref | default $name name }
     }
   } | compact
 }
@@ -137,9 +137,9 @@ export def is-enabled [
   --strict (-s)
   # Throw an error if the hook cannot be resolved
 ]: nothing -> bool {
-  $ref | default $name | dispatch type --pipe {
-    cell-path: {|| show $in disabled --strict=$strict --default=false }
-    string: {|| list $in --strict=$strict | get --optional 0.disabled | default false }
+  $ref | default $name | match ($in | describe) {
+    cell-path => { show $in disabled --strict=$strict --default=false }
+    string => { list $in --strict=$strict | get --optional 0.disabled | default false }
   } | not $in
 }
 
@@ -299,8 +299,8 @@ const _options = {
 
 def _hook-types []: nothing -> record {
   [
-    ...($env.config.hooks | columns | where $it != env_change)
-    ...($env.config.hooks.env_change | columns | where $it !~ ^__\w+ | each { prepend env_change | str join . })
+    ...($env.config.hooks | reject --optional env_change | columns)
+    ...($env.config.hooks.env_change | columns | where $it !~ ^__\w+ | str replace --regex '^' 'env_change.')
   ]
   | sort-by --custom {|a b| $a not-has . and $b has . }
   | into completions {
@@ -312,8 +312,8 @@ def _hook-types []: nothing -> record {
 
 def _possible-hook-types []: nothing -> record {
   [
-    ...($env.config.hooks | columns | where $it != env_change)
-    ...($env | columns | where $it !~ ^__\w+ | each { prepend env_change | str join . })
+    ...($env.config.hooks | reject --optional env_change | columns)
+    ...($env | columns | where $it !~ ^__\w+ | str replace --regex '^' 'env_change.')
   ]
   | sort-by --custom {|a b| $a not-has . and $b has . }
   | into completions {
@@ -331,7 +331,8 @@ def _hook-indices [
   let cell: cell-path = structure $buffer
     | where kind == string
     | get text
-    | reduce --fold=[] {|it acc| $it | split row '.' | prepend $acc }
+    | split row '.'
+    | flatten
     | into cell-path
   let full: string = $cell | into string | str replace '$.' '$env.config.hooks.'
   let post: closure = $value | default { {|| $in.index } }
