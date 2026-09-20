@@ -86,14 +86,14 @@ export def --env push [
   list<directory> -> table<name: string, owner: string, path: directory>
   table<name: path> -> table<name: string, owner: string, path: directory>
 ] {
-  match ($in | describe | split words | first) {
-    table => { get name }
+  match ($in | describe) {
     nothing => [
       ...($in | default [])
       ...(if $all { discover-git-repos } | default [])
       ...($search | par-each { discover-git-repos $in --depth=2 } | flatten)
     ]
-    list => { }
+    list<string> | list<any> => { }
+    _ => { get name }
   } | uniq
   | if ($in | is-empty) { error make --unspanned 'no repositories found' } else { }
   | difference $env.repo.path.directory
@@ -256,7 +256,10 @@ def discover-git-repos [
   --depth: int = 3
 ]: nothing -> list<directory> {
   let exclude: list<string> = $env.repo_exclude!? | default ['**/.*/**']
-  glob --depth=$depth --no-file --no-symlink --exclude=$exclude ($root | path rejoin ** .git) | path dirname | uniq
+  let include: glob = $root | path rejoin ** | into glob
+  glob --depth=$depth --no-file --no-symlink --exclude=$exclude $include
+  | where ($it | path join .git | path type) == dir
+  | uniq
 }
 
 def collect-gstat-data [root: path]: nothing -> record {
