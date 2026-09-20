@@ -85,7 +85,7 @@ export def --env main [
   name?: string # Name of the alarm to set or check
   --set: oneof<datetime, duration> # Datetime or duration for the alarm to expire
   --unset: string@_alarms # Abort the alarm matching `name`
-]: nothing -> oneof<nothing, table> {
+]: nothing -> oneof<nothing, record, table> {
   if $set != null {
     set ($name | default $'alarm_($env.time.alarms | length)') $set
   } else if $unset != null {
