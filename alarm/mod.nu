@@ -39,17 +39,18 @@ export def --env set [
       suffix: ")\r"
     } | values | str join
 
-  # topiary: disable
-  let id: int = job spawn --description $name {
+  let item: record = job spawn --description $name {
+    try {
       sleep $wait
       if not $silent { clear --keep-scrollback | print $text }
       if $then != null { do --env --capture-errors $then | print }
-      job id | wrap id | alarm unset --no-kill
+    } catch {
+      ignore
+    } finally {
+      unset $name
     }
-
-  let item: record = {id: $id name: $name time: $time then: $then}
+  } | {id: $in name: $name time: $time then: $then}
   $env.time.alarms ++= [$item]
-
   return $item
 }
 
@@ -57,33 +58,26 @@ export def --env set [
 @category productivity
 export def --env unset [
   name?: string@_alarms # Name of the alarm to abort
-  --no-kill # Do not attempt to end the job process
 ]: oneof<nothing, record<id: int>> -> nothing {
-  let spec: record = $in
-    | default --empty { $name | wrap name }
-    | select --ignore-case --optional id name
-    | compact
-
-  if ($spec | is-empty) { error make --unspanned 'alarm name or job input is required' }
-
-  let item: record = match $spec {
-    {name: $_} => { $env.time.alarms | where name == $_ }
-    {id: $_} => { $env.time.alarms | where id == $_ }
-  } | first
-
-  if $item == null { return }
-  if not $no_kill and (job list).id has $item.id { job kill $item.id }
-
-  $env.time.alarms = $env.time.alarms | where name != $item.name
+  let id: oneof<nothing, int> = default {} | get $.id!?
+  let item: record = $env.time.alarms
+    | if $id != null {
+      where id == $id
+    } else if $name != null {
+      where name == $name
+    } else {
+      error make --unspanned 'no name or id was provided'
+    } | first
+    | match ($in | describe) { nothing => { return } _ => { } }
+  if (job list).id has $item.id { job kill $item.id }
+  $env.time.alarms = $env.time.alarms | where id != $item.id
 }
 
 # List the set alarms.
 @category productivity
-export def "alarm list" [
+export def list [
   regex: string = .+ # Regex to filter alarm names by
-]: nothing -> table {
-  $env.time.alarms | where name =~ $regex
-}
+]: nothing -> table { $env.time.alarms | where name =~ $regex }
 
 # Set an alarm to print a message to the terminal.
 @category productivity
@@ -93,12 +87,10 @@ export def --env main [
   --unset: string@_alarms # Abort the alarm matching `name`
 ]: nothing -> oneof<nothing, table> {
   if $set != null {
-    alarm set ($name | default $'alarm_($env.time.alarms | length)') $set
+    set ($name | default $'alarm_($env.time.alarms | length)') $set
   } else if $unset != null {
-    alarm unset $unset
-  } else {
-    alarm list
-  }
+    unset $unset
+  } else { list }
 }
 
 # ——— completions —————————————————————————————————————————————————————————————
@@ -106,7 +98,8 @@ export def --env main [
 def _empty []: nothing -> list { [] }
 def _alarms []: nothing -> list { $env.time?.alarms? | default [] | get name }
 def _suggest-when []: nothing -> list {
-  [1min 5min 10min 15min 20min 30min 1hr 1.5hr 2hr] | each {|add|
-    date now | $in + $add | date humanize | $"'($in)'"
+  let now = date now
+  [1min 5min 10min 15min 20min 30min 1hr 1.5hr 2hr] | each {|dur|
+    $now + $dur | date humanize | $"'($in)'"
   }
 }
