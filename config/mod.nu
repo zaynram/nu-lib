@@ -212,7 +212,7 @@ def _app-paths [buffer: string]: nothing -> oneof<record, list> {
   $buffer
   | split row (char space)
   | where $it not-in [config app --path -p] and ($it | is-not-empty)
-  | par-each { prepend $USER.config | path join }
+  | each { prepend $USER.config | path join }
   | where ($it | path type) == dir
   | if ($in | is-empty) { return [] } else {
     let dir: path = $in | first
