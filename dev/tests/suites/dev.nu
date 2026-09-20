@@ -171,7 +171,7 @@ def "test edit" []: record -> nothing {
   let before = open --raw $path
   fails "'slug' is not one of them" { dev edit alpha --set {slug: beta} }
   fails "'reference' is not one of them" { dev edit alpha --set {reference: {}} }
-  fails '--set rejected: status must be one of' { dev edit alpha --set {status: bogus} }
+  fails '--set rejected: ticket.status must be one of' { dev edit alpha --set {status: bogus} }
   assert equal (open --raw $path) $before 'a refused edit writes nothing'
 }
 
@@ -202,7 +202,7 @@ def "test validation" []: record -> nothing {
   seed $t.root --edits {'slug = "alpha"': 'slug = "beta"'} | ignore
   fails "but the file is named 'alpha'" { dev alpha }
   seed $t.root --edits {'outcome = "singular"': ''} | ignore
-  fails 'is missing ticket.outcome' { dev alpha }
+  fails 'ticket.outcome is missing' { dev alpha }
   seed $t.root --edits {'outcome = "singular"': 'outcome = 1'} | ignore
   fails 'ticket.outcome must be string, got int' { dev alpha }
   seed $t.root --edits {'date = "2026-08-21"': 'date = "someday"'} | ignore
@@ -214,6 +214,31 @@ def "test validation" []: record -> nothing {
   "\n[[tasks]]\ncontent = \"write\"\nlabels = [\"-robot\"]\ncompleted = false\n"
   | save --append ($t.root | path join docs tickets alpha.toml)
   fails 'must be one of -human, -agent, -mixed' { dev alpha }
+}
+
+# A key the schema does not name fails the load instead of being ignored and written back.
+def "test unknown key" []: record -> nothing {
+  let t: record = $in
+  $env.repo = registry $t.root
+  seed $t.root --edits {'outcome = "singular"': "outcome = \"singular\"\nextnds = [\"beta\"]"} | ignore
+  fails 'ticket.extnds is not a known key' { dev alpha }
+  seed $t.root --edits {'purpose = "Recorded': "colour = \"red\"\npurpose = \"Recorded"} | ignore
+  fails 'ticket.output.colour is not a known key' { dev alpha }
+  seed $t.root | ignore
+  "\n[[tasks]]\ncontent = \"write\"\npriority = 1\n" | save --append ($t.root | path join docs tickets alpha.toml)
+  fails 'tasks.priority is not a known key' { dev alpha }
+}
+
+def "test limits" []: record -> nothing {
+  let t: record = $in
+  $env.repo = registry $t.root
+  let path = seed $t.root
+  let before = open --raw $path
+  fails '--set rejected: ticket.name is 81 characters, max 80' { dev edit alpha --set {name: ('' | fill --width 81 --character x)} }
+  fails '--set rejected: ticket.requirements has 13 items, max 12' { dev edit alpha --set {requirements: (1..13 | each { $"r($in)" })} }
+  fails '--set rejected: ticket.extends.0' { dev edit alpha --set {extends: ['Bad.Slug']} }
+  fails '--set rejected: ticket.landscape.0.scope must be one of internal, external' { dev edit alpha --set {landscape: [{scope: sideways synopsis: s}]} }
+  assert equal (open --raw $path) $before 'a refused edit writes nothing'
 }
 
 def "test duplicate slug" []: record -> nothing {

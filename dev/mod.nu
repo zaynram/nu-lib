@@ -4,6 +4,7 @@
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use ../completion "into completions"
+use ../validate
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
@@ -22,46 +23,48 @@ const STATUSES: list<string> = [draft open done aborted]
 const ATTRIBUTION: list<string> = ['-human' '-agent' '-mixed']
 const SLUG: string = '^[a-z0-9]+([+-][a-z0-9]+)*$'
 
-# `ticket` keys in canonical order (spec, Schema): key, accepted types, required.
-const FIELDS: table<key: string, type: string, required: bool> = [
-  [key type required];
-  [name string false]
-  [slug string true]
-  [date 'string|datetime' true]
-  [status string true]
-  [target string false]
-  [outcome string true]
-  [requirements 'list<string>' true]
-  [constraints 'list<string>' true]
-  [extends 'list<string>' false]
-  [output table false]
-  [scope record false]
-  [landscape table false]
-  [bindings table false]
-  [reference record false]
+# The v4 schema (spec, Schema), one rule per key in canonical order. `validate rules` judges a document against
+# it and `normalise` takes its key order from it. The maximums are lenient starting points, about twice the
+# longest value in the v3 corpus; tune them from use.
+# ponytail: `ticket.reference` has no child rules, so it stays open until `dev sync` (plan Phase 5a) defines its mirrors
+const RULES: list<record> = [
+  {path: $.version type: string required: true}
+  {path: $.ticket type: record required: true}
+  {path: $.ticket.name type: string max-length: 80}
+  {path: $.ticket.slug type: string required: true pattern: $SLUG max-length: 64 help: 'use lowercase letters, digits, - and +, no dots'}
+  {path: $.ticket.date type: 'string|datetime' required: true}
+  {path: $.ticket.status type: string required: true enum: $STATUSES}
+  {path: $.ticket.target type: string max-length: 64}
+  {path: $.ticket.outcome type: string required: true max-length: 1000}
+  {path: $.ticket.requirements type: 'list<string>' required: true max-items: 12 max-length: 500}
+  {path: $.ticket.constraints type: 'list<string>' required: true max-items: 12 max-length: 500}
+  {path: $.ticket.extends type: 'list<string>' max-items: 8 pattern: $SLUG help: 'each entry is a ticket slug'}
+  {path: $.ticket.output type: table max-items: 16}
+  {path: $.ticket.output.path type: string required: true max-length: 200}
+  {path: $.ticket.output.purpose type: string required: true max-length: 500}
+  {path: $.ticket.output.alias type: string max-length: 40}
+  {path: $.ticket.scope type: record}
+  {path: $.ticket.scope.excluded type: table max-items: 12}
+  {path: $.ticket.scope.excluded.item type: string required: true max-length: 500}
+  {path: $.ticket.scope.excluded.deferred type: 'string|bool' max-length: 100}
+  {path: $.ticket.landscape type: table max-items: 24}
+  {path: $.ticket.landscape.scope type: string required: true enum: [internal external]}
+  {path: $.ticket.landscape.synopsis type: string required: true max-length: 1000}
+  {path: $.ticket.landscape.reference type: string max-length: 200}
+  {path: $.ticket.landscape.type type: string max-length: 40}
+  {path: $.ticket.landscape.incompatibility type: string max-length: 500}
+  {path: $.ticket.bindings type: table max-items: 16}
+  {path: $.ticket.bindings.kind type: string required: true max-length: 40}
+  {path: $.ticket.bindings.item type: string required: true max-length: 500}
+  {path: $.ticket.bindings.type type: string required: true max-length: 40}
+  {path: $.ticket.bindings.conditions type: 'list<string>' max-items: 8 max-length: 300}
+  {path: $.ticket.reference type: record}
+  {path: $.tasks type: table max-items: 24}
+  {path: $.tasks.content type: string required: true max-length: 200}
+  {path: $.tasks.description type: string max-length: 2000}
+  {path: $.tasks.labels type: 'list<string>' max-items: 8 max-length: 60}
+  {path: $.tasks.completed type: bool}
 ]
-
-# Row columns in canonical order, per array of tables.
-const COLUMNS: record = {
-  output: [[key type required]; [path string true] [purpose string true] [alias string false]]
-  excluded: [[key type required]; [item string true] [deferred 'string|bool' false]]
-  landscape: [
-    [key type required];
-    [scope string true]
-    [synopsis string true]
-    [reference string false]
-    [type string false]
-    [incompatibility string false]
-  ]
-  bindings: [[key type required]; [kind string true] [item string true] [type string true] [conditions 'list<string>' false]]
-  tasks: [
-    [key type required];
-    [content string true]
-    [description string false]
-    [labels 'list<string>' false]
-    [completed bool false]
-  ]
-}
 
 # The keys `edit --set` may touch: the file-owned ones (spec, Ownership).
 const SETTABLE: list<string> = [name date status target outcome requirements constraints extends output scope landscape bindings]
@@ -192,33 +195,9 @@ def locate [slug: string repo?: string]: nothing -> record<slug: string, repo: s
   }
 }
 
-def is-type [value: any type: string]: nothing -> bool {
-  let kind: string = $value | describe
-  $type | split row '|' | any {|t|
-    match $t {
-      'list<string>' => { ($kind starts-with list) and ($value | all { ($in | describe) == string }) }
-      table => { ($kind =~ '^(table|list)') and ($value | all { ($in | describe) starts-with record }) }
-      record => { $kind starts-with record }
-      _ => { $kind == $t }
-    }
-  }
-}
-
-# The first failed check of `$fields` against a record, as `{key, reason}`.
-def check-fields [fields: table prefix: string]: record -> oneof<record, nothing> {
-  let row: record = $in
-  for f in $fields {
-    let value: any = $row | get --optional $f.key
-    let key: string = $"($prefix)($f.key)"
-    if $value == null {
-      if $f.required { return {key: $key reason: $" is missing ($key)"} }
-    } else if not (is-type $value $f.type) {
-      return {key: $key reason: $": ($key) must be ($f.type), got ($value | describe)"}
-    }
-  }
-}
-
 # The first failed check of a document, as `{reason, next}`; null when it is a valid v4 ticket (spec, Behaviour).
+# The version gate comes first, then `RULES` under `--strict`, then the checks a rule cannot state: the file's
+# name, a date that parses, the attribution labels.
 # `reason` opens with its own joiner (` is …` or `: …`) so the loader can prefix the path verbatim.
 def check [file: record]: record -> oneof<record, nothing> {
   let doc: record = $in
@@ -229,36 +208,20 @@ def check [file: record]: record -> oneof<record, nothing> {
   if $doc.version? != $VERSION {
     return {reason: $" is version '($doc.version?)'" next: $"only \"4.0.0\" loads and \"3.0.0\" migrates; ($again)"}
   }
-  let ticket: record = $doc.ticket? | default {}
-  let field: oneof<record, nothing> = $ticket | check-fields $FIELDS 'ticket.'
-  if $field != null { return {reason: $field.reason next: $again} }
-  if $ticket.status not-in $STATUSES {
-    return {reason: $": status must be one of ($STATUSES | str join ', '), got '($ticket.status)'" next: $again}
+  let failure: oneof<record, nothing> = $doc | validate rules $RULES --strict | get 0?
+  if $failure != null {
+    # A bad slug is not fixed by editing the key alone: the file carries the same name.
+    let next: string = if $failure.path == 'ticket.slug' and $failure.rule == pattern {
+      $"rename the file and ticket.slug, then re-run dev ($file.slug)"
+    } else { $again }
+    return {reason: $": ($failure.reason)" next: $next}
   }
+  let ticket: record = $doc.ticket
   if $ticket.slug != $file.slug {
     return {reason: $": ticket.slug is '($ticket.slug)' but the file is named '($file.slug)'" next: $"rename one, then re-run dev ($file.slug)"}
   }
-  if $ticket.slug !~ $SLUG {
-    return {
-      reason: $": '($ticket.slug)' is not a slug: use lowercase letters, digits, - and +, no dots"
-      next: $"rename the file and ticket.slug, then re-run dev ($file.slug)"
-    }
-  }
   if (try { $ticket.date | into datetime } catch { null }) == null {
     return {reason: $": ticket.date '($ticket.date)' is not a date" next: $"write \"YYYY-MM-DD\", then re-run dev ($file.slug)"}
-  }
-  let arrays: record = {
-    output: $ticket.output?
-    excluded: $ticket.scope?.excluded?
-    landscape: $ticket.landscape?
-    bindings: $ticket.bindings?
-    tasks: $doc.tasks?
-  }
-  for name in ($arrays | columns) {
-    for row in ($arrays | get $name | default []) {
-      let cell: oneof<record, nothing> = $row | check-fields ($COLUMNS | get $name) $"($name) row "
-      if $cell != null { return {reason: $cell.reason next: $again} }
-    }
   }
   for task in ($doc.tasks? | default []) {
     let marks: list<string> = $task.labels? | default [] | where $it starts-with '-'
@@ -271,29 +234,33 @@ def check [file: record]: record -> oneof<record, nothing> {
   }
 }
 
-# Rows of one array with every column present, in canonical order.
-def fill-rows [name: string]: oneof<list<record>, nothing> -> list<record> {
+# Rows with every one of `keys` present, in that order.
+def fill-rows [...keys: string]: oneof<list<record>, nothing> -> list<record> {
   let rows: list<record> = $in | default []
-  let blank: record = $COLUMNS | get $name | reduce --fold={} {|c acc| $acc | insert $c.key (if $c.key == labels { [] } else { null }) }
+  let blank: record = $keys | reduce --fold={} {|k acc| $acc | insert $k (if $k == labels { [] } else { null }) }
   $rows | each {|row| $blank | merge $row }
 }
 
-# Every `ticket` key and row column present, in canonical order, `date` as a datetime (spec, Schema).
+# Every `ticket` key and row column present, in the order `RULES` names them, `date` as a datetime (spec, Schema).
 def normalise []: record -> record {
   let doc: record = $in
-  let blank: record = $FIELDS | reduce --fold={} {|f acc| $acc | insert $f.key null }
-  let ticket: record = $blank | merge $doc.ticket
+  # The child keys of every container: `{ticket: [name slug …], 'ticket.output': [path purpose alias], …}`.
+  let shape: record = $RULES
+    | each {|r| $r.path | split cell-path | get value | {parent: ($in | drop | str join .) key: ($in | last)} }
+    | group-by parent
+  let blank: record = $shape | get ticket | get key | reduce --fold={} {|k acc| $acc | insert $k null }
   {
     version: $doc.version
     ticket: (
-      $ticket
+      $blank
+      | merge $doc.ticket
       | update date { into datetime }
-      | update output { fill-rows output }
-      | update scope { {excluded: ($in.excluded? | fill-rows excluded)} }
-      | update landscape { fill-rows landscape }
-      | update bindings { fill-rows bindings }
+      | update output { fill-rows ...($shape | get 'ticket.output' | get key) }
+      | update scope { {excluded: ($in.excluded? | fill-rows ...($shape | get 'ticket.scope.excluded' | get key))} }
+      | update landscape { fill-rows ...($shape | get 'ticket.landscape' | get key) }
+      | update bindings { fill-rows ...($shape | get 'ticket.bindings' | get key) }
     )
-    tasks: ($doc.tasks? | fill-rows tasks | default false completed)
+    tasks: ($doc.tasks? | fill-rows ...($shape | get tasks | get key) | default false completed)
   }
 }
 
