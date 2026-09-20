@@ -58,7 +58,7 @@ export def --env env [
 ]: nothing -> oneof<nothing, record> {
   # Always reassign to pick up environment changes and gracefully handle [de-]serialization issues on load.
   let repo = $env.repo?
-    | match ($in | describe | split words | first) {
+    | match ($in | describe | parse --regex '^(?<type>\w*)' | get 0.type) {
       record => { }
       # Sensible defaults for missing or null values.
       nothing => {discovery: false cache: null path: []}
