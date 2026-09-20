@@ -1,6 +1,8 @@
 # `dev` against a scratch repository of ticket files: `test dev/tests/suites`.
 use ../mod.nu *
 
+const DEV: path = path self ../..
+
 # The core spec's example document as `alpha`, plus an xabort row so nested condition bullets render.
 const ALPHA: string = '
 version = "4.0.0"
@@ -86,7 +88,7 @@ singular
   - the deadline passes'
 
 def "before each" []: nothing -> record<root: path> {
-  let root: path = mktemp --directory --suffix=-dev
+  let root: path = mktemp --directory --suffix .dev
   mkdir ($root | path join docs tickets)
   {root: $root}
 }
@@ -97,7 +99,7 @@ def registry [...roots: path]: nothing -> record {
 }
 
 # Write `alpha` with `edits` applied as literal replacements; returns the file's path.
-def seed [root: path, --slug: string = alpha, --edits: record = {}]: nothing -> path {
+def seed [root: path --slug: string = alpha --edits: record = {}]: nothing -> path {
   let path: path = $root | path join docs tickets $"($slug).toml"
   mkdir ($path | path dirname)
   $edits | items {|from to| {from: $from to: $to} }
@@ -106,7 +108,7 @@ def seed [root: path, --slug: string = alpha, --edits: record = {}]: nothing -> 
   $path
 }
 
-def fails [needle: string, code: closure]: nothing -> nothing {
+def fails [needle: string code: closure]: nothing -> nothing {
   let msg = try { do $code | ignore; null } catch {|e| $e.msg }
   assert ($msg != null and $needle in $msg) $"expected an error containing '($needle)', got: ($msg)"
 }
@@ -216,7 +218,7 @@ def "test validation" []: record -> nothing {
 
 def "test duplicate slug" []: record -> nothing {
   let t: record = $in
-  let other: path = mktemp --directory --suffix=-dev
+  let other: path = mktemp --directory --suffix .dev
   $env.repo = registry $t.root $other
   seed $t.root | ignore
   seed $other --edits {'status = "aborted"': 'status = "open"'} | ignore
@@ -238,4 +240,16 @@ def "test md" []: record -> nothing {
   assert ($md | str starts-with "# alpha\n\n## Requirements") 'slug heading, empty outcome omitted'
   assert ($md | str contains "## Constraints\n\n- Gates nu-over-bash-hooks; no hook implementation before this freezes.\n- Decision class is author-owned (manual).\n\n## Extends\n\n- beta\n\n## Output") 'extends in Schema order'
   assert ($md | str ends-with "## Tasks\n\n- [x] write the ADR\n- [ ] review") 'task boxes, no trailing newline'
+}
+
+# A child process inherits `$env.repo` as the string the `repo` converter wrote, so `use dev` has to load it.
+def "test serialised registry" []: record -> nothing {
+  let t: record = $in
+  seed $t.root | ignore
+  ^git -C $t.root init --quiet
+  ^git -C $t.root remote add origin https://github.com/me/scratch.git
+  let listed: string = with-env {repo: $"0@($t.root)"} {
+    ^$nu.current-exe --no-config-file -c $"use ($DEV); dev list | select slug repo | to nuon"
+  }
+  assert equal ($listed | from nuon) [{slug: alpha repo: scratch}] 'the string form is loaded before the registry is read'
 }

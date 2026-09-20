@@ -5,6 +5,16 @@
 
 use ../completion "into completions"
 
+# ——— environment ——————————————————————————————————————————————————————————————
+
+export-env {
+  # ensure `$env.ENV_CONVERSIONS` has `repo` only when not already deserialized
+  if ($env.repo!? | describe) !~ ^record {
+    const repo: path = path self ../repo/mod.nu
+    source-env $repo
+  }
+}
+
 # ——— constants ——————————————————————————————————————————————————————————————
 
 const VERSION: string = '4.0.0'
@@ -110,11 +120,11 @@ export def list [
 # One property of a ticket.
 @category development
 @example 'the outcome of a ticket' { dev query hooks-placement ticket.outcome }
-export def query [ # nu-lint-ignore: missing_output_type
+export def query [
   slug: string@_slugs
   property: cell-path@_properties
   --repo (-r): string@_repos
-]: nothing -> any {
+]: nothing -> oneof<string, int, bool, datetime, list<any>, record, table, nothing> {
   let doc: record = main $slug --repo=$repo
   # Bound with `let`: a `try` in tail position does not catch once the caller pipes the result onward.
   # nu-lint-ignore: assign_then_return
@@ -173,7 +183,7 @@ def files [repo?: string]: nothing -> table<slug: string, repo: string, path: pa
 }
 
 # The one file a slug names (D3).
-def locate [slug: string, repo?: string]: nothing -> record<slug: string, repo: string, path: path> {
+def locate [slug: string repo?: string]: nothing -> record<slug: string, repo: string, path: path> {
   let found: table = files $repo | where slug == $slug
   match ($found | length) {
     0 => { error make --unspanned {msg: $"no ticket named '($slug)' in the registered repositories; run dev list to see them"} }
@@ -182,7 +192,7 @@ def locate [slug: string, repo?: string]: nothing -> record<slug: string, repo: 
   }
 }
 
-def is-type [value: any, type: string]: nothing -> bool {
+def is-type [value: any type: string]: nothing -> bool {
   let kind: string = $value | describe
   $type | split row '|' | any {|t|
     match $t {
@@ -195,7 +205,7 @@ def is-type [value: any, type: string]: nothing -> bool {
 }
 
 # The first failed check of `$fields` against a record, as `{key, reason}`.
-def check-fields [fields: table, prefix: string]: record -> oneof<record, nothing> {
+def check-fields [fields: table prefix: string]: record -> oneof<record, nothing> {
   let row: record = $in
   for f in $fields {
     let value: any = $row | get --optional $f.key
@@ -288,7 +298,8 @@ def normalise []: record -> record {
 }
 
 # Drop nulls, empty optional lists and the records they leave empty (spec, Schema).
-def prune []: any -> any { # nu-lint-ignore: missing_in_type, missing_output_type
+# nu-lint-ignore: missing_in_type, missing_output_type
+def prune []: any -> any {
   let value: any = $in
   match ($value | describe | str replace --regex '<.*' '') {
     record => {
