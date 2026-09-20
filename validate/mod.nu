@@ -74,12 +74,14 @@ def verdicts [rule: record at: string value: any]: nothing -> list<record> {
   let help: string = if $rule.help? == null { '' } else { $": ($rule.help)" }
   let places: list<record> = if $listed { $value | enumerate | each {|e| {at: $"($at).($e.index)" value: $e.item} } } else { [{at: $at value: $value}] }
   for p in $places {
+    # `pattern` and `max-length` judge strings only, so a `string|bool` key can carry them.
+    let text: bool = ($p.value | describe) == string
     if $rule.enum? != null and $p.value not-in $rule.enum {
       $found ++= [{path: $p.at rule: enum reason: $"($p.at) must be one of ($rule.enum | str join ', '), got '($p.value)'($help)"}]
-    } else if $rule.pattern? != null and $p.value !~ $rule.pattern {
+    } else if $rule.pattern? != null and $text and $p.value !~ $rule.pattern {
       let why: string = if $rule.help? == null { $"does not match ($rule.pattern)" } else { $"is not valid($help)" }
       $found ++= [{path: $p.at rule: pattern reason: $"($p.at) '($p.value)' ($why)"}]
-    } else if $rule.max-length? != null and ($p.value | str length) > $rule.max-length {
+    } else if $rule.max-length? != null and $text and ($p.value | str length) > $rule.max-length {
       $found ++= [{path: $p.at rule: max-length reason: $"($p.at) is ($p.value | str length) characters, max ($rule.max-length)($help)"}]
     }
   }

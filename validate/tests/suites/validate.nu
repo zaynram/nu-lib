@@ -14,6 +14,7 @@ const RULES = [
   {path: $.doc.rows.name type: string required: true}
   {path: $.doc.rows.size type: int}
   {path: $.doc.rows.marks type: 'list<string>' pattern: '^-'}
+  {path: $.doc.flag type: 'string|bool' max-length: 3 pattern: '^o'}
   {path: $.doc.extra type: record}
 ]
 
@@ -62,6 +63,11 @@ def "test value rules" []: nothing -> nothing {
     "doc.tags.1 must be one of a, b, long-tag, got 'z'"
     'doc.tags.2 is 8 characters, max 4'
   ] 'list rules: max-items on the list, enum and max-length on each element'
+}
+
+def "test alternatives" []: nothing -> nothing {
+  assert equal ($GOOD | insert doc.flag true | reasons $RULES) [] 'string rules skip a value that is not a string'
+  assert equal ($GOOD | insert doc.flag nope | reasons $RULES) ["doc.flag 'nope' does not match ^o"] 'and still judge one that is'
 }
 
 def "test strict" []: nothing -> nothing {
