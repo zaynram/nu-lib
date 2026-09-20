@@ -48,9 +48,9 @@ export def truncate [
   list<oneof<path, string>> -> list<oneof<path, string>>
 ] {
   let queue: any = $in
-  let trim: closure = if $from =~ e {
+  let trim: closure = if $from =~ ^e {
     {|n: int| last $n }
-  } else if $from =~ s {
+  } else if $from =~ ^s {
     {|n: int| first $n }
   } else { error make --unspanned $'unknown value for `--from`: ($from)' }
   let glob: bool = $queue | any { describe | $in == string }
