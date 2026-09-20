@@ -238,6 +238,7 @@ def "test limits" []: record -> nothing {
   fails '--set rejected: ticket.requirements has 13 items, max 12' { dev edit alpha --set {requirements: (1..13 | each { $"r($in)" })} }
   fails '--set rejected: ticket.extends.0' { dev edit alpha --set {extends: ['Bad.Slug']} }
   fails '--set rejected: ticket.landscape.0.scope must be one of internal, external' { dev edit alpha --set {landscape: [{scope: sideways synopsis: s}]} }
+  fails '--set rejected: ticket.scope must be record, got int' { dev edit alpha --set {scope: 7} }
   assert equal (open --raw $path) $before 'a refused edit writes nothing'
 }
 
