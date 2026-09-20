@@ -12,7 +12,7 @@ module fish-complete {
 
   # ——— constants ————————————————————————————————————————————————————————————
 
-  const CHAR: list = ['\' ',' '[' ']' '(' ')' ' ' '\t' "'" '"' "`"]
+  const CHAR: string = r#'[\\,\[\]() '"`]'#
   const EXPR: string = '^\s*(?<value>\w+|-{1,2}[\w+\-]*)*={0,1}\w*\s*$'
 
   # ——— environment ——————————————————————————————————————————————————————————
@@ -34,7 +34,7 @@ module fish-complete {
     from tsv --flexible --noheaders --no-infer
     | rename value description
     | update value {|row|
-      if not ($in | path exists) or ($CHAR | all { $in not-in $row.value }) { return $in } else { }
+      if not ($in | path exists) or $row.value !~ $CHAR { return $in } else { }
       | if $in starts-with ~ { path expand --no-symlink } else { }
       | $'"($in | str replace --all "\"" "\\\"")"'
     }

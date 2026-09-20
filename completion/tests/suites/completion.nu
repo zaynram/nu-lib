@@ -26,6 +26,12 @@ def "test a long list keeps its order" []: nothing -> nothing {
   assert equal ($big | completion into completions {sort: false} | get completions) $big
 }
 
+def "test generic types reach the text fallback" []: nothing -> nothing {
+  let actual = [[1 2] {a: 1}] | completion into completions | get completions
+  let expected = [([1 2] | to text) ({a: 1} | to text)]
+  assert equal $actual $expected 'describe output is not normalised before matching'
+}
+
 def "test repr and to-string overrides" []: nothing -> nothing {
   assert equal ([255 90sec] | completion into completions --repr {number: $.lowerhex duration: sec} | get completions) ["0xff" "90 sec"]
   assert equal ([1 2] | completion into completions --to-string {|| $"<($in)>" } | get completions) ["<1>" "<2>"]

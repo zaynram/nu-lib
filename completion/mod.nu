@@ -58,7 +58,8 @@ export def "into completions" [
       return {||
         let x: any; $x
         # `$in` evaluate properly in the `match` argument subexpression
-        | match ($in | describe | str replace --regex '<.*' '') {
+        # no arm below is generic, so `list<int>` and friends reach `_` without normalising
+        | match ($in | describe) {
           # `$in` in `match` guards errors at parse time, so we need bound variable here
           string if $x =~ '[\s"\x27`()\[{}|;$]|^-.|^(true|false|null)$' => { to nuon }
           string => { }
