@@ -57,7 +57,7 @@ def add-descriptions [
 ]: oneof<record, list<any>> -> table<value: any, description: oneof<nothing, string>> {
   append [] | enumerate | reduce --fold=[] {|it acc|
     let x: any = $it.item
-    match ($x | describe | split words | first) {
+    match ($x | describe | str replace --regex '<.*' '') {
       record if $x has disabled and $x.disabled => null
       record if ($x.name? | is-not-empty) => $x.name
       _ => $default
