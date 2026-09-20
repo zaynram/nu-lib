@@ -57,6 +57,13 @@ def fits [value: any type: string]: nothing -> bool {
   false
 }
 
+# Is `at` one of the `dead` containers, or under one. A `for`, not `any`: this runs once per rule, and entering a
+# closure command costs about ten times what the loop does.
+def under [at: string ...dead: string]: nothing -> bool {
+  for d in $dead { if $at == $d or ($at starts-with $"($d).") { return true } }
+  false
+}
+
 # The failures of one rule at one place. `enum`, `pattern` and `max-length` judge each element of a list.
 def verdicts [rule: record at: string value: any]: nothing -> list<record> {
   if $value == null {
@@ -133,7 +140,7 @@ export def rules [
   mut found: list<record> = []
   mut dead: list<string> = []
   for r in $rows {
-    if ($dead | is-not-empty) and ($dead | any {|d| $r.at starts-with $"($d)." }) { continue }
+    if ($dead | is-not-empty) and (under $r.at ...$dead) { continue }
     mut failed: list<record> = []
     mut absent: bool = false
     if $r.through == null {
@@ -154,7 +161,7 @@ export def rules [
       let names: oneof<list<any>, nothing> = $known | get --optional $box.at | get --optional leaf
       # A container with no declared children is open; one that failed, or sits under one that did, cannot be scanned.
       if $names == null { continue }
-      if ($dead | is-not-empty) and ($dead | any {|d| $box.at == $d or $box.at starts-with $"($d)." }) { continue }
+      if ($dead | is-not-empty) and (under $box.at ...$dead) { continue }
       let held: any = if $box.at == '' { $data } else { $data | get $box.whole }
       if ($held | describe) !~ '^(record|table)' { continue }
       for key in ($held | columns | where $it not-in $names) {
