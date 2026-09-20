@@ -81,7 +81,7 @@ def _properties [context: string]: nothing -> record {
   let slug: oneof<string, nothing> = $context | split row ' ' | where $it in $slugs | get 0?
   # Bound with `let`: a `try` in tail position does not catch once the caller pipes the result onward.
   let paths: list<string> = if $slug == null { [] } else {
-    try { main $slug | get ticket | columns | each { $"ticket.($in)" } | prepend [version ticket tasks] } catch { [] }
+    try { main $slug | get ticket | columns | wrap key | format pattern 'ticket.{key}' | prepend [version ticket tasks] } catch { [] }
   }
   $paths | into completions
 }
@@ -99,7 +99,7 @@ export def main [
   let file: record = locate $slug $repo
   let doc: record = open $file.path
   let bad: oneof<record, nothing> = $doc | check $file
-  if $bad != null { error make --unspanned {msg: $"'($file.path)'($bad.reason); ($bad.next)"} }
+  if $bad != null { error make --unspanned {msg: ($bad | insert path $file.path | format pattern "'{path}'{reason}; {next}")} }
   $doc | normalise | if $md { render } else { }
 }
 
@@ -132,7 +132,7 @@ export def query [
   # Bound with `let`: a `try` in tail position does not catch once the caller pipes the result onward.
   # nu-lint-ignore: assign_then_return
   let value: any = try { $doc | get $property } catch {
-    error make --unspanned {msg: $"no property ($property | to text | str replace '$.' '') in '($slug)'; run dev ($slug) to see the record"}
+    error make --unspanned {msg: ({property: ($property | to text | str replace '$.' '') slug: $slug} | format pattern "no property {property} in '{slug}'; run dev {slug} to see the record")}
   }
   $value
 }
@@ -154,16 +154,16 @@ export def edit [
   let doc: record = main $slug --repo=$file.repo
   # ponytail: the Todoist write-through ships with `dev sync` (plan Phase 5a); until then no ticket is linked for it
   if $add_task != null or ($complete | is-not-empty) {
-    error make --unspanned {msg: $"'($slug)' has no Todoist task yet; run dev sync ($slug) first"}
+    error make --unspanned {msg: ({slug: $slug} | format pattern "'{slug}' has no Todoist task yet; run dev sync {slug} first")}
   }
   let foreign: list<string> = $set | columns | where $it not-in $SETTABLE
   if ($foreign | is-not-empty) {
-    error make --unspanned {msg: $"--set takes ($SETTABLE | drop | str join ', ') and ($SETTABLE | last); '($foreign | first)' is not one of them"}
+    error make --unspanned {msg: ({keys: ($SETTABLE | drop | str join ', ') last: ($SETTABLE | last) key: ($foreign | first)} | format pattern "--set takes {keys} and {last}; '{key}' is not one of them")}
   }
   let merged: record = $doc | update ticket { merge deep --strategy=overwrite $set }
   let bad: oneof<record, nothing> = $merged | check $file
   if $bad != null {
-    error make --unspanned {msg: $"--set rejected: ($bad.reason | str replace --regex '^:? ' ''); nothing written"}
+    error make --unspanned {msg: ($bad | update reason { str replace --regex '^:? ' '' } | format pattern '--set rejected: {reason}; nothing written')}
   }
   $merged | normalise | write $file.path
 }
@@ -174,7 +174,7 @@ export def edit [
 def files [repo?: string]: nothing -> table<slug: string, repo: string, path: path> {
   let registry: list<record> = $env.repo?.path? | default []
   if $repo != null and $repo not-in ($registry | get --optional name) {
-    error make --unspanned {msg: $"no registered repository named '($repo)'; run repo list to see them"}
+    error make --unspanned {msg: ({repo: $repo} | format pattern "no registered repository named '{repo}'; run repo list to see them")}
   }
   $registry
   | where {|r| $repo == null or $r.name == $repo }
@@ -189,9 +189,9 @@ def files [repo?: string]: nothing -> table<slug: string, repo: string, path: pa
 def locate [slug: string repo?: string]: nothing -> record<slug: string, repo: string, path: path> {
   let found: table = files $repo | where slug == $slug
   match ($found | length) {
-    0 => { error make --unspanned {msg: $"no ticket named '($slug)' in the registered repositories; run dev list to see them"} }
+    0 => { error make --unspanned {msg: ({slug: $slug} | format pattern "no ticket named '{slug}' in the registered repositories; run dev list to see them")} }
     1 => { $found | first }
-    _ => { error make --unspanned {msg: $"slug '($slug)' found in repos ($found.repo | str join ', '); pass --repo"} }
+    _ => { error make --unspanned {msg: ({slug: $slug repos: ($found.repo | str join ', ')} | format pattern "slug '{slug}' found in repos {repos}; pass --repo")} }
   }
 }
 
@@ -201,33 +201,36 @@ def locate [slug: string repo?: string]: nothing -> record<slug: string, repo: s
 # `reason` opens with its own joiner (` is …` or `: …`) so the loader can prefix the path verbatim.
 def check [file: record]: record -> oneof<record, nothing> {
   let doc: record = $in
-  let again: string = $"edit ($file.path) then re-run dev ($file.slug)"
+  let again: string = $file | format pattern 'edit {path} then re-run dev {slug}'
   if $doc.version? == '3.0.0' {
-    return {reason: ' is version 3.0.0' next: $"move it to docs/issues/($file.slug).issue.toml, then run dev migrate ($file.slug)"}
+    return {reason: ' is version 3.0.0' next: ($file | format pattern 'move it to docs/issues/{slug}.issue.toml, then run dev migrate {slug}')}
   }
   if $doc.version? != $VERSION {
-    return {reason: $" is version '($doc.version?)'" next: $"only \"4.0.0\" loads and \"3.0.0\" migrates; ($again)"}
+    return {reason: ({version: $doc.version?} | format pattern " is version '{version}'") next: ({again: $again} | format pattern 'only "4.0.0" loads and "3.0.0" migrates; {again}')}
   }
   let failure: oneof<record, nothing> = $doc | validate rules $RULES --strict | get 0?
   if $failure != null {
     # A bad slug is not fixed by editing the key alone: the file carries the same name.
     let next: string = if $failure.path == 'ticket.slug' and $failure.rule == pattern {
-      $"rename the file and ticket.slug, then re-run dev ($file.slug)"
+      $file | format pattern 'rename the file and ticket.slug, then re-run dev {slug}'
     } else { $again }
-    return {reason: $": ($failure.reason)" next: $next}
+    return {reason: ($failure | format pattern ': {reason}') next: $next}
   }
   let ticket: record = $doc.ticket
   if $ticket.slug != $file.slug {
-    return {reason: $": ticket.slug is '($ticket.slug)' but the file is named '($file.slug)'" next: $"rename one, then re-run dev ($file.slug)"}
+    return {reason: ({slug: $ticket.slug stem: $file.slug} | format pattern ": ticket.slug is '{slug}' but the file is named '{stem}'") next: ($file | format pattern 'rename one, then re-run dev {slug}')}
   }
   if (try { $ticket.date | into datetime } catch { null }) == null {
-    return {reason: $": ticket.date '($ticket.date)' is not a date" next: $"write \"YYYY-MM-DD\", then re-run dev ($file.slug)"}
+    return {reason: ($ticket | format pattern ": ticket.date '{date}' is not a date") next: ($file | format pattern 'write "YYYY-MM-DD", then re-run dev {slug}')}
   }
   for task in ($doc.tasks? | default []) {
     let marks: list<string> = $task.labels? | default [] | where $it starts-with '-'
     if ($marks | length) > 1 or ($marks | any { $in not-in $ATTRIBUTION }) {
       return {
-        reason: $": task '($task.content)' has label '($marks | where $it not-in $ATTRIBUTION | append $marks | first)'; a label starting with - must be one of ($ATTRIBUTION | str join ', '), at most one per task"
+        reason: (
+          {task: $task.content label: ($marks | where $it not-in $ATTRIBUTION | append $marks | first) allowed: ($ATTRIBUTION | str join ', ')}
+          | format pattern ": task '{task}' has label '{label}'; a label starting with - must be one of {allowed}, at most one per task"
+        )
         next: $again
       }
     }
@@ -293,7 +296,7 @@ def write [path: path]: record -> path {
 }
 
 def section [title: string]: oneof<string, nothing> -> oneof<string, nothing> {
-  if ($in | is-empty) { null } else { $"## ($title)\n\n($in)" }
+  if ($in | is-empty) { null } else { {title: $title body: $in} | format pattern "## {title}\n\n{body}" }
 }
 
 def md-table []: table -> oneof<string, nothing> {
@@ -307,9 +310,9 @@ def md-table []: table -> oneof<string, nothing> {
 def render []: record -> string {
   let doc: record = $in
   let t: record = $doc.ticket
-  let bullets: closure = { default [] | each { $"- ($in)" } | str join "\n" }
+  let bullets: closure = { default [] | wrap item | format pattern '- {item}' | str join "\n" }
   [
-    $"# ($t.name | default $t.slug)"
+    ({title: ($t.name | default $t.slug)} | format pattern '# {title}')
     $t.outcome
     ($t.requirements | do $bullets | section Requirements)
     ($t.constraints | do $bullets | section Constraints)
@@ -319,10 +322,10 @@ def render []: record -> string {
     ($t.landscape | md-table | section Landscape)
     (
       $t.bindings
-      | each {|b| [$"- ($b.kind)/($b.type): ($b.item)" ...($b.conditions | default [] | each { $"  - ($in)" })] }
+      | each {|b| [($b | format pattern '- {kind}/{type}: {item}') ...($b.conditions | default [] | wrap item | format pattern '  - {item}')] }
       | flatten | str join "\n" | section Bindings
     )
-    ($doc.tasks | each { $"- [(if $in.completed { 'x' } else { ' ' })] ($in.content)" } | str join "\n" | section Tasks)
+    ($doc.tasks | insert box {|r| if $r.completed { 'x' } else { ' ' } } | format pattern '- [{box}] {content}' | str join "\n" | section Tasks)
   ]
   | compact --empty
   | str join "\n\n"
