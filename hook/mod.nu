@@ -55,7 +55,7 @@ def add-descriptions [
   --value: closure
   --display: closure
 ]: oneof<record, list<any>> -> table<value: any, description: oneof<nothing, string>> {
-  append [] | enumerate | reduce --fold=[] {|it acc|
+  append [] | enumerate | each {|it|
     let x: any = $it.item
     match ($x | describe | str replace --regex '<.*' '') {
       record if $x has disabled and $x.disabled => null
@@ -63,7 +63,7 @@ def add-descriptions [
       _ => $default
     } | wrap description
     | insert value { $it | if $value != null { do --capture-errors $value } else { } }
-  } | compact $.description
+  } | compact description
   | flatten --all value
   | if $display != null { insert display {|row| $row.value | do --ignore-errors $display } } else { }
 }
