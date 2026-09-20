@@ -104,9 +104,9 @@ export def --env main [
 # ——— completions —————————————————————————————————————————————————————————————
 
 def _empty []: nothing -> list { [] }
-def _alarms []: nothing -> list { $env | get --optional time.alarms | default [] | get name }
+def _alarms []: nothing -> list { $env.time?.alarms? | default [] | get name }
 def _suggest-when []: nothing -> list {
-  [1min 5min 10min 15min 20min 30min 1hr 1.5hr 2hr] | par-each {|add|
+  [1min 5min 10min 15min 20min 30min 1hr 1.5hr 2hr] | each {|add|
     date now | $in + $add | date humanize | $"'($in)'"
   }
 }
