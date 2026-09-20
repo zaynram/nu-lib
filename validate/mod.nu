@@ -152,8 +152,9 @@ export def rules [
     let known: record = $rows | group-by parent
     for box in ($rows | where type in [record table] | select at whole | prepend {at: '' whole: null}) {
       let names: oneof<list<any>, nothing> = $known | get --optional $box.at | get --optional leaf
-      # A container with no declared children is open.
-      if $names == null or $box.at in $dead { continue }
+      # A container with no declared children is open; one that failed, or sits under one that did, cannot be scanned.
+      if $names == null { continue }
+      if ($dead | is-not-empty) and ($dead | any {|d| $box.at == $d or $box.at starts-with $"($d)." }) { continue }
       let held: any = if $box.at == '' { $data } else { $data | get $box.whole }
       if ($held | describe) !~ '^(record|table)' { continue }
       for key in ($held | columns | where $it not-in $names) {

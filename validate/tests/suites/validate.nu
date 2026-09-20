@@ -79,6 +79,7 @@ def "test strict" []: nothing -> nothing {
     'doc.rows.colour is not a known key'
     'doc.rows.flavour is not a known key'
   ] 'root, record and row keys; a record with no declared children stays open'
+  assert equal ($GOOD | update doc 7 | reasons $RULES --strict) ['doc must be record, got int'] 'containers under a failed container are not scanned'
 }
 
 def "test errors" []: nothing -> nothing {
