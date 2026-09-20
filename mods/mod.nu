@@ -26,13 +26,13 @@ const EXCLUDE: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
 
 def default-include-modules [
   --include-overlays
-]: oneof<nothing, table<name: string, commands: list, file: string>> -> table<name: string, commands: list, file: string> {
+]: nothing -> table<name: string, commands: list, file: string> {
   # Hoisted out of the row condition: evaluating `scope commands` per module cost ~120ms at login.
   let visible: list<int> = scope commands | get decl_id
   let overlays: list<string> = overlay list | get name
   # Bare column names inside the parenthesised legs would parse as commands (`file`, `commands.decl_id`);
   # only the first leg may omit `$it`.
-  default { scope modules }
+  scope modules
   | (
     where name !~ $RE.omit
     and ($it.file | path exists)
