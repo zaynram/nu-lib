@@ -247,6 +247,17 @@ values feed the same writer as the non-interactive path, which the tests cover. 
 
 ## Phase 3b — `repo` aliases (own branch, `feat/repo-aliases` from `main`)
 
+Sequencing (ruling 2026-09-20): this phase runs after Phase 6, as the next scope once `dev` is
+complete. What it changes in `repo` is specified then, from what the completed `dev` module needs,
+within reasonable expectations of what `repo` holds at that point; the text below is the 2026-09-19
+starting point for that specification. Until then `dev` is written against `repo` as it stands, so a
+ticket's Todoist project resolves by repository name only. Three known `repo` items wait for this
+scope and are not touched before it: `push --alias` cannot reach a registered row (below);
+`repo push` declares `path: directory` in its output type while its rows carry `directory`
+(`repo/mod.nu:85-87,242`); and `hydrate-git-context` defaults a missing `name` to the parent
+directory instead of the directory's own name (`repo/mod.nu:240`, `path dirname` where `path
+basename` is meant).
+
 Files: `_internal/repo/mod.nu`, `_internal/repo/tests/{mod.nu,suites/repo.nu}` (new; seam copied
 from `time/tests/mod.nu`), `_internal/todo/mod.nu` (`repo-name` L211, `find` L137),
 `_internal/track/mod.nu:37` (the hook's `todo find $branch --project $repo`, spec
@@ -265,8 +276,7 @@ that section: `--section` on `todo list` filters client-side on the raw row's `s
 `hydrate` must keep, since `td task list` has no section flag; `--section` on `todo add` passes
 `td task add --section`). How much section handling is worth is gauged in this phase, not before
 (ruling 2026-09-19); the three registered repositories resolve by name, so nothing in Phases 4 to 6
-waits on this phase: it runs any time before `_internal` (`development`) and the nupm registry are
-synced. Two facts of the live `repo` module bind its design: `push` drops every directory already in
+waits on this phase; `_internal` (`development`) and the nupm registry sync once it has run. Two facts of the live `repo` module bind its design: `push` drops every directory already in
 the registry before hydrating (`repo/mod.nu:99`, `difference $env.repo.path.directory`), so `push
 --alias` cannot reach a registered row; and the registry crosses a process boundary as
 `"<discovery digit>@<dir>:<dir>…"` with rows rebuilt from git on read (`repo/mod.nu:27-43`), so a
