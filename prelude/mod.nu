@@ -13,9 +13,8 @@ export def --env env [
   let e: record = default {}
     | upsert NU_LIB_DIRS { default $env.NU_LIB_DIRS? | append $NU_LIB_DIRS | uniq }
     | upsert NU_PLUGIN_DIRS { default $env.NU_PLUGIN_DIRS? | append $NU_PLUGIN_DIRS | uniq }
-    | merge (config vars --vendor --show)
   if $load { $e | load-env }
   if $show or not $load { return $e }
 }
 
-export-env { env --load }
+export-env { config vars --vendor --show | env --load }
