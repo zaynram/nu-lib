@@ -245,10 +245,8 @@ export def --wrapped test [
           $input | do --capture-errors $h ...$rest
         }
         string: {||
-          $input | match ($in | describe) {
-            string | nothing => { }
-            _ => { to nuon --serialize --raw-strings }
-          } | ^$nu.current-exe --stdin --no-config-file --commands $"from nuon | ($h)"
+          $input | to nuon --serialize --raw-strings
+          | ^$nu.current-exe --stdin --no-config-file --commands $"from nuon | ($h)"
         }
       }
     )
