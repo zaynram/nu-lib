@@ -12,6 +12,11 @@ const REPR: record = {
   duration: min
 }
 
+# A bare string that would misparse as an argument: quoted with `to nuon`.
+const UNSAFE: string = '[\s"\x27`()\[{}|;$]|^-.|^(true|false|null)$'
+# The same test over a whole element, for the vectorised pass.
+const UNSAFE_ELEMENT: string = $"\(?s\)^\(.*?\(?:($UNSAFE)\).*\)$"
+
 # Default completion options (`options` overrides; `null` restores the Nushell default).
 const OPTIONS: record = {
   sort: true
@@ -61,7 +66,7 @@ export def "into completions" [
         # no arm below is generic, so `list<int>` and friends reach `_` without normalising
         | match ($in | describe) {
           # `$in` in `match` guards errors at parse time, so we need bound variable here
-          string if $x =~ '[\s"\x27`()\[{}|;$]|^-.|^(true|false|null)$' => { to nuon }
+          string if $x =~ $UNSAFE => { to nuon }
           string => { }
           filesize => { format filesize $merged.filesize }
           datetime => { format date $merged.datetime }
@@ -74,8 +79,25 @@ export def "into completions" [
   return {
     options: ($OPTIONS | merge $options | compact)
     # `--keep-order`: completers that pass `sort: false` (time, hook) rely on the input order surviving.
-    completions: ($value | if $table { update value $format } else { par-each --keep-order $format })
+    completions: (
+      $value | if $table {
+        update value $format
+      } else if $to_string == null and ($value | describe) == 'list<string>' {
+        quote-strings $format
+      } else { par-each --keep-order $format }
+    )
   }
+}
+
+# The string arms of the default formatter over a whole list at once: one regex pass quotes what `to nuon` would.
+# It is exact unless a quoted element holds a character `to nuon` escapes, when the formatter runs instead.
+# A regex costs about 7 us per element in a row condition and 0.2 us in `str replace`: 1.4k names, 6.1 ms to 0.9 ms.
+def quote-strings [format: closure]: list<string> -> list<string> {
+  let value: list<string>;
+  let quoted: list<string> = $value | parse --regex $UNSAFE_ELEMENT | get capture0
+  if ($quoted | str join '') =~ '["\\\x00-\x1f\x7f]' {
+    $value | par-each --keep-order $format
+  } else { $value | str replace --regex $UNSAFE_ELEMENT '"$1"' }
 }
 
 # Convert a commandline buffer into a list of token spans.

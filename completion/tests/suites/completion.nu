@@ -16,6 +16,16 @@ def "test quotes only strings that misparse as bare arguments and compacts empti
   assert equal ([[value description]; ["b c" z]] | completion into completions | get completions) [[value description]; ['"b c"' z]]
 }
 
+def "test a string list quotes the same with and without escapes" []: nothing -> nothing {
+  # every element is a string, so the vectorised pass runs; one escape-needing element sends the list to the formatter
+  let plain = [abc "b c" "[" "-x" "true" "it's" "ünï cödé" " lead" "a\\b"]
+  assert equal ($plain | completion into completions | get completions) ($plain | each {|s| if $s =~ '[\s"\x27`()\[{}|;$]|^-.|^(true|false|null)$' { $s | to nuon } else { $s } }) 'quoted as `to nuon` quotes'
+  for hard in ['a"b' "a\tb" "a\nb\nc" "-\n"] {
+    let l = $plain | append $hard
+    assert equal ($l | completion into completions | get completions) ($l | each {|s| if $s =~ '[\s"\x27`()\[{}|;$]|^-.|^(true|false|null)$' { $s | to nuon } else { $s } }) $"escaped as `to nuon` escapes: ($hard | to nuon)"
+  }
+}
+
 def "test options merge over defaults and null restores the default" []: nothing -> nothing {
   let got = [1] | completion into completions {match_description: true sort: null} | get options
   assert equal $got {case_sensitive: false completion_algorithm: prefix match_description: true}
