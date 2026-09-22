@@ -2,6 +2,7 @@
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
+use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
 use ../config
 use ../path
 use ../util editor
@@ -19,88 +20,90 @@ const SHORT: table = [
 ]
 const RE: record = {
   omit: '^(prelude|[_]{1}\w+|\w+\s{1}extern)$'
+  module_actions: '^\s*(?:overlay\s+)?(?<action>use|hide)\s+(?<name>[\w\-]+)\b'
 }
-const EXCLUDE: list<string> = [**/nupm+/** **/tests/** **/tests.nu]
+const EXCLUDE: list<string> = [**/nupm+/** **/tests/** **/tests.nu **/*.bak*/**]
 
 # ——— utilities ————————————————————————————————————————————————————————————————
 
+## used_modules
+alias set-used = kv set --table=used_modules
+alias get-used = kv get --table=used_modules
+alias drop-used = kv drop --table=used_modules
+alias list-used = kv list --table=used_modules
+
+## hidden_modules
+alias set-hidden = kv set --table=hidden_modules
+alias get-hidden = kv get --table=hidden_modules
+alias drop-hidden = kv drop --table=hidden_modules
+alias list-hidden = kv list --table=hidden_modules
+
 def default-include-modules [
   --include-overlays
-]: nothing -> table<name: string, commands: list, file: string> {
+]: nothing -> table<name: string, module_id: int, commands: list, file: string> {
   # Hoisted out of the row condition: evaluating `scope commands` per module cost ~120ms at login.
-  let visible: list<int> = scope commands | get decl_id
-  let overlays: list<string> = overlay list | get name
+  let visible: list<int> = scope commands | get $.decl_id
+  let overlays: list<string> = overlay list | get $.name
   # Bare column names inside the parenthesised legs would parse as commands (`file`, `commands.decl_id`);
   # only the first leg may omit `$it`.
-  scope modules
-  | (
+  scope modules | (
     where name !~ $RE.omit
     and ($it.file | path exists)
     and ($include_overlays or $it.name not-in $overlays)
-    and ($it.commands.decl_id | any { $visible has $in })
+    and ($it.commands.decl_id | intersect $visible | is-not-empty)
   ) | uniq-by module_id
 }
 
 def preserve-serialized-closure []: closure -> list<string> {
-  view source $in
-  | str replace --all --regex '^\{\|*\s*|\s*\}$' ''
-  | lines
-  | str trim --left
-  | append ['']
+  view source $in | str replace --all --regex '^\{\|*\s*|\s*\}$' '' | lines | str trim --left | append ['']
 }
 
 # Glob the `.nu` definitions under the piped directories.
-def nu-glob []: list<path> -> list<path> {
-  par-each {|d| glob ($d | path rejoin ** *.nu) --no-dir --depth=3 --exclude=$EXCLUDE } | flatten | uniq | sort
+def nu-glob []: oneof<path, list<path>> -> list<path> {
+  append [] | par-each {||
+    path rejoin ** *.nu
+    | into glob
+    | glob $in --no-dir --depth=3 --exclude=$EXCLUDE
+  } | flatten | uniq | sort
 }
 
 alias build-mods-refs = each {|row|
-  match $row.prefix { null => '' $p => { $env | get $p | to text } }
-  | path join ...$row.segments
-  | wrap find
-  | insert replace $row.replace
+  select $.replace | insert find (match $row.prefix { null => '' $p => ($env | get $p | to text) } | path join ...$row.segments)
 }
 
 def module-file-shorthand []: [
   nothing -> table<find: string, replace: string>
   path -> oneof<nothing, record<find: string, replace: string>>
 ] {
-  let p: oneof<nothing, path> = $in
+  let p: oneof<nothing, path>;
   $env.mods_refs?
-  | default { $SHORT | reverse | build-mods-refs }
+  | default ($SHORT | reverse | build-mods-refs)
   | if $p == null { } else { where $p has $it.find | first }
 }
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
 export-env {
-  $env.mods_home = $env.mods_home?
-    | default { $env.NU_LIB_DIRS | where ($it | path exists) | first }
-    | path expand --strict
-  $env.mods_used = list --short
-  $env.mods_refs = module-file-shorthand
-  # Wrapped with `do` to ensure `$env.mods_used` does not pick up this import invocation.
-  do --capture-errors --env {
-    # A pre_execution string hook flags module commands from the command line (string hooks may
-    # mutate `$env`); scanning `history --long` here instead cost ~25ms on every prompt.
-    const module_command_regex: string = '\s*(use|hide|overlay\s+(use|hide))\s+(?<name>[\w\-]+)\s*'
-    use ../hook add
+  [
+    [name value];
+    [mods_refs ($env.mods_refs!? | default (module-file-shorthand))]
+    [mods_home ($env.mods_home!? | default ($env.NU_LIB_DIRS? | where { path exists }).0?)]
+  ] | difference ($env | select $.mods_home!? $.mods_refs!? | transpose name value)
+  | if $in != [] { transpose --ignore-titles --header-row --as-record | load-env }
+
+  const name: string = 'mods::use_or_hide::update-mods-used'
+  # Guard also ensures an already registered hook does not pick up this `hook` import invocation.
+  if ($env.config.hooks.pre_execution? | where $it has name).name not-has $name {
+    use ../hook [ add is-enabled ]
     [
-      [name condition code];
+      [name disabled condition code];
       [
-        `mods::use_or_hide::flag-module-command`
-        {|| $env has mods_used }
-        $"$env.__mods_dirty = \(commandline) =~ '($module_command_regex)'"
+        $name
+        false
+        {|| (is-enabled --name=$name) and (commandline) =~ $RE.module_actions }
+        {|| refresh (commandline) }
       ]
     ] | add pre_execution
-    [
-      [name condition code];
-      [
-        `mods::use_or_hide::update-mods_used`
-        {|| $env.__mods_dirty? | into bool --relaxed }
-        {|| list --update }
-      ]
-    ] | add pre_prompt
   }
 }
 
@@ -122,7 +125,9 @@ export def --env define [
   if not ($directory | path exists) { mkdir $directory }
   let path: path = $directory | path join mod.nu
   if not $overwrite and ($path | path exists) { error make --unspanned $"module '($name)' is already defined" }
-  $block | preserve-serialized-closure | try { save --force --progress $path } catch { error make --unspanned 'unable to save module definition' }
+  $block | preserve-serialized-closure | try {
+    save --force --progress $path
+  } catch { error make --unspanned 'unable to save module definition' }
   return $path
 }
 
@@ -136,8 +141,56 @@ export def edit [
   | nu-glob
   | where $it has $target
   | sort-by {|p| $target not-in ($p | path split) } # exact segment matches first
-  | get --optional 0
-  | if $in == null { error make --unspanned $"no definition found for '($target)'" } else if $get { path expand } else { editor }
+  | first
+  | match ($in | describe) {
+    nothing => (error make --unspanned $"no definition found for '($target)'")
+    _ if $get => { path expand }
+    _ => { editor }
+  }
+}
+
+# Update the registry tracking loaded modules for this session.
+@category core
+export def refresh [
+  buffer?: string
+  # Register or unregister a module by parsing this commandline buffer
+  --return (-r): string@[names module_ids all]
+  # What data to return; names -> loaded module names, module_ids -> loaded module identifiers, all -> table of the prior
+]: oneof<nothing, table> -> oneof<nothing, list<string>, list<int>, table<name: string, module_id: int>> {
+  let queue: oneof<nothing, table>;
+  let tracked: list<int> = list-used | get $.value | compact
+  if $queue != null {
+    # Add any untracked modules to the kv store
+    for mod in ($queue | where module_id not-in $tracked) { set-used $mod.name $mod.module_id }
+    # Ensure we are working with post-refresh data
+    let hidden: table = list-hidden
+    # Drop any shared `$.module_id`s from the used table if they are hidden
+    for key in (list-used | where value in $hidden.value).key { drop-used $key }
+  }
+  if $buffer != null {
+    let parsed: record = $buffer | parse --regex $RE.module_actions | into record
+    let mod_id: oneof<nothing, int> = (scope modules | where name == $parsed.name?).0?.module_id?
+    match $parsed.action? {
+      use => {
+        # Ensure removal from the hidden modules
+        drop-hidden $parsed.name | ignore
+        # Add to the used modules, if not already set
+        if (get-used $parsed.name) != $mod_id { set-used $parsed.name $mod_id }
+      }
+      hide => {
+        # Ensure removal from the used modules
+        drop-used $parsed.name | ignore
+        # Add to the hidden modules, if not already set
+        if (get-hidden $parsed.name) != $mod_id { set-hidden $parsed.name $mod_id }
+      }
+    }
+  }
+  if $return == null { return }
+  list-used | match $return {
+    names => { get $.key }
+    module_ids => { get $.value }
+    all => { rename --column={key: name value: module_id} }
+  }
 }
 
 # List the modules loaded in the current session.
@@ -155,16 +208,26 @@ export def --env list [
   # Include overlays in the returned list or table
   --update (-u)
   # Update the environment variable tracking loaded modules
+  --hidden (-h)
+  # Return a table of hidden modules (only combines with `--short`)
 ]: nothing -> oneof<list<string>, table<module: record, commands: table>, table<name: string, description: string, location: path>> {
-  let ls: table = if $name != null { scope modules | where name == $name } else { default-include-modules --include-overlays=$overlays }
-  if $update { $env.mods_used = $ls.name }
-  $ls | if $short { get name } else {
-    docgen collect ...($in.file | where { path exists })
-    | update $.module.description {|row| append $row.module.extra_description? | compact --empty | str join (char newline) }
+  if $hidden {
+    list-hidden | if $short { get $.key } else {
+      let ids: list<int> = $in.value
+      scope modules | where module_id in $ids
+    } | return $in
+  }
+  let ls: table = match ($name | describe) {
+    nothing => (default-include-modules --include-overlays=$overlays)
+    string => (scope modules | where name == $name)
+  }
+  if $update { $ls | refresh }
+  $ls | if $short { get $.name } else {
+    docgen collect ...($in.file | where ($it | path exists))
+    | update $.module.description {|row| $row.module | get $.description!? $.extra_description!? | compact | str join (char newline) }
     | update $.module.file {|row|
-      let p: path = if $in ends-with mod.nu { path dirname } else { }
-      let s: oneof<nothing, record> = $p | module-file-shorthand
-      $p | if $absolute or $s == null { } else { str replace $s.find $s.replace }
+      if $in ends-with mod.nu { path dirname } else { }
+      | if $absolute { } else { match ($in | module-file-shorthand) { null => ($in) {find: $f replace: $r} => ($in | str replace $f $r) } }
     } | reject --optional $.module.extra_description
     | if $commands { flatten module } else { get module | rename --column={file: location} }
   } | if $name != null { first } else { sort }
@@ -196,18 +259,17 @@ export def --env main [
   nothing -> oneof<table<name: string, exports: table<name: string, type: string>, path: path>, record<name: string, exports: table<name: string, type: string>, path: path>>
 ] {
   list --update
-  $in | match ($in | describe | split words | first) {
-    closure if $name == null => { error make --unspanned 'name is required when defining a new module' }
-    closure => { define $name $in }
-    nothing if not $all and $name == null and ($env.mods_used | is-not-empty) => { $env.mods_used }
-    nothing => { list --short --overlays=$all $name }
-    record if $in not-has definition and ($in | is-not-empty) => {
-      items {|name definition|
-        if ($name | is-empty) or ($definition | describe) != closure { return }
-        define $name $definition
-      } | compact
+  $in | match ($in | describe) {
+    closure if $name == null => (error make --unspanned 'name is required when defining a new module')
+    closure => (define $name $in)
+    nothing if not $all and $name == null => (list-used | rename --column={key: name value: module_id})
+    nothing => (list --short --overlays=$all $name)
+    _ if $in not-has definition and ($in | is-not-empty) => {
+      transpose name definition
+      | where ($it.name | is-not-empty) and ($it.definition | describe) == closure
+      | par-each {|| define $in.name $in.definition }
     }
-    record => {
+    _ => {
       let m: record = default $name name | default $env.mods_home directory | default false overwrite
       if $m.definition == null { error make --unspanned 'module definition is required' }
       if $m.name == null { error make --unspanned 'name is required when defining a new module' }
@@ -220,10 +282,17 @@ export def --env main [
 
 def _module-names []: nothing -> list { 'use ' | commandline complete | where $it !~ '(.nu|/)$' }
 def _definitions []: nothing -> record {
-  let roots: list<path> = [$config.USER.modules $config.USER.scripts]
-  # Globbed in one pass: a `par-each` per root cost ~2.8ms on every Tab.
-  let files: list<path> = $roots | nu-glob
-  $roots | each {|root|
-    $files | where $it has $root | path relative-to $root | wrap value | insert description ($root | str replace $nu.home-dir '~')
-  } | flatten | into completions {sort: true completion_algorithm: fuzzy match_description: true}
+  $config.USER
+  | get $.modules $.scripts
+  | par-each {|dir|
+    glob --no-dir --depth=3 --exclude=$EXCLUDE ($dir | path rejoin ** *.nu)
+    | path relative-to $dir
+    | wrap value
+    | insert description ($dir | str replace $nu.home-dir '~')
+  } | flatten --all
+  | into completions {
+    sort: true
+    completion_algorithm: fuzzy
+    match_description: true
+  }
 }
