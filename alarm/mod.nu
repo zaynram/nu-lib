@@ -3,103 +3,97 @@
 # nu-lint cannot parse the `job spawn` closure below, so its unused-symbol rules misfire here.
 # nu-lint-ignore-file: unused_parameter, unused_variable
 
-# ——— environment —————————————————————————————————————————————————————————————
+# ——— imports ——————————————————————————————————————————————————————————————————
 
-export-env {
-  let alarms: table<id: int, name: string, time: datetime, then: oneof<closure, nothing>> = []
-  load-env {time: {alarms: $alarms}}
-}
+use std-rfc/kv [ "kv get" "kv set" "kv drop" "kv list" ]
+
+# ——— constants ————————————————————————————————————————————————————————————————
+
+const EMPTY: list<nothing> = []
+
+# ——— aliases ——————————————————————————————————————————————————————————————————
+
+alias set-alarm = kv set --table=alarms
+alias get-alarm = kv get --table=alarms
+alias drop-alarm = kv drop --table=alarms
+alias list-alarms = kv list --table=alarms
 
 # ——— definitions —————————————————————————————————————————————————————————————
 
 # Set an alarm.
 @category productivity
-export def --env set [
-  name: string@_empty # Descriptor for this alarm
+export def set [
+  name: string@$EMPTY # Descriptor for this alarm
   when: oneof<duration, datetime, string>@_suggest-when # When the timer will expire
   --then (-t): closure # Closure to run once the timer expires
   --silent (-s) # Disable default alarm expiration behavior (`clear -k` + print message)
 ]: nothing -> record {
-  if $env.time.alarms.name has $name { error make $'an alarm named ($name) is already set' }
-  let now: datetime = date now
-  let wait: duration = match ($when | describe) {
+  if (get-alarm $name) != null { error make $'an alarm named ($name) is already set' }
+  let now = date now
+  let desc: string = $"alarm::($name)"
+  let time: datetime = match ($when | describe) {
     duration => $when
     datetime => { $when | $in - $now }
     string => { $when | date from-human | $in - $now }
     _ => { error make $'received invalid type for `when` argument' }
-  }
-  let time: datetime = $now + $wait
-
-  # topiary: disable
-  let text: string = {
-      prefix: $"(ansi rb)alarm(ansi rst)\("
-      name: $"(ansi yb)name(ansi rst)=(ansi c)'($name)'(ansi rst)"
-      sep: $"(ansi black_bold),(ansi rst)"
-      time: $"(ansi yb)time(ansi rst)=(ansi w)($time | format date %T)(ansi rst)"
-      suffix: ")\r"
-    } | values | str join
-
-  let item: record = job spawn --description $name {
-    try {
-      sleep $wait
-      if not $silent { clear --keep-scrollback | print $text }
-      if $then != null { do --env --capture-errors $then | print }
-    } catch {
-      ignore
-    } finally {
-      unset $name
-    }
-  } | {id: $in name: $name time: $time then: $then}
-  $env.time.alarms ++= [$item]
-  return $item
+  } | $in + $now
+  plugin use --plugin-config=$nu.plugin-path highlight
+  let text: string = $"alarm!\(name='($name)', time=($time | format date %T))" | highlight Python --theme=Nord
+  let item: record = job spawn --description=$desc {||
+    while (date now) < $time { sleep 1sec }
+    if not $silent { clear --keep-scrollback; print $text }
+    if $then != null { try { print (do --env --capture-errors $then) } catch { print --stderr $in.rendered? } }
+    drop-alarm $name
+  } | {id: $in description: $desc expires_at: $time on_expires: (if $then == null { null } else { view source $then })}
+  set-alarm --return=value $name $item
 }
 
 # Unset an alarm.
 @category productivity
-export def --env unset [
-  name?: string@_alarms # Name of the alarm to abort
-]: oneof<nothing, record<id: int>> -> nothing {
-  let id: oneof<nothing, int> = default {} | get $.id!?
-  let item: record = $env.time.alarms
-    | if $id != null {
-      where id == $id
-    } else if $name != null {
-      where name == $name
-    } else {
-      error make --unspanned 'no name or id was provided'
-    } | first
-    | match ($in | describe) { nothing => { return } _ => { } }
+export def unset [
+  name: string@_alarms # Name of the alarm to abort
+]: nothing -> nothing {
+  let item: oneof<nothing, record> = get-alarm $name
+  if $item == null { return }
   if (job list).id has $item.id { job kill $item.id }
-  $env.time.alarms = $env.time.alarms | where id != $item.id
+  drop-alarm $name | ignore
 }
 
 # List the set alarms.
 @category productivity
 export def list [
   regex: string = .+ # Regex to filter alarm names by
-]: nothing -> table { $env.time.alarms | where name =~ $regex }
+]: nothing -> table { list-alarms | where key =~ $regex }
+
+# Show information about an alarm, if it exists.
+@category productivity
+export def show [
+  name: string@_alarms
+  # Name of the alarm to show information about
+  --errors (-e)
+  # Throw an error instead of returning `null` if the alarm is not found
+]: nothing -> oneof<nothing, record> {
+  get-alarm $name | match ($in | describe) {
+    nothing if $errors => (error make --unspanned $"could not find alarm with name: '($name)'")
+    nothing => null
+    _ => $in
+  }
+}
 
 # Set an alarm to print a message to the terminal.
 @category productivity
-export def --env main [
+export def main [
   name?: string # Name of the alarm to set or check
-  --set: oneof<datetime, duration> # Datetime or duration for the alarm to expire
-  --unset: string@_alarms # Abort the alarm matching `name`
 ]: nothing -> oneof<nothing, record, table> {
-  if $set != null {
-    set ($name | default $'alarm_($env.time.alarms | length)') $set
-  } else if $unset != null {
-    unset $unset
-  } else { list }
+  $name | match ($in | describe) { nothing => (list) string => (show $in) }
 }
 
 # ——— completions —————————————————————————————————————————————————————————————
 
-def _empty []: nothing -> list { [] }
-def _alarms []: nothing -> list { $env.time?.alarms? | default [] | get name }
+def _alarms []: nothing -> list { list-alarms | get key }
+
 def _suggest-when []: nothing -> list {
   let now = date now
-  [1min 5min 10min 15min 20min 30min 1hr 1.5hr 2hr] | each {|dur|
-    $now + $dur | date humanize | $"'($in)'"
-  }
+  [1min 5min 10min 15min 20min 30min 1hr 1.5hr 2hr]
+  | each { $now + $in | date humanize | $"'($in)'" }
 }
