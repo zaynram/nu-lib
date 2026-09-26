@@ -134,10 +134,11 @@ export def is-enabled [
   --strict (-s)
   # Throw an error if the hook cannot be resolved
 ]: nothing -> bool {
-  $ref | default $name | match ($in | describe) {
-    cell-path => { show $in disabled --strict=$strict --default=false }
-    string => { list $in --strict=$strict | get --optional 0.disabled | default false }
-  } | not $in
+  if $ref != null {
+    not (show $ref disabled --strict=$strict --default=false)
+  } else if $name != null {
+    not (list $name --strict=$strict | get $.0?.disabled!? | default false)
+  }
 }
 
 # Retrieve a value from a hook by reference.
@@ -165,7 +166,7 @@ export def show [
       label: {text: reference span: (metadata $ref).span}
     }
   } else {
-    get --optional 0 | if $cell == null { } else { get --optional=(not $strict) $cell }
+    get $.0? | if $cell == null { } else { get --optional=(not $strict) $cell }
   } | default $default
 }
 

@@ -6,78 +6,129 @@ use ../error
 use ../path
 use ../util editor
 use ../completion "into completions"
+use /work/ext/bash-env
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
-const LIB: path = if $nu.os-info.name == windows {
-  $nu.home-dir | path join desktop
-} else {
-  $nu.home-dir | path join library
-}
+const LIB: path = if $nu.os-info.name == windows { $nu.home-dir | path join desktop } else { '/work/dev/' }
 
 # Directories of the user scope.
 export const USER: record = {
-  bin: ($nu.home-dir | path join .local bin)
   lib: $LIB
-  data: ($nu.data-dir | path dirname)
+  bin: ($nu.home-dir | path join .local bin)
   home: $nu.home-dir
+  config: ($nu.home-dir | path join .config)
+  data: ($nu.home-dir | path join .local share)
+  cache: ($nu.home-dir | path join .cache)
+  state: ($nu.home-dir | path join .local state)
   autoload: $nu.user-autoload-dirs.0?
-  modules: ($LIB | path join nushell)
-  config: ($nu.default-config-dir | path dirname)
+  modules: ($LIB | path join nu)
   plugins: ($nu.current-exe | path expand | path dirname)
-  scripts: ($nu.data-dir | path join scripts)
-  cache: ($nu.cache-dir | path dirname)
+  scripts: /work/bin/
 }
 
 # Directories of the vendor scope.
 export const VENDOR: record = {
-  bin: (
-    if $nu.os-info.name == windows {
-      $nu.home-dir | path join AppData Local Microsoft WindowsApps
-    } else if $nu.os-info.name == macos {
-      '/opt/homebrew/bin/'
-    } else if $nu.os-info.name == linux {
-      '/home/linuxbrew/.linuxbrew/bin'
-    }
-  )
+  bin: (if $nu.os-info.name != windows { '/usr/bin' } else { $nu.home-dir | path join AppData Local Microsoft WindowsApps })
   autoload: (if $nu.os-info.name == windows { $nu.vendor-autoload-dirs.1 } else { $nu.vendor-autoload-dirs.2 })
   plugins: ($nu.data-dir | path join plugins (version).version)
-  modules: ($nu.data-dir | path basename --replace nupm/modules)
-  scripts: ($nu.data-dir | path basename --replace nupm/scripts)
+  modules: ($USER.data | path join nupm modules)
+  scripts: ($USER.data | path join nupm scripts)
 }
 
 # Environment variables of the user scope.
 const VARS: record = {
-  XDG_CONFIG_HOME: $USER.config
-  XDG_DATA_HOME: $USER.data
-  PNPM_HOME: ($USER.data | path join pnpm)
   NUPM_HOME: ($USER.data | path join nupm)
   TOPIARY_CONFIG_FILE: ($USER.config | path join topiary languages.ncl)
   TOPIARY_LANGUAGE_DIR: ($USER.config | path join topiary queries)
   GOPATH: ($USER.data | path join go)
-  GO_BIN: $USER.bin
+  GOBIN: $USER.bin
 }
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
+def profile-env [
+  profile: path = ($nu.home-dir | path join .profile)
+]: nothing -> record {
+  if not ($profile | path exists) { error make --unspanned $"file not found: '($profile)'" }
+  bash-env --return=merge $profile | match ($in.path!? | describe) {
+    nothing | list<any> | list<string> => { }
+    string => { update $.path! { split row (char esep) } }
+  }
+}
+
 alias xglob = glob --depth=3 --exclude=[
+  **/google-chrome-for-testing/**
+  **/nushell/*history*
+  **/nushell/autoload/**
+  **/helix/runtime/**
+  **/helix/grammars/**
+  **/helix/queries/**
+  **/vale/styles/**
+  **/plugins/**
   **/*.yazi/**
-  `**/{.vscode,.git*,plugins,vale/styles}/**`
-  `**/helix/{runtime,grammars,queries}/**`
-  `**/{logs,Code - Insiders,google-chrome-for-testing}/**`
-  `**/nushell/{autoload/*,history.txt}`
-  **/.nu-lint.toml
-  `**/*.{*bck,*shm,*wal,msgpackz,sqlite3,wasm}`
+  **/.vscode/**
+  **/.git*/**
+  **/*Cookie*
+  **/*Token*/**
+  **/*Decode*/**
+  **/*Storage*/**
+  **/*Cache*/**
+  **/*cache*/**
+  **/Partitions*/**
+  **/Crashpad*/**
+  **/*proto*/**
+  **/sentry/**
+  **/Shared*
+  **/Singleton*
+  **/Transport*
+  **/*DB*/**
+  **/*db*/**
+  **/logs/**
+  **/*.*.*/**
+  **/*tokens.*
+  **/*Tokens*
+  **/*.*bck
+  **/*.*shm
+  **/*.*wal
+  **/*.msgpackz
+  **/*.sqlite3
+  **/*.wasm
+  **/*.bdic
+  **/*.db*
+  **/*.pem
+  **/.org.chromium*
+  **/ant-*
+  **/LOCK
+  **/LOG
+  **/DIPS
+  **/*cache
+  **/InterestGroups
+  **/Preferences
+  '**/* */**'
+  '**/* *'
 ]
 
 def scope [vendor: bool]: nothing -> record { if $vendor { $VENDOR } else { $USER } }
 
+def homebrew-bin []: nothing -> oneof<nothing, path> {
+  match $nu.os-info.name {
+    macos => '/opt/homebrew/bin'
+    linux => ($nu.home-dir | path basename --replace linuxbrew/.linuxbrew/bin)
+  } | if $in != null and ($in | path exists) { }
+}
+
+alias find-bin-dirs = glob --no-file --depth=2 --exclude=[**/.vscode-server-insiders/**] ($USER.home | path rejoin ** bin)
+alias find-script-dirs = glob --no-file --no-symlink --exclude=[**/_internal/**] ($USER.scripts | path rejoin **)
+
 # Directories a scope contributes to PATH that are not on it yet.
 def new-paths [vendor: bool]: nothing -> list<path> {
-  if $vendor { [$VENDOR.bin $VENDOR.scripts] } else {
-    glob --no-file --depth=2 --exclude=[**/.vscode-server-insiders/**] ($USER.home | path rejoin ** bin)
-    | append (glob --no-file --no-symlink --exclude=[**/_internal/**] ($USER.scripts | path rejoin **))
-  } | difference $env.PATH
+  if $vendor {
+    [$VENDOR.bin $VENDOR.scripts (homebrew-bin)]
+  } else {
+    [$USER.scripts ...(find-bin-dirs)]
+  } | compact
+  | difference $env.PATH
 }
 
 # Open a resolved file in the editor, or return its expanded path.
@@ -98,15 +149,15 @@ export def --env vars [
   --vendor (-v) # Use the vendor scope
   --with (-w): record = {} # Merge these variables in, overriding the scope's own
   --load (-l) # Load the variables into the current process
-  --show (-s) # Return the variables as a record (the default when not loading)
+  --return (-r) # Return the variables as a record (the default when not loading)
 ]: oneof<nothing, record> -> oneof<nothing, record> {
   let input: record = default {}
-  let e: record = if $vendor { {} } else { $VARS }
+  let e: record = if $vendor { {} } else { profile-env | merge $VARS }
     | merge $input
     | merge $with
-    | upsert PATH { default $env.PATH | prepend (new-paths $vendor) }
+    | upsert PATH { default $env.path! | prepend (new-paths $vendor) | uniq }
   if $load { $e | load-env }
-  if $show or not $load { return $e }
+  if $return or not $load { return $e }
 }
 
 # Navigate to (or return) a directory of a scope; with no target, return them all.

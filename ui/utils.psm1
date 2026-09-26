@@ -1,4 +1,4 @@
-# ~/library/nushell/_internal/disp/utils.psm1
+# /work/dev/nu/ui/utils.psm1
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;

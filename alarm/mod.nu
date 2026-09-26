@@ -38,7 +38,7 @@ export def set [
     _ => { error make $'received invalid type for `when` argument' }
   } | $in + $now
   plugin use --plugin-config=$nu.plugin-path highlight
-  let text: string = $"alarm!\(name='($name)', time=($time | format date %T))" | highlight Python --theme=Nord
+  let text: string = $"alarm\('($name)', time='($time | format date %T)')" | highlight Python --theme=Nord
   let item: record = job spawn --description=$desc {||
     while (date now) < $time { sleep 1sec }
     if not $silent { clear --keep-scrollback; print $text }
@@ -63,7 +63,7 @@ export def unset [
 @category productivity
 export def list [
   regex: string = .+ # Regex to filter alarm names by
-]: nothing -> table { list-alarms | where key =~ $regex }
+]: nothing -> table { list-alarms | where key =~ $regex | flatten --all | rename --column={key: name description: desc} }
 
 # Show information about an alarm, if it exists.
 @category productivity

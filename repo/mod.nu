@@ -1,8 +1,11 @@
 # Repository aggregation utilities and resolvers (GitHub-only for now).
 
+# TODO: remove this module after replacing all references with `proj`/`work`/`todo` methods
+
+use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
 use ../path
 
-# ——— constants ———————————————————————————————————————————————————————————————
+# ——— constants ————————————————————————————————————————————————————————————————
 
 const COLS: list<string> = [
   name
@@ -18,88 +21,77 @@ const COLS: list<string> = [
   stashes
 ]
 
-# ——— definitions —————————————————————————————————————————————————————————————
+# ——— aliases ——————————————————————————————————————————————————————————————————
 
-export-env {
-  # Only set the conversion if it is not already loaded (avoids serialization round-trip).
-  if $env.ENV_CONVERSIONS not-has repo {
-    $env.ENV_CONVERSIONS.repo = {
-      from_string: {|s?|
-        $s | default $env.repo? | try {
-          parse --regex `(?<discovery>\d{1})@(?<path>.*)`
-          | into record
-          | update discovery { into bool }
-          | update path { split row (char esep) | uniq | hydrate-git-context }
-        } catch {
-          return {discovery: false cache: null path: []}
-        }
-      }
-      to_string: {|v?|
-        if ($v | describe) =~ '^(nothing|string)$' { return ($v | to text) }
-        let n: int = $v.discovery? | default false | into int
-        let p: string = $v.path? | default [] | get $.directory? | compact | uniq | str join (char esep)
-        return $"($n)@($p)"
-      }
-    }
-  }
-  # Skip remaining initialization unless de-serializing or setting defaults.
-  if $env not-has repo or ($env.repo? | describe) == string { env --load }
+alias set-repo = kv set --universal --table=repositories
+alias get-repo = kv get --universal --table=repositories
+alias drop-repo = kv drop --universal --table=repositories
+alias list-repo = kv list --universal --table=repositories
+
+def repo-snapshot []: nothing -> record {
+  list-repo | default --empty {
+    set-repo discovery {enabled: false root: $nu.home-dir}
+    set-repo path []
+    set-repo hidden ['**/.*/**']
+    set-repo cache ($nu.cache-dir | path join repositories.nuon)
+    list-repo
+  } | transpose --ignore-titles --header-row --as-record
 }
 
-# Load the `repo` module environment.
+# ——— definitions ——————————————————————————————————————————————————————————————
+
+# Initialize the `repo` module data using `kv [get|set|drop|list] --universal --table=repositories`.
 @category env
-export def --env env [
-  --discover (-d)
-  # Enable repository search behavior (sets `$env.repo.discovery` to `true` with `--load`)
-  --load (-l)
-  # Load the environment into the current process, if not done so already
+export def init [
+  --search: directory
+  # The directory to start scanning from when discovering repositories (implies `--discover`)
+  --discovery (-d)
+  # Enable repository search behavior (sets `discovery` to `true`)
   --return (-r)
-  # Return the value that would be set as `$env.repo` instead of setting it
+  # Return the value after setting it
 ]: nothing -> oneof<nothing, record> {
-  # Always reassign to pick up environment changes and gracefully handle [de-]serialization issues on load.
-  let repo = $env.repo?
-    | match ($in | describe | parse --regex '^(?<type>\w*)' | get 0.type) {
-      record => { }
-      # Sensible defaults for missing or null values.
-      nothing => {discovery: false cache: null path: []}
-      # Process termination can cause converter to unload while retaining the variable value, which can block reinitialization and throw errors on every command.
-      # To avoid this case, we convert strings manually if detected when this module loads.
-      string => { do --capture-errors $env.ENV_CONVERSIONS.repo.from_string $in }
-      $t => { error make --unspanned $'received unknown type for `$env.repo`: ($t)' }
-    } | into record
-    # Upsert here the branches to ensure `$env.repo.discovery` is evaluated.
-    | upsert discovery { $in or $discover }
-    | if $in.discovery {
-      upsert path { append (discover-git-repos | hydrate-git-context) | uniq-by name }
-    } else { }
-  if $load { $env.repo = $repo } else { return $repo }
+  let current: record = repo-snapshot
+  if $discovery or $search != null {
+    set-repo discovery {enabled: true root: ($search | default $current.discovery.root)}
+  }
+  get-repo discovery
+  | if $in.enabled {
+    discover-git-repos $in.root
+    | hydrate-git-context
+    | prepend $current.path
+    | uniq-by name
+    | set-repo path
+  }
+  if $return { repo-snapshot }
 }
 
-# Add a project directory to the `$env.repo.path`.
+# Add a project directory to the table of known repositories.
 @category git
-export def --env push [
-  --search (-s): list<directory> = [] # Search for all git repositories within these directories
+export def push [
+  --search (-s): directory # Search for all git repositories within this directories
   --preview (-p) # Return the hydrated entry without altering enviornment variables
-  --all (-a) # Search for all git repositories within three levels of the user's home directory
+  --all (-a) # Search for all git repositories within three levels of the existing `discovery.root` directory
 ]: [
   nothing -> table<name: string, owner: string, path: directory>
   list<directory> -> table<name: string, owner: string, path: directory>
   table<name: path> -> table<name: string, owner: string, path: directory>
 ] {
-  match ($in | describe) {
+  let input: oneof<nothing, list, table>;
+  let current: record = repo-snapshot
+  $input | match ($in | describe) {
     nothing => [
       ...($in | default [])
-      ...(if $all { discover-git-repos } | default [])
-      ...($search | par-each { discover-git-repos $in --depth=2 } | flatten)
+      ...(if $all { discover-git-repos $current.discovery.root } | default [])
+      ...(if $search != null { discover-git-repos $search --depth=3 })
     ]
     list<string> | list<any> => { }
     _ => { get name }
   } | uniq
   | if ($in | is-empty) { error make --unspanned 'no repositories found' } else { }
-  | difference $env.repo.path.directory
+  | difference $current.path.directory?
   | hydrate-git-context
-  | if $preview { return $in } else if ($in | is-not-empty) { $env.repo.path ++= $in }
-  return $env.repo.path
+  | if $preview { return $in } else if ($in | is-not-empty) { set-repo path }
+  return (get-repo path)
 }
 
 # List the configured `git` repository names, their directories, and their owners.
@@ -107,81 +99,73 @@ export def --env push [
 export def list [
   regex?: string # Filter the included repositories using regex
 ]: nothing -> table {
-  $env.repo.path | match $regex { null => { } $r => { where name =~ $r } }
+  (repo-snapshot).path | match ($regex | describe) { nothing => { } string => { where name =~ $regex } }
 }
 
 # Aggregate a repository's issue and sub-issue hierarchy into a table.
 @category git
 export def tree [
-  name?: string@_repo-names # The name of the repository the issue belongs to
+  name: string@_repo-names # The name of the repository the issue belongs to
   --number (-n): int@_issue-numbers # The number of a parent issue to show the children nodes for
   --short (-s) # Only include sub-issue summary data, not the full sub-issue entries
 ]: nothing -> table<number: int, title: string, state: string, subissues: oneof<record, list>> {
-  if $name == null { error make --unspanned 'no repository was specified' }
-  resolve-repo-name $name
-  | wrap name
-  | default [number title state] json
-  | update json { if $short { append [subIssuesSummary] } else { append [parent subIssues] } | str join , }
-  | insert args {|row| match $number { null => [list] $n => [view $n] } | append [--json=($row.json)] }
-  | collect {|row|
-    $row.name
-    | run-gh-with-repo issue ...$row.args
-    | from json
-    | prune-tree-nodes
-    | update number { into int }
-    | match $number { null => { select ...$row.json } _ => { compact --empty } }
-    | if $short {
-      rename --column={subIssuesSummary: summary}
-    } else {
-      update subIssues { get nodes | reject url }
-      | update parent { reject url }
-    }
+  let view: bool = ($number | describe) == int
+  let json: list = [number title state ...(if $short { [subIssuesSummary] } else { [parent subIssues] })]
+  let repo: string = resolve-repo-name $name | format-repo-option
+  ^gh issue --repo=($repo) ...(if $view { [view $number] } else { [list] }) --json=($json | str join ',')
+  | ignore --stderr
+  | from json
+  | prune-tree-nodes
+  | into int $.number!?
+  | if $view { compact --empty } else { select ...$json }
+  | if $short {
+    rename --column={subIssuesSummary: summary}
+  } else {
+    upsert subIssues { default {nodes: []} | get nodes | reject $.url!? }
+    | upsert parent { default {} | reject $.url!? }
   }
 }
 
 # List the `git` repositories in the configured projects directory.
 @category git
-export def --env show [
+export def show [
   regex: string = .+ # Regex pattern to match repository directory names
   --dirty (-d) # Only include repositories with non-clean states
   --gstat (-g) # Merge `gstat` informational columns instead of manual (only applies with `--status`)
   --fetch (-f) # Run `git fetch` before collecting information (forces `--no-cache`)
   --cache (-c) = true # Set false to force invalidation of any cached status values
 ]: nothing -> table {
+  let current: record = repo-snapshot
   try {
-    validate-cache (if $cache { 4hr } else { 1hr })
+    $current | validate-cache (if $cache { 4hr } else { 1hr })
   } catch {
-    mkdir $nu.cache-dir
-    let nuon: path = $env.repo.cache? | default { $nu.cache-dir | path join repositories.nuon }
-    $env.repo.cache = $nuon
-    let data: table = try { open $nuon } | default []
-    rm --force $nuon
-    $env.repo.path | where name =~ $regex | par-each {|row|
-      alias _git = git -C $row.directory
-      if $fetch { _git fetch --all | complete | ignore }
-      if $gstat {
-        collect-gstat-data $row.directory
-        | if $dirty and $in.state == clean { ignore } else { }
+    let data: table = $current.cache | if ($in | path exists) {
+        open | collect {|x| rm --force $current.cache; $x }
       } else {
-        _git status --short out+err>| to text
+        mkdir ($in | path dirname); []
+      }
+    $current.path
+    | where name =~ $regex
+    | par-each {|row|
+      alias wrapped = ^git -C $row.directory
+      if $fetch { wrapped fetch --all | ignore --stdout --stderr }
+      if $gstat {
+        collect-gstat-data $row.directory | if not $dirty or $in.state != clean { }
+      } else {
+        wrapped status --short
+        | ignore --stderr
         | parse-status-lines
-        | if $dirty and ($in | is-empty) { ignore } else {
-          let state: record = $in
-          _git branch --show-current out+err>| to text
-          | str trim
-          | wrap branch
-          | insert name $row.name
-          | merge $state
+        | if not $dirty and ($in | is-not-empty) {
+          {name: $row.name branch: (wrapped branch --show-current | ignore --stderr) ...$in}
         }
       }
     } | compact
-    | collect {|out|
-      if ($out | is-empty) { return [] }
-      $data
-      | where name not-in $out.name
-      | append $out
-      | save --progress --force $nuon
-      return $out
+    | if ($in | is-not-empty) {
+      let merged: table = prepend $data | uniq-by name --keep-last
+      $merged | save --force $current.cache
+      return $merged
+    } else {
+      return []
     }
   }
 }
@@ -198,29 +182,26 @@ export def x [
 ]: oneof<any, nothing> -> oneof<any, nothing> {
   let repo: record = resolve-repo-name $name
   cd $repo.directory
-  $in | if $suppress {
-    do --ignore-errors $closure $repo
-  } else {
-    do --capture-errors $closure $repo
-  }
+  $in | do --ignore-errors=$suppress $closure $repo
 }
 
 # ——— utilities ———————————————————————————————————————————————————————————————
 
-def validate-cache [ttl: duration = 4hr]: nothing -> oneof<table, error> {
-  if $env.repo?.cache? == null or not ($env.repo.cache | path exists) {
+def validate-cache [ttl: duration = 4hr]: oneof<nothing, record> -> oneof<table, error> {
+  let current: record = default (repo-snapshot)
+  $current.cache | if $in == null or not ($in | path exists) {
     error make --unspanned 'repository cache file does not exist'
-  }
-  if (ls $env.repo.cache | where modified > (date now | $in - $ttl) | is-empty) {
+  } else if (ls $in | where modified > ((date now) - $ttl) | is-empty) {
     error make --unspanned $"repository cache file is stale \(TTL: ($ttl))"
+  } else {
+    let data: table = open $in
+    if ($current.path | length) == ($data | length) { return $data }
+    error make --unspanned 'repository inventory has been modified since last cache write'
   }
-  let data: table = open $env.repo.cache
-  if ($env.repo.path | length) == ($data | length) { return $data }
-  error make --unspanned 'repository inventory has been modified since last cache write'
 }
 
 def prune-tree-nodes []: [table -> table record -> record] {
-  match ($in | describe | split words | first) {
+  match ($in | describe | str replace --regex '<.+$' '') {
     record => { }
     table => { where { get --optional parent subIssues subIssuesSummary | compact | any { is-not-empty } } }
   }
@@ -231,14 +212,14 @@ def hydrate-git-context []: oneof<directory, list<directory>> -> table<name: str
   | where ($it | path type) == dir
   | uniq
   | par-each {|dir|
-    git -C $dir config --get remote.origin.url out+err>|
+    ^git -C $dir config --get remote.origin.url out+err>|
     | complete
     | match $in.exit_code { 0 => { get stdout | str trim } _ => { return } }
     | parse --regex '(?<prefix>git@|https://)github.com[/\:](?<owner>\w+)/(?<name>[\w\-]+).git'
     | reject prefix
     | into record
-    | upsert name { default { $dir | path dirname } }
-    | upsert owner { default { default-owner-name } }
+    | default --empty ($dir | path dirname) name
+    | default --empty (default-owner-name) owner
     | insert directory $dir
   } | collect
   | where $it has owner and $it has name
@@ -252,10 +233,10 @@ def default-owner-name []: nothing -> string {
 }
 
 def discover-git-repos [
-  root: directory = $nu.home-dir
+  root: directory
   --depth: int = 3
 ]: nothing -> list<directory> {
-  let exclude: list<string> = $env.repo_exclude!? | default ['**/.*/**']
+  let exclude: list<string> = get-repo hidden | default ['**/.*/**']
   let include: glob = $root | path rejoin ** | into glob
   glob --depth=$depth --no-file --no-symlink --exclude=$exclude $include
   | where ($it | path join .git | path type) == dir
@@ -278,7 +259,8 @@ def parse-status-lines []: string -> record {
   lines | str trim | compact --empty | if ($in | is-empty) {
     return {}
   } else {
-    parse '{marker} {path}' | each {|ln|
+    parse '{marker} {path}'
+    | par-each --keep-order {|ln|
       match $ln.marker {
         ?? => {untracked: $ln.path}
         M | m => {modified: $ln.path}
@@ -295,30 +277,12 @@ def parse-status-lines []: string -> record {
 def resolve-repo-name [
   name: string
 ]: nothing -> record<name: string, owner: string, directory: path> {
-  $env.repo?.path | where name == ($name | str trim) | if ($in | is-not-empty) {
-    return $in.0
-  } else {
+  get-repo path | default [] | where name == $name | first | default {
     error make --unspanned $"unable to resolve repository '($name)'"
   }
 }
 
 def format-repo-option []: record<owner: string, name: string> -> string { get owner name | path join }
-
-def --wrapped run-gh-with-repo [subcommand: string ...rest: string]: record<owner: string, name: string> -> string {
-  gh $subcommand --repo=($in | format-repo-option) ...$rest
-  | complete
-  | match $in {
-    {exit_code: 0 stdout: $s} => { return $s }
-    {exit_code: $n stderr: $s} => {
-      error make {
-        msg: $'github CLI exited with code ($n)'
-        code: `common::repo::gh::non_zero_exit_code`
-        label: {text: arguments span: (metadata $rest).span}
-        help: $"[stderr]\n($s)"
-      }
-    }
-  }
-}
 
 # ——— completions ——————————————————————————————————————————————————————————————
 
@@ -330,7 +294,8 @@ def _repo-names []: nothing -> record {
       completion_algorithm: fuzzy
     }
     completions: (
-      $env.repo?.path
+      get-repo path
+      | default []
       | insert description {|row| $"[($row.owner)] ($row.directory)" }
       | rename --column={name: value}
       | select value description

@@ -1,8 +1,8 @@
 # Install Nushell plugins from GitHub repositories.
 
 const REGEX: record = {
-  gh-repo: `^(?<owner>\w[\w.-]*)/(?<name>\w[\w.-]*)$`
-  nu-plugin: `^nu_plugin_(?<name>\w[\w.-]*)$`
+  remote: `^(?<owner>\w[\w.-]*)/(?<name>\w[\w.-]*)$`
+  local: `^nu_plugin_(?<name>\w[\w.-]*)$`
 }
 
 # Install a plugin using cargo and automatically register it.
@@ -10,37 +10,33 @@ const REGEX: record = {
 export def install [
   plugin: string # Specifier for the plugin (`nu_plugin_<name>` or `<owner>/<name>`)
 ]: nothing -> nothing {
-  let mode: record<id: string, regex: string> = $REGEX
-    | transpose id regex
-    | where $plugin =~ $it.regex
-    | first
-    | if $in == null { error make --unspanned 'plugin name or git is required' } else { }
-  let name: string = $plugin | parse --regex $mode.regex | into record | get name
-  let path: path = $env.CARGO_HOME?
-    | default { $nu.home-dir | path join .cargo }
+  let git: bool = not ($plugin starts-with nu_plugin)
+  let regex: string = $REGEX | if $git { get $.remote } else { get $.local }
+  let name: oneof<nothing, string> = $plugin | parse --regex $regex | into record | get $.name?
+  if $name == null { error make --unspanned $"unable to parse source information from '($plugin)'" }
+  let path: path = match ($env | select $.cargo_home!? $.xdg_data_home!? | compact) {
+    {cargo_home: $c} => $c
+    {xdg_data_home: $x} => (glob --no-file --no-symlink --depth=1 $"($x)/{.cargo,cargo}").0?
+  } | default ($nu.home-dir | path join .cargo)
+    | if ($in | path exists) { } else { error make --unspanned 'unable to resolve CARGO_HOME directory' }
     | path join bin $name
-  let args: list<string> = match $mode.id {
-    gh-repo => [--git $'https://github.com/($plugin).git']
-    nu-plugin => [$plugin]
-  }
-
-  cargo install ...$args out+err>|
+  let args: list = if $git { [--git $'https://github.com/($plugin).git'] } else { [$plugin] }
+  do --capture-errors { ^cargo install ...$args }
   | complete
   | if $in.exit_code != 0 {
     error make {
       msg: "`cargo install` exited with non-zero exit code"
       code: `common::plugin::external_cargo_error`
-      help: $"[output]\n($in.stdout)"
-      label: {text: args span: (metadata $args).span}
+      help: $"[stdout]\n($in.stdout)\n[stderr]\n($in.stderr)"
     }
-  }
-
-  try { plugin add $path } catch {
-    error make {
-      msg: 'unable to register plugin'
-      code: `common::plugin::plugin_builtin_error`
-      label: {text: plugin span: (metadata $plugin).span}
-      help: $"ensure directory '($path)' contains the '($name)' binary"
+  } else {
+    try { plugin add $path } catch {
+      error make {
+        msg: 'unable to register plugin'
+        code: `common::plugin::plugin_builtin_error`
+        label: {text: plugin span: (metadata $plugin).span}
+        help: $"ensure directory '($path)' contains the '($name)' binary"
+      }
     }
   }
 }

@@ -21,8 +21,25 @@ export def main [
   # Don't throw an error if the variable is not found
   --ignore-case (-i) = true
   # Retrieve the value with case-insensitive name matching
+  --exclude (-e): list<cell-path> = [
+    $.config!
+    $.env_conversions!
+    $.prompt_command!
+    $.prompt_command_right!
+    $.prompt_indicator!
+    $.prompt_indicator_vi_insert!
+    $.prompt_indicator_vi_normal!
+    $.prompt_multiline_indicator!
+    $.transient_prompt_command!
+    $.transient_prompt_command_right!
+    $.transient_prompt_multiline_indicator!
+    $.reedline_lsp_servers!?
+    $.pyenv_virtualenv_disable_prompt!?
+    $.virtual_env_disable_prompt!?
+  ]
+  # Variables to exclude when no `names` are given
 ]: nothing -> oneof<nothing, string, record, any> {
-  if ($names | is-empty) { return $env }
+  if $names == [] { return ($env | reject ...$exclude) }
   let name: cell-path = $names | first
   let rest: list = $names | skip
   $env | get --optional=($optional) --ignore-case=($ignore_case) $name ...$rest

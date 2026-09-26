@@ -17,4 +17,4 @@ export def --env env [
   if $show or not $load { return $e }
 }
 
-export-env { config vars --vendor --show | env --load }
+export-env { config vars --vendor | env --load }
