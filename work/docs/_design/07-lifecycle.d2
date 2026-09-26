@@ -1,0 +1,187 @@
+# Lifecycle trace for one ticket, happy path first, then the practical breakdowns.
+# Source: dev/docs/2026-09-18_dev-sync.bindings.md (D6 to D9, Breakdowns table).
+# Conventions (same as 06-ownership.d2, plus):
+#   - shape: sequence_diagram; actors declared first, in the order they are read
+#   - one group per lifecycle stage, numbered; breakdown groups prefixed "W"
+#   - a message label names the exact command or API call; a quoted note names a rule
+#   - quote any label containing ; # { } [ ] (an unquoted # starts a comment; an unquoted ; ends the statement and the stray tail becomes a
+#     node and d2 0.7.1 then emits an overflowed SVG height with no lifelines, found 2026-09-19)
+#   - class drift marks messages that end in an error row instead of a write
+
+shape: sequence_diagram
+
+classes: {
+  drift: {
+    style: {
+      stroke: "#b00020"
+      font-color: "#b00020"
+    }
+  }
+  rule: {
+    style: {
+      fill: "#fff3cd"
+    }
+  }
+}
+
+you: You {
+  shape: person
+}
+todoist: Todoist
+dev: dev
+file: docs/tickets/<slug>.toml
+remote: remote issue
+
+s1: 1 capture (any surface) {
+  you -> todoist: add task "slug" in the repository's project, label ?stub or ?seed
+  todoist."dev ignores it: no file exists yet, and ?-labelled tasks are skipped by sync (D7)" {
+    class: rule
+  }
+}
+
+s2: 2 define {
+  you -> dev: dev new <slug>
+  dev -> file: write draft (version, slug, date, status = draft, empty body)
+  dev."seed: dev migrate <slug>, or dev new <slug> --prompt --files <issue.md>" {
+    class: rule
+  }
+}
+
+s3: 3 link (first dev sync) {
+  you -> dev: dev sync <slug>
+  dev -> file: read
+  dev -> todoist: "find content = slug across projects, open then completed (error on more than one; report a wrong project)"
+  alt-found: found {
+    dev -> file: "write reference.todoist {id url}"
+  }
+  alt-missing: missing {
+    dev -> todoist: "todo add slug --project <mapped> --labels [%deliverable if output non-empty else %actionable]"
+    dev -> file: "write reference.todoist {id url}"
+  }
+  dev -> todoist: list direct subtasks of id
+  dev -> file: "rebuild [[tasks]] from the reads"
+  dev."status = draft: the remote leg is skipped (D6); afterwards matching is by reference.todoist.id (D7)" {
+    class: rule
+  }
+}
+
+s4: 4 open {
+  you -> dev: "dev edit <slug> --set {status: open, target: v0.4.0}"
+  you -> dev: dev sync <slug>
+  dev -> todoist: find version target "<repo>@v0.4.0" in the parent project
+  dev -> remote: ensure milestone "v0.4.0" (state from checked, due from due)
+  dev -> remote: create issue, title = slug, body = dev <slug> --md (checklist from rows), milestone = v0.4.0
+  dev -> file: "write reference.remote {index url branch = slug}"
+  dev -> todoist: "ticket description: link line replaced if present, else prepended (D12)"
+  dev -> todoist: "version target description: arrow line → <repo>#N <repo>#M ... replaced if present, else prepended (D12)"
+  dev."target set but no <repo>@<target> task: error naming dev sync <slug> --create-target, which adds it to the parent project with no section and no labels (D8)" {
+    class: rule
+  }
+}
+
+s5: 5 work {
+  you -> todoist: (phone) add subtask "write failing test"
+  you -> dev: "dev edit <slug> --add-task {content: ...}"
+  dev -> todoist: todo add --parent id:<id>
+  you -> dev: dev edit <slug> --complete "write failing test"
+  dev -> todoist: find subtask by content under id, todo done id:<sub>
+  dev -> todoist: list direct subtasks
+  dev -> file: "replace [[tasks]]"
+  you -> dev: dev sync <slug>
+  dev -> remote: update body (checklist reflects checked rows)
+  you -> remote: "(browser) tick the box for 'write docs' in ## Tasks"
+  you -> dev: dev sync <slug>
+  dev -> remote: read body, box differs from the mirror, subtask unchanged in Todoist
+  dev -> todoist: todo done id:<sub>
+  dev -> file: "replace [[tasks]]"
+  dev -> remote: update body
+  dev."subtask toggled in Todoist since the last sync: nothing applied, mirrored; with two states a conflict cannot occur (D8)" {
+    class: rule
+  }
+  file."git switch -c <slug>: the track hook resolves the branch to the task" {
+    class: rule
+  }
+}
+
+s6: 6 close {
+  you -> todoist: check the ticket task (phone)
+  you -> dev: dev sync <slug>
+  dev -> todoist: view id --full, checked = true
+  dev -> file: status = done
+  dev -> remote: close issue, reason completed
+  abort: abort instead {
+    you -> dev: "dev edit <slug> --set {status: aborted}"
+    dev -> remote: close issue, reason not planned
+    dev -> todoist: complete the task
+  }
+  reopen: reopen {
+    you -> todoist: uncheck the ticket task
+    you -> dev: dev sync <slug>
+    dev -> file: status = open
+    dev -> remote: reopen issue
+  }
+  dev."closure is accepted from any surface; reopening from Todoist only (D6)" {
+    class: rule
+  }
+}
+
+w1: W1 renamed in Todoist {
+  you -> todoist: (phone) rename content to "slug-v2"
+  you -> dev: dev sync <slug>
+  dev -> todoist: view id --full, content != slug
+  dev -> you: error row, content drifted, nothing written {
+    class: drift
+  }
+}
+
+w2: W2 pruned in Todoist {
+  you -> todoist: delete the task (biweekly prune chore)
+  you -> dev: dev sync <slug>
+  dev -> todoist: view id --full, isDeleted
+  dev -> you: error row, task gone, set aborted or clear the reference {
+    class: drift
+  }
+  dev."report only; auto-abort waits for usage to prove the need (D7)" {
+    class: rule
+  }
+}
+
+w3: W3 closed on the remote first {
+  you -> remote: "merge PR with 'closes #N'"
+  you -> dev: dev sync <slug>
+  dev -> remote: issue closed, todoist unchecked
+  dev -> todoist: complete the task
+  dev -> file: status = done
+  reopened: issue reopened on the host while the task is checked {
+    dev -> you: reported, not applied (D6) {
+      class: drift
+    }
+  }
+}
+
+w4: W4 half a sync {
+  you -> dev: dev sync <slug>
+  dev -> todoist: ensure task, pull rows (ok)
+  dev -> remote: create issue (auth fails)
+  dev -> you: result row names the failed leg and the next command {
+    class: drift
+  }
+  you -> dev: dev sync <slug> again
+  dev -> todoist: ensure steps find nothing to do
+  dev -> remote: create issue (ok)
+}
+
+w5: W5 version target renamed or released early {
+  you -> todoist: (phone) rename "nu-fluency@v0.4.0" to "nu-fluency@v0.4.1"
+  you -> dev: dev sync <slug>
+  dev -> todoist: no task matches target v0.4.0
+  dev -> you: error row naming --create-target, nothing written {
+    class: drift
+  }
+  you -> todoist: check "nu-fluency@v0.4.0" while member tickets are open
+  you -> dev: dev sync --all
+  dev -> remote: close milestone v0.4.0, open issues stay assigned
+  dev."mirrors Todoist: a closed milestone with open issues is allowed on both sides (D8)" {
+    class: rule
+  }
+}

@@ -1,0 +1,125 @@
+# Ownership map for the dev module: which surface owns which datum.
+# Source: dev/docs/2026-09-18_dev-sync.bindings.md (Ownership table) and the core spec's Ownership.
+# Conventions (every D2 file in this repo):
+#   - kebab-case identifiers, human labels after the colon; quote labels containing ; # { } [ ]
+#   - one top-level container per surface, named after the surface
+#   - classes carry meaning: owner (solid, thick), mirror (dashed), projection (dotted)
+#   - edge labels name the command or sync step that moves the datum
+#   - direction: right; layout: elk (handles nested containers)
+
+direction: right
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+
+classes: {
+  owner: {
+    style: {
+      stroke-width: 3
+    }
+  }
+  mirror: {
+    style: {
+      stroke-dash: 5
+    }
+  }
+  projection: {
+    style: {
+      stroke-dash: 2
+      opacity: 0.8
+    }
+  }
+}
+
+todoist: Todoist (owns existence, kind, rows, reopening) {
+  parent: parent project of the repository's project {
+    target: version target {
+      class: owner
+      label: "version-target task\ncontent = <repo>@<target>\nchecked, due\nlabels are the user's (^ : # ?)\ndescription: first line is the sync-owned arrow line"
+    }
+  }
+  project: project named after the repository, or one of its aliases {
+    task: ticket task {
+      class: owner
+      label: "ticket task\ncontent = slug\nlabel %deliverable | %actionable (set once by sync)\nchecked\ndescription: first line is the sync-owned link line"
+    }
+    subtasks: rows {
+      class: owner
+      label: "direct subtasks\ncontent, description,\nat most one of -human | -agent | -mixed,\nchecked"
+    }
+    task -> subtasks: parent
+  }
+}
+
+local: local repository {
+  ticket: docs/tickets/<slug>.toml {
+    body: ticket body {
+      class: owner
+      label: "outcome, requirements, constraints,\noutput, scope, landscape,\nbindings, extends"
+    }
+    status: status {
+      class: owner
+      label: "status\ndraft | open | done | aborted"
+    }
+    target: target {
+      class: owner
+      label: "target = <target>\n(membership lives here:\nTodoist has no slot for it)"
+    }
+    reference: "[ticket.reference]" {
+      class: mirror
+      label: "reference\ntodoist {id url}\nremote {index url branch}\nwritten by sync only"
+    }
+    rows: "[[tasks]]" {
+      class: mirror
+      label: "[[tasks]]\nrebuilt by sync from Todoist\n(completed rows outside the read window kept)"
+    }
+  }
+  branch: git branch {
+    label: "git branch = slug\n(track hook resolves it\nto the ticket task)"
+  }
+}
+
+remote: remote host (projection) {
+  issue: issue {
+    class: projection
+    label: "issue\ntitle = slug\nbody = dev <slug> --md (sync-owned)\n## Tasks rendered from rows;\nonly its box state is read back (D8)"
+  }
+  milestone: milestone {
+    class: projection
+    label: "milestone\ntitle = <target>\nopen | closed, due"
+  }
+}
+
+dev: dev commands {
+  new: new
+  edit: edit
+  sync: sync
+}
+
+# data movement
+todoist.project.task -> local.ticket.reference: sync stores id and url (matched by id after first link)
+todoist.project.subtasks -> local.ticket.rows: sync mirrors
+todoist.project.task <-> local.ticket.status: "checked <-> done | aborted (closure in from any surface; reopen in from Todoist only)"
+local.ticket.body -> remote.issue: sync renders body
+local.ticket.rows -> remote.issue: sync renders checklist
+local.ticket.status -> remote.issue: "open | closed (completed | not planned); skipped while draft"
+remote.issue -> local.ticket.status: closed issue found by sync sets done | aborted
+remote.issue -> todoist.project.subtasks: "a box toggled on the host while the subtask is unchanged in Todoist: todo done | reopen on the subtask (D8)"
+remote.issue -> todoist.project.task: "sync writes the link line: replaced if present, else prepended (D12)"
+local.branch -> todoist.project.task: track hook, todo find <branch>
+
+todoist.parent.target -> remote.milestone: "sync ensures milestone: title, state from checked, due from due"
+local.ticket.target -> remote.issue: sync assigns the issue to the milestone
+local.ticket.target -> todoist.parent.target: "sync writes the arrow line → <repo>#N <repo>#M: replaced if present, else prepended (D12); missing task errors naming --create-target"
+todoist.parent.target -> todoist.project.task: "grouping is implicit: same target string"
+
+# commands
+dev.new -> local.ticket: writes a draft
+dev.edit -> local.ticket.body: "--set"
+dev.edit -> local.ticket.status: "--set {status: ...}"
+dev.edit -> local.ticket.target: "--set {target: v0.4.0}"
+dev.edit -> todoist.project.subtasks: "--add-task, --complete (write-through)"
+dev.sync -> todoist.project: "ensure task, pull rows, mirror status"
+dev.sync -> remote.issue: "ensure issue, body, state"
