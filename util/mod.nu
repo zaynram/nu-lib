@@ -31,10 +31,8 @@ export def timestamp []: oneof<nothing, string, datetime> -> string {
 
 # Run an external command and return its `complete` record.
 export def --wrapped attempt [
-  name: string
-  # The name or path of the external command to run
   ...rest: string
-  # Arguments to pass to the external command
+  # Command and arguments to pass to the external command
   --check (-c)
   # Raise an error on non-zero `exit_code`; otherwise return `stdout`
   --merge (-m)
@@ -43,11 +41,12 @@ export def --wrapped attempt [
   oneof<nothing, string> -> oneof<string, record<stdout: string, stderr: string, exit_code: int>, error>
 ] {
   if $merge {
-    run-external $name ...$rest out+err>|
+    do {||
+      run-external ...$rest out+err>|
+    }
   } else {
-    run-external $name ...$rest
-  } | complete
-  | if $check { post-complete $name } else { }
+    do {|| run-external ...$rest }
+  } | complete | if $check { post-complete ($rest | first) } else { }
 }
 
 # Open a file in the default editor or the editor pane of an active Zellij session.
@@ -56,11 +55,11 @@ export def editor [
   --cd: directory # Set the working directory for the editor session
   --depth (-d): int = 1 # Depth to recurse when expanding glob expressions
   ...rest: glob # Files or glob expressions for the files to edit
-]: oneof<nothing, path, list<path>, table<name: path>> -> nothing {
+]: oneof<nothing, path, list<path>, table<name: path>, table<path: path>> -> nothing {
   if $cd != null { cd $cd }
   $in | match ($in | describe) {
     nothing | string | list<any> | list<string> => { }
-    _ => { get $.name? | compact }
+    _ => { get $.name? $.path? | flatten --all | compact }
   } | append ($rest | into string | path expand)
   | flat-map { if ($in | path exists) { } else { glob --depth=$depth $in } }
   | default --empty '.'
