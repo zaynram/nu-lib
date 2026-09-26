@@ -32,7 +32,6 @@ alias set-meta = kv set --universal --table=proj
 alias get-meta = kv get --universal --table=proj
 alias drop-meta = kv drop --universal --table=proj
 alias list-meta = kv list --universal --table=proj
-alias glob-proj = glob --no-file --no-symlink --exclude=[**/.*]
 alias kind-to-table-name = do {|k: string| return $"proj_kind_($k | str trim)" }
 
 # ——— environment ——————————————————————————————————————————————————————————————
@@ -46,14 +45,19 @@ export-env { use std/dirs; scan }
 # ---
 # Notes:
 # - Projects can be saved under custom names with `$env.project_aliases!`
-#   - Each entry should map a directory name (key) to the prerred name (value)
+#   - Entries map a dirname or absolute path (key) to the prerred name (value)
 @category productivity
 @example 'scan for projects' { proj scan }
 @example 'scan for projects with aliased names' { with-env {project_aliases: {foo: bar abc: xyz}} { proj scan } }
 export def scan [
-  --force (-f) # Bypass the TTL and search only for new projects
-  --prune (-p) # Only remove missing directories from the registry (no additions)
-  --reset (-r) # Clear all existing project data (including metadata) prior to scanning
+  --kinds (-k): list<string>@_kinds = [src dev txt ext]
+  # Only operate on a subset of kinds
+  --force (-f)
+  # Bypass the TTL and search only for new projects
+  --prune (-p)
+  # Only remove missing directories from the registry (no additions)
+  --reset (-r)
+  # Clear all existing project data (including metadata) prior to scanning
 ]: nothing -> oneof<nothing, record<found: int, added: int, start: datetime, end: datetime, elapsed: string>> {
   if $prune { prune-missing-dirs | return }
   if not ($reset or $force) {
@@ -62,12 +66,17 @@ export def scan [
   }
   if $reset { reset-table proj }
   let start: datetime = date now
-  $KIND | columns | par-each {|k|
+  $KIND | columns | intersect $kinds | par-each {|k|
     let table: string = kind-to-table-name $k
+    let exclude: list<string> = $env.project_exclude!?
+      | default {}
+      | get --ignore-case --optional $k
+      | default []
+      | append '**/.*'
     # Run synchronously so we're not deleting new additions
     if $reset { reset-table $table }
     # Collect only the immediate children, exluding tooling files
-    glob-proj ($env.work! | path join $k *)
+    glob --no-file --no-symlink ($env.work! | path join $k *) --exclude=$exclude
     | intake-kind --reset=$reset $k $table
   } | record-scan-metadata $start
 }
@@ -141,9 +150,10 @@ export def --env main [
 def intake-kind [kind: string table: string --reset]: list<path> -> record<found: int, added: int> {
   let map: record = $env.project_aliases!? | default {}
   $in | par-each {|root|
-    let name: string = $root
-      | path basename
-      | if $map has $in { let key: string; $map | get $key } else { }
+    let base: string = $root | path basename
+    let name: string = $map
+      | get --ignore-case --optional $root $base
+      | compact | first | default $base
     if not $reset and (kv get --universal --table=$table $name) != null {
       # Skip projects already registered to avoid duplicate entries
       return false
@@ -159,7 +169,7 @@ def intake-kind [kind: string table: string --reset]: list<path> -> record<found
         # Else, populate from available data
         ^git -C $root config user.name
         | ignore --stderr
-        | match $in { '' => ({}) $u => {repo: $'($u)/($name)'} }
+        | match $in { '' => ({}) $u => {repo: $'($u)/($base)'} }
       ) | insert $.vcs git
     } | default {}
     # Select as optional cell paths to automatically populate `null` fill values
