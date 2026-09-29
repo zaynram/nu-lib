@@ -41,12 +41,14 @@ export def --wrapped attempt [
   oneof<nothing, string> -> oneof<string, record<stdout: string, stderr: string, exit_code: int>, error>
 ] {
   if $merge {
-    do {||
-      run-external ...$rest out+err>|
-    }
+    run-external ...$rest out+err>|
+    | complete
   } else {
-    do {|| run-external ...$rest }
-  } | complete | if $check { post-complete ($rest | first) } else { }
+    run-external ...$rest
+    | complete
+  } | if $check {
+    post-complete ($rest | first)
+  } else { }
 }
 
 # Open a file in the default editor or the editor pane of an active Zellij session.
