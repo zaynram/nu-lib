@@ -1,6 +1,8 @@
 #!/usr/bin/env nu
 # nu-lint-ignore-file: missing_output_type
 
+# TODO: rewrite these tests in proper form of `nushell-test`
+
 # Tests for the `proj` module.
 #
 # Every case runs against a throwaway workspace in a fresh `nu` subprocess, because

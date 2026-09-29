@@ -59,6 +59,7 @@ export def scan [
   --reset (-r)
   # Clear all existing project data (including metadata) prior to scanning
 ]: nothing -> oneof<nothing, record<found: int, added: int, start: datetime, end: datetime, elapsed: string>> {
+  drop-meta flat_list # drop cached list whenever scan runs in case of changes
   if $prune { prune-missing-dirs | return }
   if not ($reset or $force) {
     get-meta last_scan
@@ -101,11 +102,14 @@ export def list [
   --long (-l)
   # Include `$.kind` in the output record
 ]: nothing -> table<name: string, path: directory> {
-  if $kind != null {
-    list-kind $kind --insert=$long
-  } else {
-    $KIND | columns | par-each {|k| list-kind --insert=$long $k } | flatten
-  }
+  get-meta flat_list | default {||
+    set-meta --return=value flat_list (
+      $KIND | columns | par-each {|k|
+        list-kind --insert=true $k
+      } | flatten
+    )
+  } | if $kind == null { } else { where kind == $kind }
+  | if $long { } else { reject $.kind }
 }
 
 # Pick a project.
@@ -234,8 +238,9 @@ def reset-table [table: string]: nothing -> nothing {
 def display-label [it: record<name: string, kind: string>]: nothing -> string {
   let base: string = $it | format pattern $'{kind}(char psep){name}'
   let key: string = $base + '-label'
-  get-meta $key
-  | default (set-meta --return=value $key $'(ansi ($COLOR | get $it.kind))($base)(ansi rst)')
+  get-meta $key | default {||
+    set-meta --return=value $key $'(ansi ($COLOR | get $it.kind))($base)(ansi rst)'
+  }
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————
