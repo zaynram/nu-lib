@@ -66,7 +66,7 @@ def arm-for [arms: record type: string]: nothing -> list<any> {
 #
 # Precedence: an arm naming the type, then the `_` arm, then `--default`.
 @category core
-export def type [
+export def shape [
   arms: record
   # Mapping of type names to values or closures; `|` (unions) and `_` (match-all) in keys are honored
   --exec (-x)

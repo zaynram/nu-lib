@@ -55,7 +55,7 @@ closure --repr: record]` L41 wraps a list or `value`/`description` table into `{
 completions}`; strings are nuon-quoted only when a bare argument would misparse. Import it directly
 (`use ../completion "into completions"`); `util` no longer re-exports it.
 
-`_internal/dispatch` (`dispatch/mod.nu`): `dispatch type {<type>|<type|type>|_: <value or closure>}
+`_internal/dispatch` (`dispatch/mod.nu`): `dispatch shape {<type>|<type|type>|_: <value or closure>}
 --pipe|--exec [--default]` matches the `describe` name of the input and pipes or runs the closure.
 
 `_internal/repo` (`repo/mod.nu`): `$env.repo.path` is `table<name owner directory>` built by

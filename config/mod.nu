@@ -118,25 +118,41 @@ def homebrew-bin []: nothing -> oneof<nothing, path> {
   } | if $in != null and ($in | path exists) { }
 }
 
-alias find-bin-dirs = glob --no-file --depth=2 --exclude=[**/.vscode-server-insiders/**] ($USER.home | path rejoin ** bin)
-alias find-script-dirs = glob --no-file --no-symlink --exclude=[**/_internal/**] ($USER.scripts | path rejoin **)
+export module find {
+  const NOT: record = {bin: [**/.vscode-server-insiders/**] script: [**/_internal/**]}
+  def mkglob [...segments: string]: path -> path { path rejoin ** ...$segments }
+  alias glob = %glob --no-file
+  export alias script-dirs = glob --no-symlink --exclude=$NOT.script ($USER.scripts | mkglob)
+  export def bin-dirs [
+    --roots (-r): list<directory> = []
+    --depth (-d): int = 2
+    --exclude (-e): list<oneof<path, glob>> = []
+  ]: nothing -> list<directory> {
+    let not: list<any> = $NOT.bin | if $exclude != [] { append $exclude | into string } else { }
+    $USER.home | if $roots != [] { append $roots } else { } | each --flatten {|r|
+      glob --depth=$depth --exclude=$not ($r | mkglob bin)
+    }
+  }
+}
+
+use find
 
 # Directories a scope contributes to PATH that are not on it yet.
 def new-paths [vendor: bool]: nothing -> list<path> {
   if $vendor {
     [$VENDOR.bin $VENDOR.scripts (homebrew-bin)]
   } else {
-    [$USER.scripts ...(find-bin-dirs)]
+    [$USER.scripts ...(find bin-dirs)]
   } | compact
   | difference $env.PATH
 }
 
 # Open a resolved file in the editor, or return its expanded path.
-def submit [target: oneof<nothing, string> --get]: oneof<nothing, path> -> oneof<nothing, path> {
+def submit [target: oneof<nothing, string> --return]: oneof<nothing, path> -> oneof<nothing, path> {
   # nu-lint-ignore: unused_parameter
   let p: oneof<nothing, path> = $in
   if ($p | is-empty) { error wrap --code=config::unresolved_target $"no items found for target: '($target)'" }
-  $p | path expand | if $get { } else { editor }
+  $p | path expand | if $return { } else { editor }
 }
 
 # ——— definitions ——————————————————————————————————————————————————————————————
@@ -165,13 +181,13 @@ export def --env vars [
 export def --env dir [
   target?: string@_dirs # Name of the directory to target
   --vendor (-v) # Use the vendor scope
-  --get (-g) # Return the path instead of navigating to it
+  --return (-r) # Return the path instead of navigating to it
 ]: nothing -> oneof<nothing, path, record> {
   let s: record = scope $vendor
   if $target == null { return $s }
   let p: oneof<nothing, path> = $s | get --ignore-case --optional $target
   if $p == null { error wrap --code=config::dir::unresolved_target $"no directory named '($target)'" }
-  if $get { $p } else { cd $p }
+  $p | if $return { return $in } else { cd $in }
 }
 
 # Open an autoload file of a scope; with no target, pick one from a list.
@@ -179,17 +195,17 @@ export def --env dir [
 export def auto [
   target?: string@_auto # Name of the autoload file to target
   --vendor (-v) # Use the vendor scope
-  --get (-g) # Return the resolved path instead of opening it
+  --return (-r) # Return the resolved path instead of opening it
 ]: nothing -> oneof<nothing, path, table> {
   let dir: path = (scope $vendor).autoload
   try { mkdir $dir; cd $dir } catch {
     error wrap --code=config::auto::internal_error "could not resolve autoload directory"
   }
-  match {t: $target g: $get} {
+  match {t: $target g: $return} {
     {t: null g: true} => { return $dir }
     {t: null} => { ls --short-names | path select }
     {t: $t} => { $t | path with-extension nu }
-  } | submit $target --get=$get
+  } | submit $target --return=$return
 }
 
 # Open an application's configuration file; with no target, list the candidates.
@@ -197,11 +213,11 @@ export def auto [
 export def app [
   target?: path@_apps # The directory name to search for config files under
   --path (-p): path@_app-paths # Path of a file to edit, relative to the target directory
-  --get (-g) # Return the constructed path instead of opening it
+  --return (-r) # Return the constructed path instead of opening it
 ]: nothing -> oneof<nothing, path, table> {
   let item: path = [$USER.config $target] | compact --empty | path join
   $item | match ($in | path type) {
-    file => { submit $target --get=$get | return $in }
+    file => { submit $target --return=$return | return $in }
     dir => { cd $in }
     _ => { mkdir $in; cd $in }
   }
@@ -212,7 +228,7 @@ export def app [
       1 => { $files | first }
       _ => { $files | path truncate --root . | path select }
     }
-  } | submit $target --get=$get
+  } | submit $target --return=$return
 }
 
 # Refresh the `oh-my-posh` prompt initialization script in the vendor autoload directory.

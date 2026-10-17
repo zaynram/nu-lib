@@ -26,7 +26,7 @@ export def contains [
 # Serialize a datetime (default: now; strings are parsed as human dates) in RFC 3339 format.
 @category date
 export def timestamp []: oneof<nothing, string, datetime> -> string {
-  dispatch type --pipe {nothing: {|| date now } string: {|| date from-human } _: {|| }} | format date %+
+  dispatch shape --pipe {nothing: {|| date now } string: {|| date from-human } _: {|| }} | format date %+
 }
 
 # Run an external command and return its `complete` record.
@@ -63,8 +63,10 @@ export def editor [
     nothing | string | list<any> | list<string> => { }
     _ => { get $.name? $.path? | flatten --all | compact }
   } | append ($rest | into string | path expand)
-  | flat-map { if ($in | path exists) { } else { glob --depth=$depth $in } }
-  | default --empty '.'
+  | flat-map {|p|
+    if ($in | path exists) { return $in } else { }
+    | try { glob --depth=$depth $in } catch { $p }
+  } | default --empty '.'
   | match ($env | select $.zellij!? $.editor!? $.config.buffer_editor? | compact) {
     {zellij: _} => { zellij-edit ...$in }
     {config: {buffer_editor: $e}} | {editor: $e} => { run-external $e ...$in }

@@ -63,108 +63,92 @@ export const RULES: list<record> = [
 export def verify-settable [
   --return (-r) # Return the pipeline input if it passes verification
 ]: record -> oneof<error, nothing, record> {
-  match ($in | columns | where $SETTABLE not-has $it) {
-    [$0 ..] => {
-      error make --unspanned {
-        msg: $"'($0)' is not a settable ticket field"
-        code: 'work::ticket::invalid_field_unsettable'
-        help: $'settable fields: ($SETTABLE)'
-      }
-    }
-    _ if $return => ()
-  }
+  {columns: ($in | columns)}
+  | rules --errors [{path: $.columns type: list<string> enum: [$SETTABLE]}]
 }
 
-export def format-error-details [doc: record path: path]: record<reason: string, hint: string> -> record<msg: string, help: string> {
-  transpose key value | update $.value {||
-    let template: string = str replace '%s' $"'($path)'"
-    $doc | format pattern $template
-  } | transpose --ignore-titles --header-row --as-record
-}
-
-def _initial_checks []: record -> oneof<nothing, error> {
-  let doc: record;
-  for row in [
-    [test details];
-    [
-      { $doc has version and $doc.version!? == '3.0.0' }
-      {
-        msg: "%s is version {version} (`*.issue.toml` format)"
-        help: 'move it to `docs/issues` with suffix `.issue.toml` and run `migrate {slug}`'
-      }
-    ]
-    [
-      { $doc has version and $doc.version!? != $VERSION }
-      {
-        msg: $"%s is version {version} which is incompatible with the v($VERSION) ticket format"
-        help: $'update the file to be compatible with v($VERSION) and try again'
-      }
-    ]
-  ] { if (do --capture-errors $row.test) { error make --unspanned $row.details } }
-}
-
-# The first failed check of a document, as `{reason, next}`; null when it is a valid v4 ticket (spec, Behaviour).
-# The version gate comes first, then `RULES` under `--strict`, then the checks a rule cannot state: the file's
-# name, a date that parses, the attribution labels.
-# `reason` opens with its own joiner (` is …` or `: …`) so the loader can prefix the path verbatim.
-export def check [file: record]: record -> oneof<record, nothing> {
-  let doc: record;
-  let default: record = {msg: 'document validation did not succeed' help: $"edit %s then re-run `work {slug}`"}
-
-  try {
-    $doc | _initial_checks
-    let violations = $doc | rules --strict $RULES
-    match ($doc | rules --strict $RULES).0? {
-      {path: ticket.slug rule: pattern reason: $r} => {
-        msg: $': ($r)'
-        help: $'rename the file and ticket.slug, then re-run `dev ($file.slug)`'
-      }
-      {path: _ rule: _ reason: $r} => {
-        reason: $': ($r)'
-        next: $default
-      }
-      null if $doc.ticket.slug != $file.slug => {
-        reason: $": ticket.slug is '($doc.ticket.slug)' but the file is named '($file.slug)'"
-        next: $'rename one, then re-run `dev [($file.slug)|($doc.ticket.slug)]`'
-      }
-      null if (try { $doc.ticket.date | into datetime }) == null => {
-        reason: $": ticket.date '($doc.ticket.date)' is not a datetime"
-        next: $'write "YYYY-mm-dd", then re-run `dev ($file.slug)`'
-      }
-      null if ($doc.tasks!? | is-not-empty) => {
-        let tasks: table = $doc.tasks
-        for row in $tasks {
-          let template: string = $": task '($row.content)' has {value}; {context}"
-          let marks: list<string> = $row.labels? | default [] | where $it starts-with '-'
-          let regex: string = $"^\(($ATTRIBUTION | str join `|`))$"
-          for rule in [
-            [check value context];
-            [{|| ($marks | length) > 1 } $"labels ($marks)" 'tasks must contain at most 1 attribution label']
-            [{|| ($marks | where $it !~ $regex | is-not-empty) } $"label '($marks | where $it !~ $regex | first)'" $'which is not one of ($ATTRIBUTION)']
-          ] {
-            if (do --ignore-errors $rule.check | into bool --relaxed) {
-              return {reason: ($rule | format pattern $template) next: $default}
-            }
-          }
+def build-version-rule [slug: string]: nothing -> record<path: cell-path, type: string, required: bool, dynamic: closure> {
+  {
+    path: $.version
+    type: string
+    required: true
+    dynamic: {|version: string|
+      let actual: string = $version | simple-style --quote
+      if $version == '3.0.0' {
+        error make --unspanned {
+          msg: $"{at} is version ($actual) \(`*.issue.toml` format)"
+          help: $"move it to `docs/issues` with suffix `.issue.toml` and run `migrate '($slug)'`"
+        }
+      } else if $version != $VERSION {
+        let expected: string = $VERSION | simple-style --quote
+        error make --unspanned {
+          msg: $"{at} is version ($actual) which is incompatible with the ($expected) ticket format"
+          help: $'update the file to be compatible with ($expected) and try again'
         }
       }
     }
-  } catch {|err|
-    $err.details!
-  } | if $in != null {
-    format-error-details $doc $file.path
   }
 }
 
+def simple-style [--quote --char: string = "'"]: any -> string {
+  if not $quote { to text | nu-highlight } else { $"(ansi g)($char)($in)($char)(ansi rst)" }
+}
+
+def verify-datetime-coercion [val: any]: any -> oneof<nothing, error> {
+  try { into datetime } catch {
+    let text: string = $val | simple-style --quote=($val | describe | $in == string)
+    let hint: string = 'YYYY-mm-dd' | simple-style --quote --char='"'
+    error make --unspanned {
+      msg: 'value must be a datetime or parseable datetime string'
+      help: $"{at} is ($text); strings must be in the format ($hint)"
+    }
+  }
+}
+
+def verify-task-entries []: oneof<nothing, list<any>, table> -> oneof<nothing, error> {
+  # empty list or `null` is always valid
+  let tasks: table = match ($in | describe) { nothing | list<any> => (return) _ => () }
+  for row in $tasks {
+    let task: string = $row.content | simple-style --quote
+    let marks: list<string> = $row.labels? | default [] | where $it starts-with '-'
+    let count: int = $marks | length
+    let regex: string = $"^\(($ATTRIBUTION | str join `|`))$"
+    let unknown: list<any> = $marks | where $it !~ $regex
+    if $count > 1 {
+      error make --unspanned {
+        msg: $'task ($task) exceeds the maximum number of attribution labels'
+        help: ($"{at} has ($count) attribution labels \(max: 1)" | simple-style)
+      }
+    } else if $unknown != [] {
+      let focus: string = $unknown | first | simple-style --quote
+      let allowed: string = $ATTRIBUTION | simple-style
+      error make --unspanned {
+        msg: $"task ($task) contains an unknown attribution label"
+        help: $"{at} has label ($focus), which is not one of ($allowed)"
+      }
+    }
+  }
+}
+
+export def check [file: record]: record -> oneof<record<reason: string, hint: string>, nothing> {
+  let doc: record | rules --return=one --strict [
+    (build-version-rule $doc.slug)
+    ...$RULES
+    {path: $.ticket.slug type: string required: true const: $file.slug}
+    {path: $.ticket.date type: 'string|datetime' required: true dynamic: {|val: any| verify-datetime-coercion $val }}
+    {path: $.tasks type: 'list<any>|table' required: false dynamic: {|| verify-task-entries }}
+  ]
+}
+
 # Rows with every one of `keys` present, in that order.
-def fill-rows [...keys: string]: oneof<list<record>, nothing> -> list<record> {
+export def fill-rows [...keys: string]: oneof<list<record>, nothing> -> list<record> {
   let rows: list<record> = default []
   let blank: record = $keys | reduce --fold={} {|k acc| $acc | insert $k (if $k == labels { [] } else { null }) }
   $rows | par-each --keep-order {|row| $blank | merge $row }
 }
 
 # Every `ticket` key and row column present, in the order `RULES` names them, `date` as a datetime (spec, Schema).
-def normalise []: record -> record {
+export def normalise []: record -> record {
   let doc: record;
   # The child keys of every container: `{ticket: [name slug …], 'ticket.output': [path purpose alias], …}`.
   let shape: record = $RULES
@@ -202,7 +186,7 @@ def prune []: any -> any {
 }
 
 # The writer shared by every command that changes a file: canonical, atomic, null-free (spec, Behaviour).
-def write [path: path]: record -> path {
+export def write [path: path]: record -> path {
   let text: string = update ticket.date { format date %F } | prune | to toml
   let dir: path = $path | path dirname
   mkdir $dir
@@ -225,7 +209,7 @@ def md-table []: table -> oneof<string, nothing> {
 }
 
 # The remote issue body (spec, `--md`).
-def render []: record -> string {
+export def render []: record -> string {
   let doc: record = $in
   let t: record = $doc.ticket
   let bullets: closure = { default [] | wrap item | format pattern '- {item}' | str join "\n" }

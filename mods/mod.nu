@@ -92,8 +92,13 @@ export-env {
   | if $in != [] { transpose --ignore-titles --header-row --as-record | load-env }
 
   const name: string = 'mods::use_or_hide::update-mods-used'
+
+  let existing: list = $env.config.hooks.pre_execution?
+    | where ($it | describe) starts-with record and $it.name? != null
+    | get $.name!
+
   # Guard also ensures an already registered hook does not pick up this `hook` import invocation.
-  if ($env.config.hooks.pre_execution? | where $it has name).name not-has $name {
+  if $existing not-has $name {
     use ../hook [ add is-enabled ]
     [
       [name disabled condition code];
@@ -101,7 +106,7 @@ export-env {
         $name
         false
         {|| (is-enabled --name=$name) and (commandline) =~ $RE.module_actions }
-        {|| refresh (commandline) }
+        {|| job spawn --description=$name { refresh (commandline) } | ignore }
       ]
     ] | add pre_execution
   }

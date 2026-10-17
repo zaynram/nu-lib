@@ -1,5 +1,7 @@
 # Ticket files, the local surface of Todoist tickets: `<repo>/docs/tickets/<slug>.toml` (v4 `ticket` schema).
+
 # Spec: `work/docs/2026-09-18_dev-core.spec.md`.
+# Path: /work/dev/nu/work/mod.nu
 
 # TODO:
 # - complete extraction of `ticket`-scoped items to the `./ticket/mod.nu` submodule
@@ -11,7 +13,7 @@
 use ticket *
 use ../completion "into completions"
 use ../validate
-use ../repo
+use ../proj
 
 # ——— aliases ——————————————————————————————————————————————————————————————————
 
@@ -20,7 +22,12 @@ use ../repo
 # ——— completions —————————————————————————————————————————————————————————————
 
 def _slugs []: nothing -> record { files | select slug repo | rename value description | into completions }
-def _repos []: nothing -> record { repo list | rename --column={name: value} | insert description {|row| $row | format pattern '[{owner}] {directory}' } | into completions }
+def _repos []: nothing -> record {
+  proj list --long
+  | rename --column={name: value}
+  | insert description {|row| $row | format pattern '[{kind}] {name}' }
+  | into completions
+}
 def _statuses []: nothing -> record { $STATUSES | into completions }
 def _properties [context: string]: nothing -> record {
   let slugs: list<string> = files | get slug
@@ -45,8 +52,11 @@ export def main [
   let file: record = locate $slug $repo
   let doc: record = open $file.path
   let bad: oneof<record, nothing> = $doc | check $file
-  if $bad != null { error make --unspanned ($bad | format pattern $"'($file.path)'{reason}; {next}") }
-  $doc | normalise | if $md { render } else { }
+  if $bad != null {
+    error make --unspanned ($bad | format pattern $"'($file.path)'{reason}; {hint}")
+  } else {
+    $doc | normalise | if $md { render } else { }
+  }
 }
 
 # Tickets across the registered repositories.
@@ -105,7 +115,7 @@ export def edit [
   let merged: record = $doc | update ticket { merge deep --strategy=overwrite $set }
   let bad: oneof<record, nothing> = $merged | check $file
   if $bad != null {
-    error make --unspanned $'`--set` rejected: ($bad.reason | str replace --regex '^:? ' ''); nothing written'
+    error make --unspanned $'`--set` rejected: ($bad.reason); nothing written'
   }
   $merged | normalise | write $file.path
 }
@@ -114,10 +124,10 @@ export def edit [
 
 # Ticket files of the registered repositories, or of `repo` alone.
 def files [repo?: string]: nothing -> table<slug: string, repo: string, path: path> {
-  let registry: list<record> = repo list | default []
+  let registry: table<name: string, path: path> = proj list | default []
   if $repo != null and $repo not-in ($registry | get $.name?) { error make --unspanned $"no registered repository named '($repo)'; run repo list to see them" }
   $registry | where $repo == null or name == $repo | par-each {|r|
-    let d: path = $r.directory | path join docs tickets
+    let d: path = $r.path | path join docs tickets
     mkdir $d; glob $"($d)/*.toml"
     | par-each {|p| path parse | {slug: $in.stem repo: $r.name path: $p} }
   } | flatten --all

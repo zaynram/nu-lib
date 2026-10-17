@@ -1,7 +1,9 @@
-use ../config
+# /work/dev/nu/prelude/mod.nu
 
-export const NU_LIB_DIRS: list<path> = [(path self ..) $config.USER.modules $config.VENDOR.modules]
-export const NU_PLUGIN_DIRS: list<path> = [$config.USER.plugins $config.VENDOR.plugins]
+use ../config [ USER VENDOR vars ]
+
+export const NU_LIB_DIRS: list<path> = [(path self ..) $USER.modules $VENDOR.modules]
+export const NU_PLUGIN_DIRS: list<path> = [$USER.plugins $VENDOR.plugins]
 
 # Initialize the shell environment variables for the internal module library.
 export def --env env [
@@ -17,4 +19,4 @@ export def --env env [
   if $show or not $load { return $e }
 }
 
-export-env { config vars --vendor | env --load }
+export-env { vars --vendor | env --load }

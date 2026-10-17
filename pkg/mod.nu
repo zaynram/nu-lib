@@ -44,10 +44,16 @@ export def upgrade [
       | if $in == null or $in > 24hr { ignore | upgrade --silent }
     } | get-job $in
   } else {
-    default {}
-    | merge $REGISTRY
-    | merge (if $system { $SYSTEM } else { {} })
-    | items {|bin args|
+    use ../config find
+    use std/util "path add"
+    if $env not-has XDG_DATA_DIR { $env.XDG_DATA_DIR = $nu.home-dir | path join .local share }
+    let bins: list<path> = find bin-dirs --roots=[$env.XDG_DATA_DIR] --depth=3
+    path add ...$bins
+    let base: record = $REGISTRY | if $system { merge $SYSTEM } else { }
+    $in | match ($in | describe | str replace --regex '<.+' '') {
+      nothing => $base
+      record => (merge $base)
+    } | items {|bin args|
       let cmd: list<string> = if $SYSTEM has $bin { [sudo $bin] } else { [$bin] }
       if (which $bin | is-empty) {
         [{output: $"command not found: '($bin)'" success: false}]
@@ -56,12 +62,18 @@ export def upgrade [
         let type: string = $args | describe
         [{output: $"invalid arguments: ($repr) \(($type))" success: false}]
       } else {
-        $args | each {|rest|
-          run-external ...$cmd ...$rest out+err>|
-          | complete
-          | reject --optional stderr
-          | rename --column={stdout: output exit_code: success}
-          | update success { $in == 0 }
+        $args | par-each --keep-order {|rest|
+          let name: string = $cmd | first
+          let rest: list = ($cmd | skip) ++ $rest
+          ^$name ...$rest | complete | if $in.exit_code == 0 {
+            {output: $in.stdout success: true}
+          } else {
+            {output: $in.stderr success: false}
+          }
+          if $name == cargo {
+            # `cargo install-update --all` may overwrite a nightly build
+            get-latest-nightly-build
+          }
         }
       } | {$bin: $in}
     } | into record

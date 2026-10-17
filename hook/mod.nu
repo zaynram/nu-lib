@@ -241,7 +241,7 @@ export def --wrapped test [
     }
   } else {
     let h: oneof<string, closure> | (
-      dispatch type --errors=true --exec {
+      dispatch shape --errors=true --exec {
         closure: {||
           $input | do --capture-errors $h ...$rest
         }

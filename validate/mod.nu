@@ -1,6 +1,6 @@
 # Suite of validation tools to assist with custom command definitions and parameter validation.
 
-# nu-lint-ignore-file: do_not_compare_booleans, never_space_split
+# nu-lint-ignore-file: do_not_compare_booleans, never_space_split, missing_in_type, list_param_to_variadic
 
 # `validate string` returns a closure intentionally (its labels carry spans, which only mean something in the caller's scope):
 # - Calling `error make` from a nested scope causes error duplication as it propagates upwards.
@@ -19,6 +19,16 @@ use /work/dev/nu/types "cell-path join"
 # ——— constants ————————————————————————————————————————————————————————————————
 
 const RULE_PRESETS: record = {
+  any-const: {
+    reason: 'value is not the expected constant'
+    hint: '{at} must be exactly {const}'
+    syntax: true
+  }
+  str-const: {
+    reason: 'value is not the expected string'
+    hint: $"{at} must be exactly (ansi g)'{const}'(ansi rst)"
+    syntax: false
+  }
   foreign-key: {
     reason: 'key is not one of the allowed properties'
     hint: 'ensure {at} is a valid property'
@@ -104,6 +114,43 @@ export def string [
   }
 }
 
+def evaluate-single-rule [
+  rule: record
+  --bail (-b)
+]: record -> oneof<table<item: any, at: cell-path, result: table>, record<item: any, at: cell-path, result: table>> {
+  let data: record;
+  if $rule.through == null {
+    let w: any = $data | get $rule.whole
+    let out: record = {item: $w at: $rule.at result: ($w | verdicts $rule.at $rule)}
+    if $bail { return $out } else { return [$out] }
+  } else if $bail {
+    for row in ($data | get $rule.head | enumerate) {
+      let at: cell-path = [...$rule.through $row.index ...$rule.rest] | compact --empty | into cell-path
+      $row.item | get $rule.tail | verdicts $at $rule | if $in != [] { return $in.0 }
+    }
+  } else {
+    $data | get $rule.head | enumerate | par-each --keep-order {|row|
+      let at: cell-path = [...$rule.through $row.index ...$rule.rest] | compact --empty | into cell-path
+      {item: $rule.item at: $at result: ($row.item | get $rule.tail | verdicts $at $rule)}
+    } | flatten --all
+  }
+}
+
+def evaluate-strict-rule [
+  names: list<string>
+  at: cell-path
+  --bail
+]: record -> oneof<nothing, record, table> {
+  if ($in | describe) !~ '^(record|table)' { return } else { columns | difference $names }
+  | if $in == [] {
+    return null
+  } else if $bail {
+    failure foreign-key {at: ($at | cell-path join $in.0)}
+  } else {
+    par-each --keep-order {|name| failure foreign-key {at: ($at | cell-path join $name)} }
+  }
+}
+
 # Validate a record against a table of rules. Returns one row per failure if validation errors occur.
 #
 # RULES:
@@ -111,10 +158,17 @@ export def string [
 # - `type`: Nushell type declaration as a string (e.g. `list<int>`)
 # - `required`: Boolean indicating if the target of this rule is mandatory (omission treated as non-required)
 # - `enum`: List of allowed values for the target (e.g. `[red green blue]`)
+# - `const`: Value must be the exact literal value (any element or elements of a list)
 # - `pattern`: Regex pattern that the target text (bare string or string elements of a list) must satisfy
 # - `class`: No-op if `pattern` is not present; additional text to clarify the pattern's requirements (e.g. `{pattern: '^[a-z]+$' class: "lowercase letters"}`)
 # - `[min|max]-length`: Length restrictions applied to target text (bare strings or string elements of a list)
 # - `[min|max]-items`: Element count restrictions applied to iterables (tables or lists)
+# - `dynamic`: Single-item record mapping a string to a closure that returns nothing on passing values and raises errors on invalid values
+#   - The key of the record will be used as the name of the rule in output
+#   - Tables and lists will be provided directly, not iterated through
+#   - The closure will be passed the value to test as pipeline input and the first positional
+#   - The cell-path of the value to test will be passed as the second positional
+#   - The `msg` and `help` will be transformed to the shape of validation output.
 #
 # NOTES:
 # - If a `path` passes through a `table`, that rule is judged on every row of that table.
@@ -126,21 +180,23 @@ export def string [
 } --result ['$.name has type int; expected string' '$.size must be a non-null value']
 @example 'a guard in a pipeline' { {name: a} | validate rules [{path: $.name type: string}] --errors } --result {name: a}
 export def rules [
-  rules: table
+  rules: oneof<table<path: cell-path, type: string>, table>
   # One row per constraint
   --strict (-s)
   # Keys the rules do not name are failures
   --errors (-e)
   # Raise the failures as one error; a valid record passes through
-  --return (-r): string@[input nothing table] = input
+  --return (-r): string@[one input nothing table] = input
   # Return value when validation succeeds
+  # - `one` means return the first error record or `null` if none occur (overrides `--errors`)
   # - `'input'` means return `$in` (data; default)
   # - `'nothing'` means return `null` (default for unmatched `--return` values)
   # - `'table'` means return `[]` (empty list; consistent shape)
   --colors (-c) = true
-  # Use ANSI coloring in error messages and context hints
-]: record -> oneof<table<path: cell-path, rule: string, reason: string, hint: string>, record> {
+  # Use ANSI coloring in error messages and context hints (ignored when `--return=one`)
+]: record -> oneof<nothing, table<path: cell-path, rule: string, reason: string, hint: string>, record> {
   let data: record;
+  let bail: bool = $return == 'one'
   let tables: list<string> = $rules
     | where type starts-with table
     | par-each --keep-order {|| get $.path | split cell-path | get $.value | append '' | str join . }
@@ -148,6 +204,7 @@ export def rules [
   # Everything a rule needs is derived once here, so the loops below run without closures.
   # ponytail: derived again on every call; take a list of records as input when a caller validates many at once
   let rows: list<record> = $rules
+    | default any $.type
     | par-each --keep-order {|row|
       let members: table = $row.path | split cell-path | update optional true
       let repr: string = $members.value | str join .
@@ -166,38 +223,54 @@ export def rules [
       }
     }
 
+  # For `bail` mode, we use for loops and return immediately when we hit an error
+  if $bail {
+    for rule in $rows {
+      $data | evaluate-single-rule $rule --bail | if $in != null { return $in }
+    }
+    if $strict {
+      let known: record = $rows | group-by parent
+      let queue: table<at: cell-path, whole: oneof<nothing, cell-path>> = [
+        {at: $. whole: null}
+        ...($rows | where type =~ '^(record|table)' | select $.at $.whole)
+      ]
+
+      for box in $queue {
+        let names: list = $known | get --optional $"($box.at).leaf" | default []
+        match $box { _ if $names == [] => { return } {at: ''} => $data {whole: $w} => ($data | get $w) }
+        | evaluate-strict-rule $names $box.at --bail
+        | if $in != null { return $in }
+      }
+    }
+    return null
+  }
+
+  # For non-`bail` mode, we reduce rule rows down into results
+
   let result: record = $rows
     | reduce --fold={found: [] dead: []} {|it acc|
       if $acc.dead != [] or ($acc.dead | under $it.at) { return $acc }
-      let t: string = $it.type
-      let container: bool = [record table] | any ($t starts-with $it)
-      if $it.through == null {
-        let x: any = $data | get $it.whole
-        let v: table = $x | verdicts $it.at $it
-        if $container and ($x == null or $v != []) {
-          {dead: [...$acc.dead $it.at] found: [...$acc.found ...$v]}
-        } else if $v != [] {
-          $acc | update $.found [...$in.found ...$v]
-        }
-      } else {
-        let v: table = $data | get $it.head | enumerate | par-each --keep-order {|row|
-            let at: cell-path = [...$it.through $row.index ...$it.rest] | compact --empty | into cell-path
-            $row.item | get $it.tail | verdicts $at $it
-          } | flatten --all
-        if $v != [] { $acc | update $.found [...$in.found ...$v] }
+      let container: bool = $it.through == null and $it.type !~ '^(record|table)'
+      let inter: table = $data | evaluate-single-rule $it
+      let verdicts: table = $inter.result | flatten --all
+      if $container and ($inter.item == null or $verdicts != []) {
+        {dead: [...$acc.dead $it.at] found: [...$acc.found ...$verdicts]}
+      } else if $verdicts != [] {
+        $acc | update $.found [...$in.found ...$verdicts]
       } | default $acc
     }
 
   let found: table = if $strict {
     let known: record = $rows | group-by parent
-    [{at: $. whole: null} ...($rows | where type in [record table] | select $.at $.whole)]
-    | reduce --fold=[] {|box acc|
+    [
+      {at: $. whole: null}
+      ...($rows | where type =~ '^(record|table)' | select $.at $.whole)
+    ] | reduce --fold=[] {|box acc|
       # A container with no declared children is open; one that failed, or sits under one that did, cannot be scanned.
       if $result.dead != [] and ($result.dead | under $box.at) { return }
       let names: list = $known | get --optional $"($box.at).leaf" | default []
       match $box { _ if $names == [] => { return } {at: ''} => $data {whole: $w} => ($data | get $w) }
-      | if ($in | describe) !~ '^(record|table)' { return } else { columns | difference $names }
-      | par-each --keep-order {|name| failure foreign-key {at: ($box.at | cell-path join $name)} }
+      | evaluate-strict-rule $names $box.at
       | prepend $acc
     }
   } | prepend $result.found
@@ -299,21 +372,56 @@ def verdicts [
     _ if not (fits $x $rule.type) => [(failure typecheck {at: $at type: $rule.type actual: $t})]
     _ if $i => [($x | check-iter-count $at --min=$rule.min-items? --max=$rule.max-items?)]
   } | default [] | compact
-  if ($rule | columns | any ($it =~ '^(min-|max-|enum|pattern)')) {
+  if ($rule | columns | any ($it =~ '^(min-|max-|enum|pattern|const)')) {
     if $i { $x | enumerate | update $.index {|row| $at | cell-path join $row.index } | rename --column={index: at item: value} }
     | default [[at value]; [$at $x]]
     | par-each --keep-order {|p|
       let type: string = $p.value | describe
-      let text: bool = $type =~ '^(string|list<string>)$'
+      let text: bool = $type =~ '^(string|list<string>)$' or $rule.type? == string
       let iter: bool = is-iterable $type
-      [
-        (if $iter { $p.value | check-iter-count $p.at --min=$rule.min-items? --max=$rule.max-items? })
-        ...(if $rule.enum? != null { $p.value | check-enum-member --iterable=$iter $p.at $rule.enum })
-        ...(if $text { $p.value | check-text-length --iterable=$iter $p.at --min=$rule.min-length? --max=$rule.max-length? })
-        ...(if $text and $rule.pattern? != null { $p.value | check-regex-match --iterable=$iter $p.at $rule.pattern --class=$rule.class? })
+      $p.value | [
+        (if $iter { $in | check-iter-count $p.at --min=$rule.min-items? --max=$rule.max-items? })
+        (if $rule.dynamic? != null { $in | check-dynamic-rule $p.at $rule.dynamic })
+        ...(if $rule has const { $in | check-is-constant $p.at $rule.const --iterable=$iter --string=$text })
+        ...(if $rule.enum? != null { $in | check-enum-member --iterable=$iter $p.at $rule.enum })
+        ...(if $text { $in | check-text-length --iterable=$iter $p.at --min=$rule.min-length? --max=$rule.max-length? })
+        ...(if $text and $rule.pattern? != null { $in | check-regex-match --iterable=$iter $p.at $rule.pattern --class=$rule.class? })
       ] | compact --empty
     } | flatten --all
   } | prepend $o
+}
+
+def check-dynamic-rule [
+  at: cell-path
+  map: record
+]: any -> oneof<nothing, record> {
+  let val: any;
+  let map: record<name: string, rule: closure> = $map | transpose name rule | first
+  try {
+    $val | do $map.rule $val $at | ignore --show-errors
+  } catch {|err|
+    let custom: record = $err | select $.msg!? $.help!? | compact
+    let context: record = $err | reject $.msg!? $.help!? | compact --empty
+    failure $map.name {at: $at ...$context} --custom=$custom
+  }
+}
+
+def check-is-constant [
+  at: cell-path
+  const: any
+  --string
+  --iterable
+]: oneof<any, list<any>> -> oneof<list<any>, table> {
+  if $iterable { enumerate } else { append [] }
+  | each --flatten {|it|
+    match $it {
+      {index: $n item: $x} => {at: ($at | cell-path join $n) actual: $x const: $const}
+      _ => {at: $at actual: $it const: $const}
+    } | if $in.actual != $const {
+      let rule: string = $'(if $string { 'str' } else { 'any' })-const'
+      failure $rule $in
+    }
+  }
 }
 
 def check-enum-member [

@@ -19,7 +19,7 @@ alias list-track = kv list --universal --table=track
 
 export-env {
   use hook [ add is-enabled ]
-  add pre_execution { track sync }
+  add pre_execution { sync }
   add env_change.PWD {
     name: 'track::focus'
     condition: {|_ pwd|
@@ -27,7 +27,7 @@ export-env {
       let root: oneof<nothing, path> = get-track root
       $root == null or $pwd not-has $root
     }
-    code: {|| track focus --refresh | ignore }
+    code: {|| focus --refresh | ignore }
   }
 }
 
@@ -72,6 +72,10 @@ export def focus [
   return (track-record)
 }
 
+def is-stale-focus []: oneof<nothing, record> -> bool {
+  $in == null or $in not-has root or ($in.root == null and (read-branch $in.head) != $in.branch)
+}
+
 # Align the open Timewarrior interval with this shell's focus; the pre_execution hook body.
 #
 # 1. If the activity stamp is older than `--idle`, the open interval ends at the stamp.
@@ -82,8 +86,7 @@ export def focus [
 export def sync [
   --idle: duration = 30min # Gap after which the open interval counts as abandoned
 ]: nothing -> nothing {
-  let cached: oneof<nothing, record> = (track-record)
-  if $cached == null or ($cached.root != null and (read-branch $cached.head) != $cached.branch) { focus --refresh }
+  if (track-record | is-stale-focus) { focus --refresh }
   if (get-track root) == null or (get-track disabled | default false) { return }
   try {
     let tags: list = get-track tags | default []

@@ -37,13 +37,15 @@ export def set [
     string => { $when | date from-human | $in - $now }
     _ => { error make $'received invalid type for `when` argument' }
   } | $in + $now
-  plugin use --plugin-config=$nu.plugin-path highlight
-  let text: string = $"alarm\('($name)', time='($time | format date %T)')" | highlight Python --theme=Nord
+  let text: string = $"alarm\('($name)', time=($time | format date %T))"
   let item: record = job spawn --description=$desc {||
     while (date now) < $time { sleep 1sec }
-    if not $silent { clear --keep-scrollback; print $text }
-    if $then != null { try { print (do --env --capture-errors $then) } catch { print --stderr $in.rendered? } }
-    drop-alarm $name
+    if $then != null { do --ignore-errors $then | if not $silent { print } }
+    if not $silent {
+      tui label --status $text
+      | tui button 'dismiss' {|| drop-alarm $name; {action: quit} }
+      | tui run --size=[60 1]
+    }
   } | {id: $in description: $desc expires_at: $time on_expires: (if $then == null { null } else { view source $then })}
   set-alarm --return=value $name $item
 }

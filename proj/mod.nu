@@ -1,5 +1,7 @@
 # Project discovery and catalog utilities.
 
+# nu-lint-ignore-file: string_param_as_path
+
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
@@ -39,6 +41,13 @@ alias kind-to-table-name = do {|k: string| return $"proj_kind_($k | str trim)" }
 # Automatically perform a scan when the module is used
 export-env { use std/dirs; scan }
 
+# ——— type-aliases —————————————————————————————————————————————————————————————
+
+type ScanMetadata = record<found: int, added: int, start: datetime, end: datetime, elapsed: string>
+type ProjectInfo = record<name: string, path: string, repo: oneof<nothing, string>, vcs: oneof<nothing, string>, host: oneof<nothing, string>>
+type KindSummary = record<name: string, root: directory, description: string, projects: list<ProjectInfo>>
+
+
 # ——— definitions ——————————————————————————————————————————————————————————————
 
 # Scan for repositories for each kind and initialize their data tables.
@@ -58,7 +67,7 @@ export def scan [
   # Only remove missing directories from the registry (no additions)
   --reset (-r)
   # Clear all existing project data (including metadata) prior to scanning
-]: nothing -> oneof<nothing, record<found: int, added: int, start: datetime, end: datetime, elapsed: string>> {
+]: nothing -> oneof<ScanMetadata, nothing> {
   drop-meta flat_list # drop cached list whenever scan runs in case of changes
   if $prune { prune-missing-dirs | return }
   if not ($reset or $force) {
@@ -82,8 +91,29 @@ export def scan [
   } | record-scan-metadata $start
 }
 
-# Show descriptions for each `kind` of project.
-export alias kind = echo $KIND
+# Show descriptions and registrations for one or more `kind`s of projects.
+export def kind [
+  kind?: string@_kinds
+  # Return the description and projects registered for a single kind
+  --all (-a)
+  # Return descriptions and registered projects for all kinds
+]: nothing -> oneof<KindSummary, list<KindSummary>, error> {
+  match ($kind | describe) {
+    string if $KIND not-has $kind => { error make --unspanned $"unknown kind: '($kind)'" }
+    string => {
+      name: $kind
+      root: ($env.work! | path join $kind)
+      description: ($KIND | get $kind)
+      projects: (list-kind --insert=true $kind)
+    }
+    nothing if not $all => { error make --unspanned 'a kind must be provided without `--all`' }
+    nothing => (
+      $KIND | transpose name description
+      | insert $.root {|row| $env.work! | path join $row.name }
+      | insert $.projects {|row| list-kind --insert=false $row.name }
+    )
+  }
+}
 
 # Display metadata related to projects and module commands.
 export def meta [key?: string@_meta_keys]: nothing -> oneof<string, int, datetime, record, table> {
@@ -101,7 +131,7 @@ export def list [
   # Scope the query to a specific kind of project
   --long (-l)
   # Include `$.kind` in the output record
-]: nothing -> table<name: string, path: directory> {
+]: nothing -> list<ProjectInfo> {
   get-meta flat_list | default {||
     set-meta --return=value flat_list (
       $KIND | columns | par-each {|k|
@@ -176,8 +206,8 @@ def intake-kind [kind: string table: string --reset]: list<path> -> record<found
         | match $in { '' => ({}) $u => {repo: $'($u)/($base)'} }
       ) | insert $.vcs git
     } | default {}
-    # Select as optional cell paths to automatically populate `null` fill values
-    | select $.repo? $.vcs? $.host?
+    # Default here to ensure columns exist
+    | default null $.repo? $.vcs? $.host?
     # Rebuild the record with static values and reordered columns
     | {name: $name path: $root ...$in}
     # Register the repository in the kind-scoped `kv` store.
@@ -189,7 +219,7 @@ def intake-kind [kind: string table: string --reset]: list<path> -> record<found
 
 def record-scan-metadata [
   start: datetime
-]: table<found: int, added: int> -> record<found: int, added: int, start: datetime, end: datetime, elapsed: string> {
+]: table<found: int, added: int> -> oneof<ScanMetadata, record> {
   let totals: record = math sum
   let end: datetime = date now
   $totals | set-meta --return=input total_count $in.found
@@ -222,7 +252,7 @@ def prune-missing-dirs []: nothing -> nothing {
   date now | set-meta pruned_at
 }
 
-def list-kind [kind: string --insert = true]: nothing -> table {
+def list-kind [kind: string --insert = true]: nothing -> list<ProjectInfo> {
   let table: string = kind-to-table-name $kind
   kv list --universal --table=$table
   | get $.value
