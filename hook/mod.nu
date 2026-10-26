@@ -2,8 +2,7 @@
 
 use std/util structure
 use std/iter flat-map
-use ../dispatch
-use ../completion "into completions"
+use completion "into completions"
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -14,6 +13,16 @@ const HOOK_TYPES: list = [
   display_output
   command_not_found
 ]
+
+# ——— types ————————————————————————————————————————————————————————————————————
+
+type CodeType = oneof<string, closure>
+type OptStr = oneof<nothing, string>
+type OptBool = oneof<nothing, bool>
+
+type HookData = oneof<record<name: string>, record<name: OptStr, code: CodeType>, record<name: OptStr, condition: closure, code: CodeType, disabled: OptBool>>
+type HookType = oneof<HookData, CodeType>
+type HookInfo = oneof<record<ref: cell-path name: string, condition: oneof<nothing, closure>, code: CodeType, disabled: OptBool>, record<ref: cell-path, name: nothing, code: CodeType, disabled: bool>>
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
@@ -67,7 +76,7 @@ def add-descriptions [
 
 def hook-defaults [prefix: string]: [
   nothing -> list<any>
-  oneof<string, list, table> -> table<ref: cell-path, code: oneof<string, closure>, name: string, disabled: bool>
+  oneof<string, list, table> -> list<HookInfo>
 ] {
   # `append []` rather than std-rfc's `into list`: the latter turns a record into a key/value table.
   append [] | enumerate | each {|row|
@@ -84,7 +93,7 @@ def flatten-hooks [
   pred?: closure
   --only: cell-path
   --include: list<string> = []
-]: nothing -> table<name: string, disabled: bool, code: oneof<string, closure>, ref: cell-path> {
+]: nothing -> list<HookType> {
   # `condition` is optional per hook, so it is not part of the declared row type: with
   # `enforce-runtime-annotations` a declared column missing from any row is a runtime type mismatch.
   $env.config.hooks
@@ -120,7 +129,7 @@ export def --env main [
   # The hook type to target
   index?: int@_hook-indices
   # Retrieve the configured hook record at this index
-]: nothing -> oneof<nothing, record, table> {
+]: nothing -> oneof<nothing, HookData, list<HookData>> {
   hook-getter $target | invoke $index
 }
 
@@ -141,6 +150,42 @@ export def is-enabled [
   }
 }
 
+# Execute a closure in a temporary environment with a modified hook.
+# ---
+# If pipeline input is provided, it will be loaded into the closure environment.
+export def with [
+  modification: record
+  # The temporary `disabled` state of the hook
+  closure: closure
+  # The closure to execute with or without the hook enabled
+  --root(-r): directory
+  # The directory to invoke the closure from (navigated to after the hook modification)
+  --hook (-h): cell-path@_hook-refs
+  # The cell-path of the hook record to retrieve the value from
+  --name (-n): string@_hook-names
+  # Check the hook by name (useful for custom definitions when ref is inaccessible)
+  --strict (-s)
+  # Throw an error if the hook cannot be resolved
+]: oneof<nothing, record> -> oneof<nothing, any, error> {
+  let vars: record = default {}
+  if $name == null and $hook == null { error make --unspanned 'either a name or reference is required' }
+  let ref: oneof<nothing, cell-path> = $hook
+    | default (if $name != null { list $name --strict=$strict | get $.0?.ref })
+  if $ref == null { return null }
+  edit $ref --update=$modification
+  if $root != null and ($root | path type) == dir { cd $root }
+  with-env $vars $closure
+}
+
+# Retrieve the reference for a hook entry from its name.
+@category util
+export def reference [
+  name: string@_hook-names
+  # The name of the hook to retrieve the reference for
+  --strict (-s)
+  # Throw an error if the hook is not found for the provided name (instead of returning `null`)
+]: nothing -> oneof<nothing, cell-path, error> { list $name --strict=$strict | get $.0?.ref }
+
 # Retrieve a value from a hook by reference.
 @category env
 export def show [
@@ -154,7 +199,7 @@ export def show [
   # Value to return when the hook record or property is missing
   --raw (-r)
   # Disable serialization of closures (useful for manual testing; otherwise use `hook test`)
-]: nothing -> oneof<nothing, any> {
+]: nothing -> oneof<nothing, HookType> {
   flatten-hooks --only=$ref
   | if $raw { } else {
     let stringify: closure = {|| if $in == null { } else { to nuon --serialize --raw-strings | str trim --char='"' } }
@@ -177,7 +222,7 @@ export def list [
   # The name(s) of hook record(s) to retrieve the value(s) for
   --strict (-s)
   # Throw an error if the named hook(s) cannot be found
-]: nothing -> oneof<list<any>, table> {
+]: nothing -> oneof<list<any>, list<HookType>> {
   flatten-hooks --include=$names | if $in != [] or not $strict { } else {
     error make {
       msg: 'no hook exists with the provided name(s)'
@@ -196,7 +241,7 @@ export def --env edit [
   # Value to replace the referenced hook with
   --update: record
   # An update record to merge into an existing hook record
-]: nothing -> record {
+]: nothing -> oneof<HookData, error> {
   if $overwrite == null and $update == null {
     error make --unspanned 'no overwrite value or update record was given'
   } else if $overwrite == null and ($env.config.hooks | get --optional --ignore-case $ref) == null {
@@ -241,14 +286,12 @@ export def --wrapped test [
     }
   } else {
     let h: oneof<string, closure> | (
-      dispatch shape --errors=true --exec {
-        closure: {||
-          $input | do --capture-errors $h ...$rest
-        }
-        string: {||
+      match ($in | describe) {
+        closure => ($input | do --capture-errors $h ...$rest)
+        string => (
           $input | to nuon --serialize --raw-strings
           | ^$nu.current-exe --stdin --no-config-file --commands $"from nuon | ($h)"
-        }
+        )
       }
     )
   }
@@ -265,7 +308,7 @@ export def --env add [
   # Insert the pipeline input before this index (negative counts from the end; the default appends)
   --dedupe (-d)
   # Check for the existence of the hooks and only add them if not found
-]: oneof<nothing, list<oneof<closure, string>>, table<name: string, code: oneof<closure, string>>> -> nothing {
+]: oneof<nothing, list<HookType>> -> nothing {
   let hooks: list = if $value != null { append $value } else { } | match $in {
       [_ ..] if $dedupe => {
         let names: list<string> = ignore | _hook-names | get $.completions.value

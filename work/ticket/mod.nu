@@ -4,7 +4,7 @@
 # - finish extraction of `ticket`-scoped methods and constants from `../mod.nu` (work)
 # - update the validation and rule handling in this module for compatibility with the `validate rules` overhaul
 
-use ../../validate rules
+use validate rules
 
 export const VERSION: string = '4.0.0'
 export const STATUSES: list<string> = [draft open done aborted]
@@ -64,7 +64,7 @@ export def verify-settable [
   --return (-r) # Return the pipeline input if it passes verification
 ]: record -> oneof<error, nothing, record> {
   {columns: ($in | columns)}
-  | rules --errors [{path: $.columns type: list<string> enum: [$SETTABLE]}]
+  | rules --errors [{path: $.columns type: 'list<string>' enum: [$SETTABLE]}]
 }
 
 def build-version-rule [slug: string]: nothing -> record<path: cell-path, type: string, required: bool, dynamic: closure> {
@@ -82,7 +82,7 @@ def build-version-rule [slug: string]: nothing -> record<path: cell-path, type: 
       } else if $version != $VERSION {
         let expected: string = $VERSION | simple-style --quote
         error make --unspanned {
-          msg: $"{at} is version ($actual) which is incompatible with the ($expected) ticket format"
+          msg: $"{at} is version ($actual), which is an incompatible file format"
           help: $'update the file to be compatible with ($expected) and try again'
         }
       }
@@ -131,13 +131,18 @@ def verify-task-entries []: oneof<nothing, list<any>, table> -> oneof<nothing, e
 }
 
 export def check [file: record]: record -> oneof<record<reason: string, hint: string>, nothing> {
-  let doc: record | rules --return=one --strict [
-    (build-version-rule $doc.slug)
-    ...$RULES
+  let doc: record;
+  let built = build-version-rule $file.slug
+  let extra = [
     {path: $.ticket.slug type: string required: true const: $file.slug}
     {path: $.ticket.date type: 'string|datetime' required: true dynamic: {|val: any| verify-datetime-coercion $val }}
     {path: $.tasks type: 'list<any>|table' required: false dynamic: {|| verify-task-entries }}
   ]
+  for row in [[strict rules]; [false [$built]] [true $RULES] [false $extra]] {
+    let res = $doc
+      | rules --return=one --strict=$row.strict $row.rules
+    if $res == null { continue } else { return $res }
+  }
 }
 
 # Rows with every one of `keys` present, in that order.

@@ -3,7 +3,7 @@
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use std/util null-device
-use ../completion "into completions"
+use completion "into completions"
 
 # ——— constants ——————————————————————————————————————————————————————————————
 
@@ -170,11 +170,11 @@ def --wrapped todoist [
   $options
   | into options --fold=($rest | if $struct { append '--json' } else { })
   | if $auth or not $struct {
-    use ../elevate with-auth
+    use elevate with-auth
     with-auth --login={|| run-external td auth login } td ...$in
   } else {
     let args;
-    use ../util attempt
+    use util/ attempt
     attempt --merge td ...$args | get $.stdout
   } | if $struct {
     from json | collect {|| if $in has results { get $.results } else { append [] } }
@@ -209,7 +209,7 @@ def format-priority []: oneof<nothing, int> -> oneof<nothing, string> {
 }
 
 def repo-name []: nothing -> string {
-  use ../util attempt
+  use util/ attempt
   try { attempt --check git rev-parse --show-toplevel } catch {
     error make --unspanned 'not inside a repository: pass `--project`'
   } | str trim | path basename

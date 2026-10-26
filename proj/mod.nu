@@ -5,6 +5,7 @@
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
+use /work/dev/nu/hook with
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -50,6 +51,30 @@ type KindSummary = record<name: string, root: directory, description: string, pr
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
+export module test {
+  export-env { if $env has project_testing { hide-env project_testing } }
+
+  # Fixture for tests that depend on `proj` for project registration
+  @category fixture
+  export def --env before [kind: string = 'test']: list<ProjectInfo> -> nothing {
+    let t: string = kind-to-table-name $kind
+    $env.project_testing = {kind: $kind table: $t}
+    $in | par-each {|proj| kv set --universal --table=$t $proj.name }
+  }
+
+  # Cleanup fixture for projects registered with `test before`.
+  @category fixture
+  export def --env after [kind: string = 'test']: nothing -> nothing {
+    let t: string = kind-to-table-name $kind
+    if $env not-has project_testing or $env.project_testing!? != {kind: $kind table: $t} {
+      error make --unspanned $"project test fixture is inactive for kind: '($kind)'"
+    } else {
+      kv list --universal --table=$t | get $.key | par-each {|k| kv drop --universal --table=$t $k }
+      hide-env project_testing
+    }
+  }
+}
+
 # Scan for repositories for each kind and initialize their data tables.
 # ---
 # Notes:
@@ -69,6 +94,7 @@ export def scan [
   # Clear all existing project data (including metadata) prior to scanning
 ]: nothing -> oneof<ScanMetadata, nothing> {
   drop-meta flat_list # drop cached list whenever scan runs in case of changes
+  deduplicate
   if $prune { prune-missing-dirs | return }
   if not ($reset or $force) {
     get-meta last_scan
@@ -138,7 +164,10 @@ export def list [
         list-kind --insert=true $k
       } | flatten
     )
-  } | if $kind == null { } else { where kind == $kind }
+  } | if $env.project_testing!? != null {
+    append (list-kind --insert=true $env.project_testing.kind)
+  } else { }
+  | if $kind == null { } else { where kind == $kind }
   | if $long { } else { reject $.kind }
 }
 
@@ -156,7 +185,9 @@ export def --env main [
   # Run the repository scan before querying project data
   --boot (-b)
   # Enter a `zellij` session for the project (creating if not existing)
-]: nothing -> nothing {
+  --exec (-x): closure
+  # Run a closure from the project root of the first project to match the `query`
+]: nothing -> oneof<nothing, any> {
   if $scan { scan }
   list --kind=$kind --long
   | match ($query | describe) { nothing => () string => { where name =~ $query } }
@@ -164,22 +195,63 @@ export def --env main [
     0 => { error make --unspanned $"no project matches '($query)'" }
     1 => (first)
     _ => (input list --fuzzy --display={|it| display-label $it })
-  } | if $in == null {
-    return
-  } else if $boot {
-    if $env has ZELLIJ {
-      ^zellij attach --create-background $in.name options --default-cwd $in.path
-      ^zellij action switch-session $in.name
-    } else {
-      ^zellij attach --create $in.name options --default-cwd $in.path
+  } | if $in == null { return } else {
+    let proj: ProjectInfo;
+    if $exec != null {
+      do --capture-errors {
+        with --root=$proj.path {disabled: true} $exec
+      }
+    } else if $boot {
+      $proj | if not ($in | is-existing-session) {
+        create-session-in-project
+      }
+      if $env has ZELLIJ {
+        ^zellij action switch-session $proj.name
+      } else {
+        ^zellij attach $proj.name
+      }
+    } else if $proj.path != $env.pwd! {
+      try {
+        use std/dirs add
+        add $proj.path
+      } catch {
+        cd $proj.path
+      }
     }
-  } else if $in.path != $env.pwd! {
-    let p: path = $in.path
-    try { use std/dirs add; add $p } catch { cd $p }
   }
 }
 
 # ——— helpers ———————————————————————————————————————————————————————————————————
+def create-session-in-project []: record -> nothing {
+  cd $in.path
+  ^zellij attach --create-background $in.name options --default-cwd $in.path
+}
+
+
+def is-existing-session []: ProjectInfo -> bool {
+  let proj: record;
+  let sessions: list<string> = zellij list-sessions --short --no-formatting | lines | str trim
+  $sessions has $proj.name or $sessions has ($proj.path | path basename)
+}
+
+def deduplicate []: nothing -> nothing {
+  let map: record = $env.project_aliases!? | default {}
+  $KIND | columns | par-each {|kind|
+    let t: string = kind-to-table-name $kind
+    let q: table<name: string, path: path> = kv list --universal --table=$t | if $in != [] {
+        get $.value
+        | where path in $map and name != ($map | get $it.path)
+        | select $.name $.path
+      } | default []
+    for row in $q {
+      let a: string = $map | get $row.path
+      kv drop --universal --table=$t $row.name
+      | if (kv get --universal --table=$t $a) == null {
+        update $.name $a | kv set --universal --table=$t $a
+      }
+    }
+  }
+}
 
 def intake-kind [kind: string table: string --reset]: list<path> -> record<found: int, added: int> {
   let map: record = $env.project_aliases!? | default {}
@@ -188,10 +260,12 @@ def intake-kind [kind: string table: string --reset]: list<path> -> record<found
     let name: string = $map
       | get --ignore-case --optional $root $base
       | compact | first | default $base
+    let curr: oneof<nothing, ProjectInfo> = kv get --universal --table=$table $name
     if not $reset and (kv get --universal --table=$table $name) != null {
       # Skip projects already registered to avoid duplicate entries
       return false
-    } else if ($root | path join '.git' | path exists) {
+    }
+    if ($root | path join '.git' | path exists) {
       # Projects with source-control - collect repository information
       ^git -C $root config remote.origin.url
       | ignore --stderr

@@ -1,6 +1,6 @@
 # Custom external completion provider with configurable dispatch rules.
 
-use ../mod.nu "into spans"
+use completion "into spans"
 
 # Commands to complete using `fish` by default.
 const FISH: list<string> = [nu git td asdf]

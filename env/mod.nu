@@ -1,6 +1,6 @@
 # Environment utility module for script-friendly environment commands.
 
-use ../completion "into completions"
+use completion "into completions"
 
 def _keys []: nothing -> oneof<list, record> {
   $env | transpose value description
@@ -114,30 +114,23 @@ export def has [
 # Remove variables from the current scope.
 export alias rm = hide-env
 
-# Run a closure with a temporary environment and capture changes.
-export def cap [
-  closure: closure
-  # Closure to run in the environment.
-  --with (-e): record = {}
-  # Environment variables to start with; merged with input records if both given
-  --bail (-b)
-  # Mapped to `--capture-errors` on the `do` invocation
-]: oneof<nothing, record> -> oneof<record, table> {
-  let e: record = match ($in | describe) {
-    record if ($with | is-empty) => { }
-    nothing => $with
-    _ => { merge $with }
-  }
-  let c = $env | merge $e
-  with-env $e {||
-    do --env --capture-errors=$bail $closure
-    | {output: $in}
-    | insert $.changes {
-      $env
-      | transpose name after
-      | insert before {|var|
-        try { $c | get $var.name } catch { get $.code? }
-      } | where before != $it.after
-    }
+# Parse variables from a `.env` file, optionally loading them.
+export def --env dotenv [
+  dotenv_path: path@_dotenv_files = .env
+  --load (-l) # Load the variables into the process environment
+  --no-transpose (-n) # Return the variables as a table
+]: nothing -> oneof<table<key: string, value: any>, record> {
+  if not ($dotenv_path | path exists) { error make --unspanned $"unable to resolve path: '($dotenv_path)'" }
+  try {
+    open --raw $dotenv_path | lines | parse '{key}={value}'
+  } catch {
+    error make --unspanned $"unable to parse variables from '($dotenv_path)'"
+  } | if not $load or $no_transpose { } else {
+    transpose --ignore-titles --header-row --as-record
+    | if $load { let vars: record | load-env; $vars } else { }
   }
 }
+
+# ——— completions ——————————————————————————————————————————————————————————————
+
+def _dotenv_files []: nothing -> list<path> { '.env' | commandline complete --type=path }

@@ -2,11 +2,11 @@
 
 # ——— imports —————————————————————————————————————————————————————————————————
 
-use ../error
-use ../path
-use ../util editor
-use ../completion "into completions"
 use /work/ext/bash-env
+use error/
+use path/
+use util/ editor
+use completion/ "into completions"
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -35,6 +35,9 @@ export const VENDOR: record = {
   modules: ($USER.data | path join nupm modules)
   scripts: ($USER.data | path join nupm scripts)
 }
+
+export const NU_LIB_DIRS: list<path> = [$USER.modules $VENDOR.modules]
+export const NU_PLUGIN_DIRS: list<path> = [$USER.plugins $VENDOR.plugins]
 
 # Environment variables of the user scope.
 const VARS: record = {
@@ -231,28 +234,43 @@ export def app [
   } | submit $target --return=$return
 }
 
+const PROMPT_EXT: string = '^.+[.]{1}(toml|yaml|yml|json|jsonc)$'
+
 # Refresh the `oh-my-posh` prompt initialization script in the vendor autoload directory.
 @category shells
 export def prompt [
   --config (-c): path # Prompt configuration file (defaults to `$env.POSH_CONFIG` if set)
 ]: nothing -> nothing {
-  match ($config | default --empty $env.POSH_CONFIG?) {
-    null => { oh-my-posh init nu }
-    $p if ($p | path type) != file => {
-      error wrap --code=config::prompt::unresolved_config $"file not found: '($p)'"
-    }
-    $p if ($p | path parse).extension not-in [toml yaml yml json jsonc] => {
-      error wrap --code=config::prompt::unknown_configuration_format $"unexpected configuration file format: '($p)'"
-    }
-    $p => { oh-my-posh init nu --config=($p) }
+  $config | default --empty $env.posh_config!? | if $in == null {
+    oh-my-posh init nu
+  } else if ($in | path type) != file {
+    let msg: string = $"file not found: '($in)'"
+    error wrap --code=config::prompt::unresolved_config $msg
+  } else if $in !~ $PROMPT_EXT {
+    let msg: string = $"unexpected configuration file format: '($in)'"
+    error wrap --code=config::prompt::unknown_configuration_format $msg
+  } else {
+    oh-my-posh init nu --config=($in)
   }
-  let f: path = $VENDOR.autoload | path join oh-my-posh.nu
-  $f | run ($VENDOR.autoload | path basename --replace require-tty) | ignore
-  if $nu.os-info.name == windows {
-    open --raw $f
-    | collect { lines | take until { str contains '$_omp_executable upgrade' } | str join (char newline) }
-    | save --force $f
+  let src: path = $VENDOR.autoload | path join oh-my-posh.nu
+  if ($src | path exists) {
+    let dst: path = $src | path dirname --replace=$USER.autoload
+    if not ($dst | path exists) { mv --update $src $dst }
+    if $nu.os-info.name == windows {
+      open --raw $dst
+      | collect { lines | take until { str contains '$_omp_executable upgrade' } | str join (char newline) }
+      | save --force $dst
+    }
   }
+}
+
+# ——— environment ——————————————————————————————————————————————————————————————
+
+export-env {
+  $env | select $.NU_LIB_DIRS!? $.NU_PLUGIN_DIRS!?
+  | update $.NU_LIB_DIRS { append $NU_LIB_DIRS | uniq }
+  | update $.NU_PLUGIN_DIRS { append $NU_PLUGIN_DIRS | uniq }
+  | vars --vendor --load
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————

@@ -1,7 +1,5 @@
 # Extensions to the `match` built-in for common complex cases.
 
-use ../validate
-
 def return-or-exec [
   execute: bool = true
   --errors = true
@@ -36,12 +34,13 @@ export def pred [
   ...rest: any
   # Arguments to pass to any matched `$.exec` closure
 ]: oneof<nothing, any> -> oneof<nothing, error, any> {
+  use validate string
   # Use pipeline input if `$pipe`, otherwise use the `$input` value
   let input: any = if $pipe { } else { $input }
   # Automatically enable execution for any flag that implies it
   let do: bool = $exec or $pipe or $input != null
   # Validate the `$mode` to avoid errors from `run-internal`
-  let mode: string = $mode | validate string '^(all|first|last)$' | do $in
+  let mode: string = $mode | string '^(all|first|last)$' | do $in
   # Filter the arms, evaluating closures as necessary and letting `where` handle non-booleans
   $arms | where {|| $in.if? | return-or-exec --errors=false ...$args }
   # Dynamic mode evaluation allows us to ignore list wrapping for the rest of the function

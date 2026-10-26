@@ -1,8 +1,9 @@
 # Automatic Timewarrior tracking of the repository and branch in focus, tagged with the matched Todoist task.
 
-use ../time
-use ../todo
 use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
+
+use time
+use todo
 # ——— constants ————————————————————————————————————————————————————————————————
 
 # Matches are cached per shell for this long before `todo find` runs again for the same branch.

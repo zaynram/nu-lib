@@ -14,9 +14,11 @@ export def wrap [
   message: string # Error message to include in the rendered output
   --code: string # An optional identifier to contextualize the error
   --labels: table<text: string, span: record> = [] # Labels to include in the error output
-  --help: string # Suggestions or advice on how to avoid or remedy the error
+  --advice: string # Suggestions or advice on how to avoid or remedy the error
 ]: oneof<nothing, error, record> -> oneof<error, closure> {
-  let details: record = {msg: $message code: $code labels: $labels inner: [$in] help: $help} | compact --empty
+  let details: record = append []
+    | {msg: $message code: $code labels: $labels inner: $in help: $advice}
+    | compact --empty
   if $labels == [] { error make --unspanned $details } else { return {|| error make $details } }
 }
 

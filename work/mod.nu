@@ -1,7 +1,7 @@
 # Ticket files, the local surface of Todoist tickets: `<repo>/docs/tickets/<slug>.toml` (v4 `ticket` schema).
 
-# Spec: `work/docs/2026-09-18_dev-core.spec.md`.
-# Path: /work/dev/nu/work/mod.nu
+# Spec: `work/docs/2026-09-18_work-core.spec.md`.
+# Path: /work/nu/work/mod.nu
 
 # TODO:
 # - complete extraction of `ticket`-scoped items to the `./ticket/mod.nu` submodule
@@ -11,9 +11,9 @@
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use ticket *
-use ../completion "into completions"
-use ../validate
-use ../proj
+use completion "into completions"
+use validate
+use proj
 
 # ——— aliases ——————————————————————————————————————————————————————————————————
 
@@ -42,8 +42,8 @@ def _properties [context: string]: nothing -> record {
 # ——— definitions —————————————————————————————————————————————————————————————
 
 # Load and validate a ticket; `--md` renders the remote issue body instead.
-@category development
-@example 'read one property of a ticket' { dev hooks-placement | get ticket.status }
+@category workelopment
+@example 'read one property of a ticket' { work hooks-placement | get ticket.status }
 export def main [
   slug: string@_slugs
   --repo (-r): string@_repos # Repository to look in when the slug exists in more than one
@@ -53,15 +53,15 @@ export def main [
   let doc: record = open $file.path
   let bad: oneof<record, nothing> = $doc | check $file
   if $bad != null {
-    error make --unspanned ($bad | format pattern $"'($file.path)'{reason}; {hint}")
+    error make --unspanned ($bad | format pattern $"'($file.path)' {reason}; {hint}")
   } else {
     $doc | normalise | if $md { render } else { }
   }
 }
 
 # Tickets across the registered repositories.
-@category development
-@example 'open tickets, newest first' { dev list --status open }
+@category workelopment
+@example 'open tickets, newest first' { work list --status open }
 export def list [
   --status (-s): string@_statuses
   --repo (-r): string@_repos
@@ -77,8 +77,8 @@ export def list [
 }
 
 # One property of a ticket.
-@category development
-@example 'the outcome of a ticket' { dev query hooks-placement ticket.outcome }
+@category workelopment
+@example 'the outcome of a ticket' { work query hooks-placement ticket.outcome }
 export def query [
   slug: string@_slugs
   property: cell-path@_properties
@@ -87,14 +87,14 @@ export def query [
   # Bound with `let`: a `try` in tail position does not catch once the caller pipes the result onward.
   let out = main $slug --repo=$repo
     | try { get $property } catch {
-      error make --unspanned $"no property ($property | to text | str replace '$.' '') in '($slug)'; run `dev ($slug)` to see the record"
+      error make --unspanned $"no property ($property | to text | str replace '$.' '') in '($slug)'; run `work ($slug)` to see the record"
     }
   return $out
 }
 
 # Change a ticket and rewrite its file canonically; returns the path.
-@category development
-@example 'open a ticket' { dev edit hooks-placement --set {status: open} }
+@category workelopment
+@example 'open a ticket' { work edit hooks-placement --set {status: open} }
 export def edit [
   slug: string@_slugs
   --repo (-r): string@_repos
@@ -107,15 +107,15 @@ export def edit [
   }
   let file: record = locate $slug $repo
   let doc: record = main $slug --repo=$file.repo
-  # ponytail: the Todoist write-through ships with `dev sync` (plan Phase 5a); until then no ticket is linked for it
+  # ponytail: the Todoist write-through ships with `work sync` (plan Phase 5a); until then no ticket is linked for it
   if $add_task != null or ($complete | is-not-empty) {
-    error make --unspanned $"'($slug)' has no Todoist task yet; run `dev sync ($slug)` first"
+    error make --unspanned $"'($slug)' has no Todoist task yet; run `work sync ($slug)` first"
   }
   $set | verify-settable
   let merged: record = $doc | update ticket { merge deep --strategy=overwrite $set }
   let bad: oneof<record, nothing> = $merged | check $file
   if $bad != null {
-    error make --unspanned $'`--set` rejected: ($bad.reason); nothing written'
+    error make --unspanned $'`--set` rejected: ($bad.reason?); nothing written'
   }
   $merged | normalise | write $file.path
 }
@@ -136,7 +136,7 @@ def files [repo?: string]: nothing -> table<slug: string, repo: string, path: pa
 # The one file a slug names (D3).
 def locate [slug: string repo?: string]: nothing -> record<slug: string, repo: string, path: path> {
   files $repo | where slug == $slug | match ($in | length) {
-    0 => (error make --unspanned $"no ticket named '($slug)' in the registered repositories; run dev list to see them")
+    0 => (error make --unspanned $"no ticket named '($slug)' in the registered repositories; run work list to see them")
     1 => { first }
     _ => { error make --unspanned $"slug '($slug)' found in repos ($in.repo | str join ', '); pass `--repo`" }
   }

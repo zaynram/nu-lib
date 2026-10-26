@@ -1,7 +1,7 @@
 # Package management for the system and provisioned tooling: upgrades, apt, plugins and the Nushell binary.
 
 use std/util null-device
-use ../prelude NU_LIB_DIRS
+use config/ NU_LIB_DIRS
 
 export use nightly-toolkit get-latest-nightly-build
 
@@ -44,7 +44,7 @@ export def upgrade [
       | if $in == null or $in > 24hr { ignore | upgrade --silent }
     } | get-job $in
   } else {
-    use ../config find
+    use config/ find
     use std/util "path add"
     if $env not-has XDG_DATA_DIR { $env.XDG_DATA_DIR = $nu.home-dir | path join .local share }
     let bins: list<path> = find bin-dirs --roots=[$env.XDG_DATA_DIR] --depth=3
@@ -66,13 +66,15 @@ export def upgrade [
           let name: string = $cmd | first
           let rest: list = ($cmd | skip) ++ $rest
           ^$name ...$rest | complete | if $in.exit_code == 0 {
-            {output: $in.stdout success: true}
+            rename --column={stdout: output}
+            | insert $.success true
           } else {
-            {output: $in.stderr success: false}
-          }
-          if $name == cargo {
+            rename --column={stderr: output}
+            | insert $.success false
+          } | select $.output $.success
+          if $name == cargo and (^$nu.current-exe --version) !~ 'nightly' {
             # `cargo install-update --all` may overwrite a nightly build
-            get-latest-nightly-build
+            try { get-latest-nightly-build | ignore --stdout --stderr }
           }
         }
       } | {$bin: $in}

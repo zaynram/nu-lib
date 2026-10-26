@@ -5,9 +5,8 @@
 use std/util [ "path add" null-device ]
 use std/iter flat-map
 
-use ../dispatch
-use ../completion "into completions"
-use ../error post-complete
+use completion "into completions"
+use error post-complete
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -26,7 +25,7 @@ export def contains [
 # Serialize a datetime (default: now; strings are parsed as human dates) in RFC 3339 format.
 @category date
 export def timestamp []: oneof<nothing, string, datetime> -> string {
-  dispatch shape --pipe {nothing: {|| date now } string: {|| date from-human } _: {|| }} | format date %+
+  match ($in | describe) { nothing => (date now) string => (date from-human) _ => () } | format date %+
 }
 
 # Run an external command and return its `complete` record.
@@ -100,8 +99,8 @@ export def --env --wrapped reload [
   --erase (-e) # Erase the history (clear without keeping scrollback)
   ...rest: string # Additional arguments for the Nushell invocation
 ]: oneof<nothing, record> -> nothing {
-  dispatch os {linux: {|| reset (if $erase { '-wc' } else { '-w' }) }}
-  with-env ($in | default {}) {
+  default {} | with-env $in {
+    match $nu.os-info.name { linux if $erase => { reset -wc } linux => { reset -w } }
     if $nu.is-interactive { hide-env --ignore-errors pid }
     if $nu.is-login { exec $EXE --login ...$rest } else { exec $EXE ...$rest }
   }
@@ -112,12 +111,12 @@ export def --env --wrapped reload [
 export def bin-link [
   name: oneof<string, path>@_executables # The name of the binary to link
 ]: nothing -> path {
-  let config: record<link: path, regex: string> = dispatch os {
-    linux: {
+  let config: record<link: path, regex: string> = match $nu.os-info.name {
+    linux => {
       link: $"/usr/bin/($name)"
       regex: $"^/\(bin|usr/bin)/($name)$"
     }
-    windows: {
+    windows => {
       let lnk: path = $env.USERPROFILE | path join .local bin $name
       return {link: $lnk regex: $lnk}
     }
@@ -134,9 +133,9 @@ export def bin-link [
   | get --optional 0.path
   | if $in == null { error "unable to detect source binary" } else {
     let path: path = $in
-    dispatch os {
-      linux: { sudo ln -s $path $config.link out+err>| complete }
-      windows: { mklink $config.link $path out+err>| complete }
+    match $nu.os-info.name {
+      linux => { sudo ln -s $path $config.link out+err>| complete }
+      windows => { mklink $config.link $path out+err>| complete }
     } | if $in.exit_code? != 0 {
       error 'unable to link binary' bin-link non_zero_exit_code
     } else {

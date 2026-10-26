@@ -3,11 +3,12 @@
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
-use ../config
-use ../path
-use ../util editor
-use ../completion "into completions"
-use ../prelude NU_LIB_DIRS
+
+use path
+use util editor
+use completion "into completions"
+
+use config [ NU_LIB_DIRS USER ]
 use docgen
 
 # ——— constants ————————————————————————————————————————————————————————————————
@@ -99,7 +100,7 @@ export-env {
 
   # Guard also ensures an already registered hook does not pick up this `hook` import invocation.
   if $existing not-has $name {
-    use ../hook [ add is-enabled ]
+    use hook [ add is-enabled ]
     [
       [name disabled condition code];
       [
@@ -142,7 +143,7 @@ export def edit [
   target: string@_definitions # Name of the module or script to target
   --get (-g) # Return the resolved path instead of opening it
 ]: nothing -> oneof<nothing, path> {
-  [$config.USER.modules $config.USER.scripts]
+  [$USER.modules $USER.scripts]
   | nu-glob
   | where $it has $target
   | sort-by {|p| $target not-in ($p | path split) } # exact segment matches first
@@ -287,7 +288,7 @@ export def --env main [
 
 def _module-names []: nothing -> list { 'use ' | commandline complete | where $it !~ '(.nu|/)$' }
 def _definitions []: nothing -> record {
-  $config.USER
+  $USER
   | get $.modules $.scripts
   | par-each {|dir|
     glob --no-dir --depth=3 --exclude=$EXCLUDE ($dir | path rejoin ** *.nu)

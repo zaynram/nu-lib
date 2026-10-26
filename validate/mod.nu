@@ -14,7 +14,7 @@
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use std-rfc/str align
-use /work/dev/nu/types "cell-path join"
+use types "cell-path join"
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -103,35 +103,49 @@ export def string [
   # Error labels for validation errors; the input and regex pattern will be included if this is empty
   --inner: list<record> = []
   # Inner error(s) to include in the error details for validation errors
-  --help: string
+  --instruct: string
   # Requirement description or other helpful information for additional context
 ]: string -> closure {
   if (($regex != null and $in =~ $regex) or $enum has $in) != $not { let s: string; {|| $s } } else {
     let value: record = metadata | {text: string span: $in.span}
     let check: record = if $regex != null { {text: regex span: (metadata $regex).span} } else { {text: enum span: (metadata $enum).span} }
     let labels: table<text: string, span: record> = $labels | default --empty [$value $check]
-    {|| error make ({msg: $message code: $code labels: $labels inner: $inner help: $help} | compact --empty) }
+    {|| error make ({msg: $message code: $code labels: $labels inner: $inner help: $instruct} | compact --empty) }
   }
 }
 
 def evaluate-single-rule [
   rule: record
   --bail (-b)
-]: record -> oneof<table<item: any, at: cell-path, result: table>, record<item: any, at: cell-path, result: table>> {
-  let data: record;
+]: record -> oneof<nothing, table, record> {
   if $rule.through == null {
-    let w: any = $data | get $rule.whole
-    let out: record = {item: $w at: $rule.at result: ($w | verdicts $rule.at $rule)}
-    if $bail { return $out } else { return [$out] }
+    let w = get $rule.whole
+    $w | verdicts $rule.at $rule
+    | if $bail {
+      return $in.0?
+    } else {
+      return {item: $w at: $rule.at result: $in}
+    }
   } else if $bail {
+    let data: record;
     for row in ($data | get $rule.head | enumerate) {
       let at: cell-path = [...$rule.through $row.index ...$rule.rest] | compact --empty | into cell-path
-      $row.item | get $rule.tail | verdicts $at $rule | if $in != [] { return $in.0 }
+      $row.item
+      | get $rule.tail
+      | verdicts $at $rule
+      | if $in != [] { return $in.0 }
     }
   } else {
+    let data: record;
     $data | get $rule.head | enumerate | par-each --keep-order {|row|
-      let at: cell-path = [...$rule.through $row.index ...$rule.rest] | compact --empty | into cell-path
-      {item: $rule.item at: $at result: ($row.item | get $rule.tail | verdicts $at $rule)}
+      let at: cell-path = [...$rule.through $row.index ...$rule.rest]
+        | compact --empty
+        | into cell-path
+      {
+        item: $rule.item
+        at: $at
+        result: ($row.item | get $rule.tail | verdicts $at $rule)
+      }
     } | flatten --all
   }
 }
@@ -147,7 +161,9 @@ def evaluate-strict-rule [
   } else if $bail {
     failure foreign-key {at: ($at | cell-path join $in.0)}
   } else {
-    par-each --keep-order {|name| failure foreign-key {at: ($at | cell-path join $name)} }
+    par-each --keep-order {|name|
+      failure foreign-key {at: ($at | cell-path join $name)}
+    }
   }
 }
 
@@ -226,7 +242,12 @@ export def rules [
   # For `bail` mode, we use for loops and return immediately when we hit an error
   if $bail {
     for rule in $rows {
-      $data | evaluate-single-rule $rule --bail | if $in != null { return $in }
+      $data
+      | evaluate-single-rule $rule --bail
+      | match ($in | describe) {
+        nothing => (continue)
+        _ => (return $in)
+      }
     }
     if $strict {
       let known: record = $rows | group-by parent
@@ -234,12 +255,17 @@ export def rules [
         {at: $. whole: null}
         ...($rows | where type =~ '^(record|table)' | select $.at $.whole)
       ]
-
       for box in $queue {
         let names: list = $known | get --optional $"($box.at).leaf" | default []
-        match $box { _ if $names == [] => { return } {at: ''} => $data {whole: $w} => ($data | get $w) }
-        | evaluate-strict-rule $names $box.at --bail
-        | if $in != null { return $in }
+        match $box {
+          _ if $names == [] => { return }
+          {at: ''} => $data
+          {whole: $w} => ($data | get $w)
+        } | evaluate-strict-rule $names $box.at --bail
+        | match ($in | describe) {
+          nothing => (continue)
+          _ => (return $in)
+        }
       }
     }
     return null
@@ -251,7 +277,7 @@ export def rules [
     | reduce --fold={found: [] dead: []} {|it acc|
       if $acc.dead != [] or ($acc.dead | under $it.at) { return $acc }
       let container: bool = $it.through == null and $it.type !~ '^(record|table)'
-      let inter: table = $data | evaluate-single-rule $it
+      let inter: table = $data | evaluate-single-rule $it | append []
       let verdicts: table = $inter.result | flatten --all
       if $container and ($inter.item == null or $verdicts != []) {
         {dead: [...$acc.dead $it.at] found: [...$acc.found ...$verdicts]}
@@ -379,7 +405,18 @@ def verdicts [
       let type: string = $p.value | describe
       let text: bool = $type =~ '^(string|list<string>)$' or $rule.type? == string
       let iter: bool = is-iterable $type
-      $p.value | [
+      $p.value
+      | if $in != null {
+        # pass
+      } else if $rule has required and $rule.required {
+        return [(failure mandatory {at: $p.at})]
+      } else if $iter {
+        default []
+      } else if $text {
+        default ('')
+      } else {
+        return # don't run validation on non-required `null` values
+      } | [
         (if $iter { $in | check-iter-count $p.at --min=$rule.min-items? --max=$rule.max-items? })
         (if $rule.dynamic? != null { $in | check-dynamic-rule $p.at $rule.dynamic })
         ...(if $rule has const { $in | check-is-constant $p.at $rule.const --iterable=$iter --string=$text })
@@ -398,8 +435,9 @@ def check-dynamic-rule [
   let val: any;
   let map: record<name: string, rule: closure> = $map | transpose name rule | first
   try {
-    $val | do $map.rule $val $at | ignore --show-errors
+    $val | do --capture-errors $map.rule $val $at
   } catch {|err|
+    let details: record = $err.inner? | default $err | get $.details?
     let custom: record = $err | select $.msg!? $.help!? | compact
     let context: record = $err | reject $.msg!? $.help!? | compact --empty
     failure $map.name {at: $at ...$context} --custom=$custom
@@ -443,7 +481,7 @@ def check-regex-match [
   pattern: string
   --class: string
   --iterable
-]: oneof<string, list<string>> -> oneof<list<any>, table> {
+]: oneof<nothing, string, list<string>> -> oneof<list<any>, table> {
   if $iterable { enumerate } else { append [] }
   | each --flatten {|it|
     match $it {
