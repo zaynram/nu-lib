@@ -8,10 +8,6 @@ use std/iter flat-map
 use completion "into completions"
 use error post-complete
 
-# ——— constants ————————————————————————————————————————————————————————————————
-
-const EXE: path = $nu.current-exe | path expand --strict --no-symlink
-
 # ——— definitions —————————————————————————————————————————————————————————————
 
 # Check for the existence of a value at a cell-path.
@@ -96,13 +92,14 @@ export def on-path [
 # the process environment.
 @category shells
 export def --env --wrapped reload [
+  --binary (-b): path = $nu.current-exe # Execute this file instead of `$nu.current-exe`
   --erase (-e) # Erase the history (clear without keeping scrollback)
   ...rest: string # Additional arguments for the Nushell invocation
 ]: oneof<nothing, record> -> nothing {
   default {} | with-env $in {
     match $nu.os-info.name { linux if $erase => { reset -wc } linux => { reset -w } }
     if $nu.is-interactive { hide-env --ignore-errors pid }
-    if $nu.is-login { exec $EXE --login ...$rest } else { exec $EXE ...$rest }
+    if $nu.is-login { exec $binary --login ...$rest } else { exec $binary ...$rest }
   }
 }
 

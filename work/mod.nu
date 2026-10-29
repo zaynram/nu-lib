@@ -1,7 +1,7 @@
 # Ticket files, the local surface of Todoist tickets: `<repo>/docs/tickets/<slug>.toml` (v4 `ticket` schema).
 
-# Spec: `work/docs/2026-09-18_work-core.spec.md`.
-# Path: /work/nu/work/mod.nu
+# Spec: `/work/dev/nu/work/docs/2026-09-18_work-core.spec.md`.
+# Path: /work/nu/dec/work/mod.nu
 
 # TODO:
 # - complete extraction of `ticket`-scoped items to the `./ticket/mod.nu` submodule
@@ -49,7 +49,7 @@ export def main [
   --repo (-r): string@_repos # Repository to look in when the slug exists in more than one
   --md # Render the ticket as the remote issue body (Markdown) instead of returning the record
 ]: nothing -> oneof<record, string> {
-  let file: record = locate $slug $repo
+  let file: record = try { locate $slug $repo } catch { error make 'unable to locate ticket' }
   let doc: record = open $file.path
   let bad: oneof<record, nothing> = $doc | check $file
   if $bad != null {
@@ -65,15 +65,25 @@ export def main [
 export def list [
   --status (-s): string@_statuses
   --repo (-r): string@_repos
-]: nothing -> table<slug: string, name: string, status: string, date: datetime, repo: string> {
-  # A `for`, not `each`: a closure wraps the load error of a broken file, hiding the message that names it.
-  mut rows: list<record> = []
-  for f in (files $repo) {
-    $rows ++= [(main $f.slug --repo=$f.repo | get ticket | select slug name status date | insert repo $f.repo)]
+]: nothing -> oneof<table<slug: string, error: any>, table<slug: string, name: string, status: string, date: datetime, repo: string>> {
+  files $repo | par-each {|f|
+    try {
+      main $f.slug --repo=$f.repo
+      | get $.ticket!?
+      | default {}
+      | select $.slug! $.name!? $.status!? $.date!?
+      | insert $.repo $f.repo
+    } catch {
+      get $.details!?
+      | default {msg: $"unable to parse ticket for file '($f.name)'"}
+      | wrap error
+      | insert $.slug $f.slug
+    }
+  } | if $status != null { where $it not-has status or status == $status } else { }
+  | sort-by --custom {|a b|
+    if ([$a $b] | any ($it not-has date)) { return ($a has date) }
+    ($a.date == $b.date and $a.slug < $b.slug) or $a.date > $b.date
   }
-  $rows
-  | if $status != null { where status == $status } else { }
-  | sort-by --custom {|a b| if $a.date == $b.date { $a.slug < $b.slug } else { $a.date > $b.date } }
 }
 
 # One property of a ticket.
@@ -125,7 +135,9 @@ export def edit [
 # Ticket files of the registered repositories, or of `repo` alone.
 def files [repo?: string]: nothing -> table<slug: string, repo: string, path: path> {
   let registry: table<name: string, path: path> = proj list | default []
-  if $repo != null and $repo not-in ($registry | get $.name?) { error make --unspanned $"no registered repository named '($repo)'; run repo list to see them" }
+  if $repo != null and $repo not-in ($registry | get $.name?) {
+    error make --unspanned $"no registered repository named '($repo)'; run repo list to see them"
+  }
   $registry | where $repo == null or name == $repo | par-each {|r|
     let d: path = $r.path | path join docs tickets
     mkdir $d; glob $"($d)/*.toml"
@@ -136,8 +148,12 @@ def files [repo?: string]: nothing -> table<slug: string, repo: string, path: pa
 # The one file a slug names (D3).
 def locate [slug: string repo?: string]: nothing -> record<slug: string, repo: string, path: path> {
   files $repo | where slug == $slug | match ($in | length) {
-    0 => (error make --unspanned $"no ticket named '($slug)' in the registered repositories; run work list to see them")
-    1 => { first }
-    _ => { error make --unspanned $"slug '($slug)' found in repos ($in.repo | str join ', '); pass `--repo`" }
+    1 => (first)
+    0 => {
+      error make --unspanned $"no ticket named '($slug)' in the registered repositories; run work list to see them"
+    }
+    _ => {
+      error make --unspanned $"slug '($slug)' found in repos ($in.repo | str join ', '); pass `--repo`"
+    }
   }
 }
