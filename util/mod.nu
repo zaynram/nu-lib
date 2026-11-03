@@ -65,12 +65,8 @@ export def editor [
         try { glob --depth=$depth $p } catch { $p }
       }
     } | flatten | compact | default --empty [$env.pwd!]
-  match ($env | select $.config?.buffer_editor? $.zellij!?) {
-    {config: {buffer_editor: $e}} => {|| ^$e ...$items }
-    {zellij: _} => {|| zellij-edit ...$items }
-    _ => { error make --unspanned 'unable to detect editor binary' }
-  } | do --capture-errors $in
-  return null
+  if $env has ZELLIJ { zellij-edit ...$items } else { ^(get-editor-name) ...$items }
+  return
 }
 
 # Replace the current shell instance with a fresh one.
@@ -167,7 +163,7 @@ def zellij-edit [...rest: path]: nothing -> nothing {
   # ensures flags are sorted after paths
   let args: list = $rest | sort --reverse
   # if editor pane is detected, focus it so it gets replaced instead of currently focused
-  get-editor-pane-id $editor | if ($in | describe) == int { zellij action focus-pane-id $in }
+  get-editor-pane-id $editor | each { ^zellij action focus-pane-id $in }
   # count only non-option arguments (currently should be all of them; defense-in-depth)
   match ($rest | where $it !~ '^-+' | length) {
     0 => { error make --unspanned 'no paths were provided' }
@@ -175,7 +171,7 @@ def zellij-edit [...rest: path]: nothing -> nothing {
     _ => {|...rest: string|
       # use same prefix to ensure future stacked calls use the same pane regardless of any current
       let name: string = $'Editing: ($rest | first | path parse | get $.stem), ...'
-      zellij run --name=($name) --in-place --close-on-exit -- $editor ...$rest
+      ^zellij run --name=($name) --in-place --close-on-exit -- $editor ...$rest
     }
     # capture any errors so they propagate back to the initial caller
   } | do --capture-errors $in ...$args
