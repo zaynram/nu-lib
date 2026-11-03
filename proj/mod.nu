@@ -199,7 +199,7 @@ export def --env main [
     let proj: ProjectInfo;
     if $exec != null {
       do --capture-errors {
-        with --root=$proj.path {disabled: true} $exec
+        with --name=zellij::pwd::auto-switch --root=$proj.path {disabled: true} $exec
       }
     } else if $boot {
       $proj | if not ($in | is-existing-session) {
