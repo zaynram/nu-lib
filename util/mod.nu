@@ -65,7 +65,11 @@ export def editor [
         try { glob --depth=$depth $p } catch { $p }
       }
     } | flatten | compact | default --empty [$env.pwd!]
-  if $env has ZELLIJ { zellij-edit ...$items } else { ^(get-editor-name) ...$items }
+  let editor: string = get-editor-name
+  match ($env.ZELLIJ!? | describe) {
+    nothing => {|| run-external $editor ...$items }
+    string => {|| zellij-edit ...$items }
+  } | do --capture-errors $in
   return
 }
 
