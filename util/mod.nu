@@ -49,41 +49,28 @@ export def --wrapped attempt [
 # Open a file in the default editor or the editor pane of an active Zellij session.
 @category core
 export def editor [
-  --cd: directory # Set the working directory for the editor session
+  --cd: directory = . # Set the working directory for the editor session
   --depth (-d): int = 1 # Depth to recurse when expanding glob expressions
   ...rest: glob # Files or glob expressions for the files to edit
-]: oneof<nothing, path, list<path>, table<name: path>, table<path: path>> -> nothing {
-  if $cd != null { cd $cd }
-  $in | match ($in | describe) {
-    nothing | string | list<any> | list<string> => { }
-    _ => { get $.name? $.path? | flatten --all | compact }
-  } | append ($rest | into string | path expand)
-  | flat-map {|p|
-    if ($in | path exists) { return $in } else { }
-    | try { glob --depth=$depth $in } catch { $p }
-  } | default --empty '.'
-  | match ($env | select $.zellij!? $.editor!? $.config.buffer_editor? | compact) {
-    {zellij: _} => { zellij-edit ...$in }
-    {config: {buffer_editor: $e}} | {editor: $e} => { run-external $e ...$in }
+]: oneof<nothing, path, list<path>, record, table> -> nothing {
+  let items: list<path> = collect --keep-env {||
+    cd $cd; $in | append $rest
+  } | par-each --keep-order {|it|
+      match ($in | describe) {
+        glob | string => (into string)
+        _ => (get $.name? $.path? $.filename? | default [] | flatten | compact).0?
+      } | if $in == null or $in =~ ':\d+$' { return $in } else { path expand }
+      | if ($in | path exists) { return $in } else {
+        let p: path;
+        try { glob --depth=$depth $p } catch { $p }
+      }
+    } | flatten | compact | default --empty [$env.pwd!]
+  match ($env | select $.config?.buffer_editor? $.zellij!?) {
+    {config: {buffer_editor: $e}} => {|| ^$e ...$items }
+    {zellij: _} => {|| zellij-edit ...$items }
     _ => { error make --unspanned 'unable to detect editor binary' }
-  }
-}
-
-# Check if command(s) are available on PATH.
-#
-# Note that `all` is used for the test by default so if more than one
-# name is provided then any missing command will return false. Pass
-# `--mode=any` for the alternate behavior.
-@category filesystem
-export def on-path [
-  ...names: string@_executables # Command name (if the name is completed, it's on PATH already)
-  --mode (-m): string@[all any] = all
-]: oneof<nothing, string, list<string>> -> bool {
-  append $names | compact --empty | if ($in | is-empty) {
-    error make --unspanned 'no commands were provided'
-  } else {
-    run-internal $mode { which $in --all | where type == external | is-not-empty }
-  }
+  } | do --capture-errors $in
+  return null
 }
 
 # Replace the current shell instance with a fresh one.
@@ -186,7 +173,7 @@ def zellij-edit [...rest: path]: nothing -> nothing {
     1 => {|p: path ...opts: string| zellij edit --in-place $p ...$opts }
     _ => {|...rest: string|
       # use same prefix to ensure future stacked calls use the same pane regardless of any current
-      let name: string = $'Editing: ($rest | first | path basename), ...'
+      let name: string = $'Editing: ($rest | first | path parse | get $.stem), ...'
       zellij run --name=($name) --in-place --close-on-exit -- $editor ...$rest
     }
     # capture any errors so they propagate back to the initial caller
