@@ -152,7 +152,8 @@ def get-editor-name []: nothing -> string {
 }
 
 def get-editor-pane-id [editor?: string]: nothing -> oneof<nothing, int> {
-  zellij action list-panes --json
+  if $env not-has ZELLIJ { return }
+  ^zellij action list-panes --json
   | from json
   | where {|pane|
     if $pane.is_suppressed { return false }
