@@ -1,9 +1,7 @@
 # Path helpers extending the builtin `path` commands, with the std and std-rfc path extras.
 
 use std/util "path add"
-
-# `with-extension`, `with-parent`, `with-stem`
-export use std-rfc/path *
+export use std-rfc/path [ with-extension with-parent with-stem ]
 
 # Prepend (or append) directories to `$env.PATH`.
 export alias add = path add

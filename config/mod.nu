@@ -2,7 +2,6 @@
 
 # ——— imports —————————————————————————————————————————————————————————————————
 
-use /work/ext/bash-env
 use error/
 use path/
 use util/ editor
@@ -34,9 +33,10 @@ export const VENDOR: record = {
   plugins: ($nu.data-dir | path join plugins (version).version)
   modules: ($USER.data | path join nupm modules)
   scripts: ($USER.data | path join nupm scripts)
+  external: /work/ext/
 }
 
-export const NU_LIB_DIRS: list<path> = [$USER.modules $VENDOR.modules]
+export const NU_LIB_DIRS: list<path> = [$USER.modules $VENDOR.modules $VENDOR.external]
 export const NU_PLUGIN_DIRS: list<path> = [$USER.plugins $VENDOR.plugins]
 
 # Environment variables of the user scope.
@@ -54,6 +54,7 @@ def profile-env [
   profile: path = ($nu.home-dir | path join .profile)
 ]: nothing -> record {
   if not ($profile | path exists) { error make --unspanned $"file not found: '($profile)'" }
+  use bash-env
   bash-env --return=merge $profile | match ($in.path!? | describe) {
     nothing | list<any> | list<string> => { }
     string => { update $.path! { split row (char esep) } }
@@ -160,8 +161,6 @@ def submit [target: oneof<nothing, string> --return]: oneof<nothing, path> -> on
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
-export use std/config env-conversions
-
 # Show or load a scope's environment variables, PATH additions included.
 @category env
 export def --env vars [
@@ -267,9 +266,12 @@ export def prompt [
 # ——— environment ——————————————————————————————————————————————————————————————
 
 export-env {
-  $env | select $.NU_LIB_DIRS!? $.NU_PLUGIN_DIRS!?
-  | update $.NU_LIB_DIRS { append $NU_LIB_DIRS | uniq }
-  | update $.NU_PLUGIN_DIRS { append $NU_PLUGIN_DIRS | uniq }
+  $env | select $.NU_LIB_DIRS $.NU_PLUGIN_DIRS
+  | default [] NU_LIB_DIRS NU_PLUGIN_DIRS
+  | merge deep --strategy=prepend {
+    NU_LIB_DIRS: $NU_LIB_DIRS
+    NU_PLUGIN_DIRS: $NU_PLUGIN_DIRS
+  } | update cells { uniq }
   | vars --vendor --load
 }
 

@@ -5,10 +5,9 @@
 use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
 
 use path
-use util editor
 use completion "into completions"
-
-use config [ NU_LIB_DIRS USER ]
+use util/mod.nu editor
+use config/mod.nu [ NU_LIB_DIRS USER ]
 use docgen
 
 # ——— constants ————————————————————————————————————————————————————————————————
@@ -149,9 +148,9 @@ export def edit [
   | sort-by {|p| $target not-in ($p | path split) } # exact segment matches first
   | first
   | match ($in | describe) {
-    nothing => (error make --unspanned $"no definition found for '($target)'")
-    _ if $get => { path expand }
-    _ => { editor }
+    nothing => { error make --unspanned $"no definition found for '($target)'" }
+    _ if $get => (path expand)
+    _ => (editor)
   }
 }
 
