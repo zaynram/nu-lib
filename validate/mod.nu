@@ -128,7 +128,10 @@ def evaluate-single-rule [
     }
   } else if $bail {
     let data: record;
-    for row in ($data | get $rule.head | enumerate) {
+    let rows: any = $data | get $rule.head
+    # an absent or mistyped table was (or will be) reported by its own rule; its rows cannot be judged
+    if not (is-iterable ($rows | describe)) { return }
+    for row in ($rows | enumerate) {
       let at: cell-path = [...$rule.through $row.index ...$rule.rest] | compact --empty | into cell-path
       $row.item
       | get $rule.tail
@@ -137,16 +140,18 @@ def evaluate-single-rule [
     }
   } else {
     let data: record;
-    $data | get $rule.head | enumerate | par-each --keep-order {|row|
+    let rows: any = $data | get $rule.head
+    if not (is-iterable ($rows | describe)) { return [] }
+    $rows | enumerate | par-each --keep-order {|row|
       let at: cell-path = [...$rule.through $row.index ...$rule.rest]
         | compact --empty
         | into cell-path
       {
-        item: $rule.item
+        item: $row.item
         at: $at
         result: ($row.item | get $rule.tail | verdicts $at $rule)
       }
-    } | flatten --all
+    }
   }
 }
 
@@ -154,20 +159,24 @@ def evaluate-strict-rule [
   names: list<string>
   at: cell-path
   --bail
-]: record -> oneof<nothing, record, table> {
-  if ($in | describe) !~ '^(record|table)' { return } else { columns | difference $names }
-  | if $in == [] {
+]: any -> oneof<nothing, record, table> {
+  let box: any;
+  # a record is scanned by its keys, a table by its columns; anything else has no keys to scan
+  if ($box | describe) !~ '^(record|table)' { return }
+  let extra: list<string> = $box | columns | difference $names
+  if $extra == [] {
     return null
   } else if $bail {
-    failure foreign-key {at: ($at | cell-path join $in.0)}
+    failure foreign-key {at: ($at | cell-path join $extra.0)}
   } else {
-    par-each --keep-order {|name|
+    $extra | par-each --keep-order {|name|
       failure foreign-key {at: ($at | cell-path join $name)}
     }
   }
 }
 
-# Validate a record against a table of rules. Returns one row per failure if validation errors occur.
+# Validate a record against a table of rules. Returns one row per failure if validation errors occur
+# (`data` is null unless a dynamic rule attached a payload).
 #
 # RULES:
 # - `path`: Single cell-path indicating the rule's target (e.g. `$.x.y`)
@@ -179,12 +188,13 @@ def evaluate-strict-rule [
 # - `class`: No-op if `pattern` is not present; additional text to clarify the pattern's requirements (e.g. `{pattern: '^[a-z]+$' class: "lowercase letters"}`)
 # - `[min|max]-length`: Length restrictions applied to target text (bare strings or string elements of a list)
 # - `[min|max]-items`: Element count restrictions applied to iterables (tables or lists)
-# - `dynamic`: Single-item record mapping a string to a closure that returns nothing on passing values and raises errors on invalid values
-#   - The key of the record will be used as the name of the rule in output
-#   - Tables and lists will be provided directly, not iterated through
-#   - The closure will be passed the value to test as pipeline input and the first positional
-#   - The cell-path of the value to test will be passed as the second positional
-#   - The `msg` and `help` will be transformed to the shape of validation output.
+# - `dynamic`: Single-item record mapping a name to a closure; the name is the `rule` of any failure it reports
+#   - The closure is passed the value as pipeline input and first positional, and its cell-path as the second
+#   - Lists and tables are iterated: the closure sees one element (one row) at a time, with the element's path
+#   - It passes by returning nothing (or any non-record value)
+#   - It fails by raising (`error make {msg help}` -> `reason`, `hint`) or by returning a record with `reason`
+#     (or `msg`) and optionally `hint` (or `help`); every other field of a returned record is kept as `data` on
+#     the failure row and can be used in the templates. Raising cannot carry data.
 #
 # NOTES:
 # - If a `path` passes through a `table`, that rule is judged on every row of that table.
@@ -210,7 +220,7 @@ export def rules [
   # - `'table'` means return `[]` (empty list; consistent shape)
   --colors (-c) = true
   # Use ANSI coloring in error messages and context hints (ignored when `--return=one`)
-]: record -> oneof<nothing, table<path: cell-path, rule: string, reason: string, hint: string>, record> {
+]: record -> oneof<nothing, table<path: cell-path, rule: string, reason: string, hint: string, data: any>, record> {
   let data: record;
   let bail: bool = $return == 'one'
   let tables: list<string> = $rules
@@ -229,6 +239,7 @@ export def rules [
       let depth: int = $through | if $in == null { 0 } else { length }
       $row | merge {
         at: ($members.value | into cell-path)
+        repr: $repr
         parent: ($members.value | drop | str join .)
         leaf: ($members.value | last)
         through: $through
@@ -250,18 +261,12 @@ export def rules [
       }
     }
     if $strict {
-      let known: record = $rows | group-by parent
-      let queue: table<at: cell-path, whole: oneof<nothing, cell-path>> = [
-        {at: $. whole: null}
-        ...($rows | where type =~ '^(record|table)' | select $.at $.whole)
-      ]
-      for box in $queue {
-        let names: list = $known | get --optional $"($box.at).leaf" | default []
-        match $box {
-          _ if $names == [] => { return }
-          {at: ''} => $data
-          {whole: $w} => ($data | get $w)
-        } | evaluate-strict-rule $names $box.at --bail
+      for box in (containers $rows) {
+        let names: list<string> = $rows | where parent == $box.repr | get leaf
+        # a container with no declared children is open
+        if $names == [] { continue }
+        $data | get $box.whole
+        | evaluate-strict-rule $names $box.at --bail
         | match ($in | describe) {
           nothing => (continue)
           _ => (return $in)
@@ -275,11 +280,12 @@ export def rules [
 
   let result: record = $rows
     | reduce --fold={found: [] dead: []} {|it acc|
-      if $acc.dead != [] or ($acc.dead | under $it.at) { return $acc }
-      let container: bool = $it.through == null and $it.type !~ '^(record|table)'
+      if $acc.dead != [] and ($acc.dead | under $it.at) { return $acc }
+      let container: bool = $it.through == null and $it.type =~ '^(record|table)'
       let inter: table = $data | evaluate-single-rule $it | append []
       let verdicts: table = $inter.result | flatten --all
-      if $container and ($inter.item == null or $verdicts != []) {
+      # a container rule yields one row; `$inter.item` is that row's value as a one-element column
+      if $container and ($inter.item.0? == null or $verdicts != []) {
         {dead: [...$acc.dead $it.at] found: [...$acc.found ...$verdicts]}
       } else if $verdicts != [] {
         $acc | update $.found [...$in.found ...$verdicts]
@@ -287,16 +293,14 @@ export def rules [
     }
 
   let found: table = if $strict {
-    let known: record = $rows | group-by parent
-    [
-      {at: $. whole: null}
-      ...($rows | where type =~ '^(record|table)' | select $.at $.whole)
-    ] | reduce --fold=[] {|box acc|
+    containers $rows | reduce --fold=[] {|box acc|
       # A container with no declared children is open; one that failed, or sits under one that did, cannot be scanned.
-      if $result.dead != [] and ($result.dead | under $box.at) { return }
-      let names: list = $known | get --optional $"($box.at).leaf" | default []
-      match $box { _ if $names == [] => { return } {at: ''} => $data {whole: $w} => ($data | get $w) }
+      if $result.dead != [] and ($result.dead | under $box.at) { return $acc }
+      let names: list<string> = $rows | where parent == $box.repr | get leaf
+      if $names == [] { return $acc }
+      $data | get $box.whole
       | evaluate-strict-rule $names $box.at
+      | default []
       | prepend $acc
     }
   } | prepend $result.found
@@ -339,11 +343,22 @@ def fits [value: any type: string]: nothing -> bool {
   return false
 }
 
+# The places `--strict` scans for undeclared keys: the root, then every declared record or table, in rule order.
+# `repr` is the dotted path the children's `parent` column uses; `whole` reads the container out of the data.
+def containers [rows: table]: nothing -> table<at: cell-path, whole: cell-path, repr: string> {
+  [
+    {at: $. whole: $. repr: ''}
+    ...($rows | where type =~ '^(record|table)' | select $.at $.whole $.repr)
+  ]
+}
+
 # Is `at` one of the `dead` containers, or under one.
 # This runs once per rule, and entering a closure command costs about ten times what the loop does.
 # - 2026-09-26: swapped back to `any` from `for` but with subexpression evaluation instead of closure
 def under [at: cell-path]: list<cell-path> -> bool {
-  any ($at == $it or ($at | split cell-path).0?.value == $it)
+  let dead: list<cell-path>;
+  let here: string = $'($at)'
+  $dead | any ($at == $it or ($here | str starts-with $'($it).'))
 }
 
 # One failure row, with rule based dynamic style application.
@@ -355,7 +370,9 @@ def failure [
   # Fields to include as context to format template strings
   --custom: record<reason: string, hint: string>
   # Custom templates to fill with the context fields (required when not using a preset)
-]: nothing -> record<path: cell-path, rule: string, hint: string, reason: string> {
+  --data: any
+  # Structured payload a dynamic rule attached to its failure (a record), returned as-is in the `data` column; null otherwise
+]: nothing -> record<path: cell-path, rule: string, hint: string, reason: string, data: any> {
   let preset: record = $custom | default ($RULE_PRESETS | get --ignore-case --optional $rule)
     | default {|| error make --unspanned 'custom templates are required when not using a rule preset' }
     | compact --empty
@@ -374,6 +391,7 @@ def failure [
       rule: $rule
       hint: ($fields | format pattern $h)
       reason: ($fields | format pattern $r)
+      data: $data
     }
     {hint: _} => { error make --unspanned 'no reason template was provided' }
     {reason: _} => { error make --unspanned 'no hint template was provided' }
@@ -388,7 +406,7 @@ def is-iterable [type?: string]: oneof<any, nothing> -> bool { let it: any; $typ
 def verdicts [
   at: cell-path
   rule: record
-]: oneof<nothing, any> -> table<path: cell-path, rule: string, msg: string, help: string> {
+]: oneof<nothing, any> -> table<path: cell-path, rule: string, reason: string, hint: string, data: any> {
   let x: any;
   let t: string = $x | describe
   let i: bool = is-iterable $t
@@ -398,50 +416,68 @@ def verdicts [
     _ if not (fits $x $rule.type) => [(failure typecheck {at: $at type: $rule.type actual: $t})]
     _ if $i => [($x | check-iter-count $at --min=$rule.min-items? --max=$rule.max-items?)]
   } | default [] | compact
-  if ($rule | columns | any ($it =~ '^(min-|max-|enum|pattern|const)')) {
+  # A missing or mistyped value was reported above; its contents are not judged again (a list that is merely too long still is).
+  let judged_out: bool = $x == null or ($o | any ($it.rule in [mandatory typecheck]))
+  if not $judged_out and ($rule | columns | any ($it =~ '^(min-|max-|enum|pattern|const|dynamic)')) {
     if $i { $x | enumerate | update $.index {|row| $at | cell-path join $row.index } | rename --column={index: at item: value} }
     | default [[at value]; [$at $x]]
     | par-each --keep-order {|p|
       let type: string = $p.value | describe
       let text: bool = $type =~ '^(string|list<string>)$' or $rule.type? == string
       let iter: bool = is-iterable $type
-      $p.value
-      | if $in != null {
-        # pass
+      # `$in` is not visible inside the subexpressions of a list literal, so the value is bound by name.
+      let v: any = if $p.value != null {
+        $p.value
       } else if $rule has required and $rule.required {
         return [(failure mandatory {at: $p.at})]
       } else if $iter {
-        default []
+        []
       } else if $text {
-        default ('')
+        ''
       } else {
-        return # don't run validation on non-required `null` values
-      } | [
-        (if $iter { $in | check-iter-count $p.at --min=$rule.min-items? --max=$rule.max-items? })
-        (if $rule.dynamic? != null { $in | check-dynamic-rule $p.at $rule.dynamic })
-        ...(if $rule has const { $in | check-is-constant $p.at $rule.const --iterable=$iter --string=$text })
-        ...(if $rule.enum? != null { $in | check-enum-member --iterable=$iter $p.at $rule.enum })
-        ...(if $text { $in | check-text-length --iterable=$iter $p.at --min=$rule.min-length? --max=$rule.max-length? })
-        ...(if $text and $rule.pattern? != null { $in | check-regex-match --iterable=$iter $p.at $rule.pattern --class=$rule.class? })
+        return [] # don't run validation on non-required `null` values
+      }
+      [
+        (if $iter { $v | check-iter-count $p.at --min=$rule.min-items? --max=$rule.max-items? })
+        (if $rule.dynamic? != null { $v | check-dynamic-rule $p.at $rule.dynamic })
+        ...(if $rule has const { $v | check-is-constant $p.at $rule.const --iterable=$iter --string=$text } else { [] })
+        ...(if $rule.enum? != null { $v | check-enum-member --iterable=$iter $p.at $rule.enum } else { [] })
+        ...(if $text { $v | check-text-length --iterable=$iter $p.at --min=$rule.min-length? --max=$rule.max-length? } else { [] })
+        ...(if $text and $rule.pattern? != null { $v | check-regex-match --iterable=$iter $p.at $rule.pattern --class=$rule.class? } else { [] })
       ] | compact --empty
     } | flatten --all
   } | prepend $o
 }
 
+# A dynamic rule fails in one of two ways, and passes by returning anything else (usually nothing):
+# - raising: `error make {msg: ... help: ...}`; `msg` is the reason, `help` the hint. Nothing else survives a raised
+#   error (LabeledError keeps only its own fields), so this form carries no data.
+# - returning a record with `reason` (or `msg`): `hint` (or `help`) is the hint and every other field is kept as
+#   `data` on the failure row, also available to the templates (`{at}` is always available).
 def check-dynamic-rule [
   at: cell-path
   map: record
 ]: any -> oneof<nothing, record> {
   let val: any;
   let map: record<name: string, rule: closure> = $map | transpose name rule | first
-  try {
-    $val | do --capture-errors $map.rule $val $at
+  let outcome: record = try {
+    {returned: ($val | do --capture-errors $map.rule $val $at)}
   } catch {|err|
-    let details: record = $err.inner? | default $err | get $.details?
-    let custom: record = $err | select $.msg!? $.help!? | compact
-    let context: record = $err | reject $.msg!? $.help!? | compact --empty
-    failure $map.name {at: $at ...$context} --custom=$custom
+    let d: record = $err.details? | default {msg: $err.msg}
+    {raised: {reason: $d.msg hint: ($d.help? | default $d.msg)}}
   }
+  let verdict: record = match $outcome {
+    {raised: $r} => $r
+    {returned: $r} if ($r | describe) =~ '^record' and ($r has reason or $r has msg) => {
+      let reason: string = $r.reason? | default $r.msg?
+      let hint: string = $r.hint? | default $r.help? | default $reason
+      let data: record = $r | reject $.reason? $.msg? $.hint? $.help?
+      {reason: $reason hint: $hint data: $data}
+    }
+    _ => (return)
+  }
+  let data: record = $verdict.data? | default {}
+  failure $map.name {at: $at ...$data} --custom={reason: $verdict.reason hint: $verdict.hint} --data=(if $data == {} { null } else { $data })
 }
 
 def check-is-constant [
