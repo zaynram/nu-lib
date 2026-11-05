@@ -2,63 +2,37 @@
 
 # ——— imports —————————————————————————————————————————————————————————————————
 
-use error/
-use path/
-use util/ editor
-use completion/ "into completions"
+use error
+use completion "into completions"
+use path
+use util/mod.nu editor
+use machine.nu machine-config
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
-const LIB: path = if $nu.os-info.name == windows { $nu.home-dir | path join desktop } else { '/work/dev/' }
-
-# Directories of the user scope.
-export const USER: record = {
-  lib: $LIB
-  bin: ($nu.home-dir | path join .local bin)
-  home: $nu.home-dir
-  config: ($nu.home-dir | path join .config)
-  data: ($nu.home-dir | path join .local share)
-  cache: ($nu.home-dir | path join .cache)
-  state: ($nu.home-dir | path join .local state)
-  autoload: $nu.user-autoload-dirs.0?
-  modules: ($LIB | path join nu)
-  plugins: ($nu.current-exe | path expand | path dirname)
-  scripts: /work/bin/
-}
-
-# Directories of the vendor scope.
-export const VENDOR: record = {
-  bin: (if $nu.os-info.name != windows { '/usr/bin' } else { $nu.home-dir | path join AppData Local Microsoft WindowsApps })
-  autoload: (if $nu.os-info.name == windows { $nu.vendor-autoload-dirs.1 } else { $nu.vendor-autoload-dirs.2 })
-  plugins: ($nu.data-dir | path join plugins (version).version)
-  modules: ($USER.data | path join nupm modules)
-  scripts: ($USER.data | path join nupm scripts)
-  external: /work/ext/
-}
-
-export const NU_LIB_DIRS: list<path> = [$USER.modules $VENDOR.modules $VENDOR.external]
-export const NU_PLUGIN_DIRS: list<path> = [$USER.plugins $VENDOR.plugins]
-
-# Environment variables of the user scope.
-const VARS: record = {
-  NUPM_HOME: ($USER.data | path join nupm)
-  TOPIARY_CONFIG_FILE: ($USER.config | path join topiary languages.ncl)
-  TOPIARY_LANGUAGE_DIR: ($USER.config | path join topiary queries)
-  GOPATH: ($USER.data | path join go)
-  GOBIN: $USER.bin
-}
+const SCRIPT: path = path self machine.nu | path expand --strict
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
+alias config-dir = try { $env.XDG_CONFIG_DIR! } catch {
+  $nu.default-config-dir | path dirname
+}
+
 def profile-env [
-  profile: path = ($nu.home-dir | path join .profile)
+  mode: string = user
 ]: nothing -> record {
-  if not ($profile | path exists) { error make --unspanned $"file not found: '($profile)'" }
-  use bash-env
-  bash-env --return=merge $profile | match ($in.path!? | describe) {
-    nothing | list<any> | list<string> => { }
-    string => { update $.path! { split row (char esep) } }
-  }
+  let mc: record = machine-config $mode
+  match $mode {
+    user => ({
+      NU_LIB_DIRS: $mc.modules
+      PATH: [...$mc.binaries ...$mc.scripts]
+    })
+    vendor => ({
+      NU_PLUGIN_DIRS: $mc.plugins
+      NU_LIB_DIRS: [$mc.modules]
+      PATH: [$mc.binaries $mc.scripts]
+    })
+  } | update $.PATH { append $env.path! | uniq }
 }
 
 alias xglob = glob --depth=3 --exclude=[
@@ -113,42 +87,8 @@ alias xglob = glob --depth=3 --exclude=[
   '**/* *'
 ]
 
-def scope [vendor: bool]: nothing -> record { if $vendor { $VENDOR } else { $USER } }
-
-def homebrew-bin []: nothing -> oneof<nothing, path> {
-  match $nu.os-info.name {
-    macos => '/opt/homebrew/bin'
-    linux => ($nu.home-dir | path basename --replace linuxbrew/.linuxbrew/bin)
-  } | if $in != null and ($in | path exists) { }
-}
-
-export module find {
-  const NOT: record = {bin: [**/.vscode-server-insiders/**] script: [**/_internal/**]}
-  def mkglob [...segments: string]: path -> path { path rejoin ** ...$segments }
-  alias glob = %glob --no-file
-  export alias script-dirs = glob --no-symlink --exclude=$NOT.script ($USER.scripts | mkglob)
-  export def bin-dirs [
-    --roots (-r): list<directory> = []
-    --depth (-d): int = 2
-    --exclude (-e): list<oneof<path, glob>> = []
-  ]: nothing -> list<directory> {
-    let not: list<any> = $NOT.bin | if $exclude != [] { append $exclude | into string } else { }
-    $USER.home | if $roots != [] { append $roots } else { } | each --flatten {|r|
-      glob --depth=$depth --exclude=$not ($r | mkglob bin)
-    }
-  }
-}
-
-use find
-
-# Directories a scope contributes to PATH that are not on it yet.
-def new-paths [vendor: bool]: nothing -> list<path> {
-  if $vendor {
-    [$VENDOR.bin $VENDOR.scripts (homebrew-bin)]
-  } else {
-    [$USER.scripts ...(find bin-dirs)]
-  } | compact
-  | difference $env.PATH
+def scope [vendor: bool]: nothing -> record {
+  if $vendor { machine-config vendor } else { machine-config user }
 }
 
 # Open a resolved file in the editor, or return its expanded path.
@@ -169,12 +109,9 @@ export def --env vars [
   --load (-l) # Load the variables into the current process
   --return (-r) # Return the variables as a record (the default when not loading)
 ]: oneof<nothing, record> -> oneof<nothing, record> {
-  let input: record = default {}
-  let e: record = if $vendor { {} } else { profile-env | merge $VARS }
-    | merge $input
-    | merge $with
-    | upsert PATH { default $env.path! | prepend (new-paths $vendor) | uniq }
-  if $load { $e | load-env }
+  let input: record = default {} | merge $with
+  let e: record = if $vendor { profile-env vendor } else { profile-env user }
+  if $load { $input | merge $e | load-env }
   if $return or not $load { return $e }
 }
 
@@ -212,12 +149,12 @@ export def auto [
 
 # Open an application's configuration file; with no target, list the candidates.
 @category filesystem
-export def app [
+export def find [
   target?: path@_apps # The directory name to search for config files under
   --path (-p): path@_app-paths # Path of a file to edit, relative to the target directory
   --return (-r) # Return the constructed path instead of opening it
 ]: nothing -> oneof<nothing, path, table> {
-  let item: path = [$USER.config $target] | compact --empty | path join
+  let item: path =  config-dir | if $target != null { path join $target } else { }
   $item | match ($in | path type) {
     file => { submit $target --return=$return | return $in }
     dir => { cd $in }
@@ -251,9 +188,9 @@ export def prompt [
   } else {
     oh-my-posh init nu --config=($in)
   }
-  let src: path = $VENDOR.autoload | path join oh-my-posh.nu
+  let src: path = (scope true).autoload | path join oh-my-posh.nu
   if ($src | path exists) {
-    let dst: path = $src | path dirname --replace=$USER.autoload
+    let dst: path = $src | path dirname --replace=(machine-config).autoload
     if not ($dst | path exists) { mv --update $src $dst }
     if $nu.os-info.name == windows {
       open --raw $dst
@@ -277,35 +214,44 @@ export-env {
 
 # ——— completions ——————————————————————————————————————————————————————————————
 
-def is-vendor [buffer: string]: nothing -> bool { $buffer =~ '(^|\s)(-v|--vendor)(\s|$)' }
+def is-vendor [buffer: string]: nothing -> bool {
+  $buffer =~ '(^|\s)(-v|--vendor)(\s|$)'
+}
 
 def _dirs [buffer: string]: nothing -> record {
   scope (is-vendor $buffer) | columns | into completions {completion_algorithm: substring}
 }
 def _auto [buffer: string]: nothing -> record {
-  glob ((scope (is-vendor $buffer)).autoload | path rejoin '*.nu') --no-dir
+  glob (
+    (scope (is-vendor $buffer)).autoload
+    | path rejoin *.nu
+  ) --no-dir
   | path parse
   | select stem parent
   | rename value description
   | into completions {completion_algorithm: substring}
 }
 def _apps []: nothing -> record {
-  xglob ($USER.config | path rejoin '*')
-  | wrap description
+  xglob (config-dir | path rejoin '*') | wrap description
   | insert value {|row| $row.description | path basename }
+  | where value !~ '^[.|_]+\w+'
   | into completions {match_description: true completion_algorithm: substring}
 }
 def _app-paths [buffer: string]: nothing -> oneof<record, list> {
-  $buffer
-  | split row (char space)
-  | where $it not-in [config app --path -p] and ($it | is-not-empty)
-  | each { prepend $USER.config | path join }
+  let d: path = config-dir
+  $buffer | split row (char space)
+  | where $it not-in [conf app --path -p] and ($it | is-not-empty)
+  | each { prepend $d | path join }
   | where ($it | path type) == dir
   | if ($in | is-empty) { return [] } else {
     let dir: path = $in | first
-    let label: string = try { $dir | path relative-to $USER.config } catch { $dir | str replace $nu.home-dir '~' }
+    let label: string = try { $dir | path relative-to $d } catch {
+      $dir | str replace $nu.home-dir '~'
+    }
     xglob ($dir | path rejoin ** *) --no-dir
+    | where $it !~ '(.nu-lint.toml|.gitignore|.bak|.backup|debug)'
     | path relative-to $dir
+    | where $it =~ '^[/|\w|\-|.]+$' and ($it | path parse).stem !~ '\d+'
     | wrap value
     | insert description $label
     | into completions {sort: true match_description: true completion_algorithm: substring}

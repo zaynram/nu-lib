@@ -22,7 +22,7 @@ export def unmount [--remote]: path -> nothing {
 
 # Create or remove a filesystem mount for a configured device running Termux.
 @category filesystem
-export def mount [
+export def main [
   mount: path
   # The path of the mount to create
   --source (-s): path
@@ -51,7 +51,7 @@ export def mount [
   }
 }
 
-export alias mount-termux = mount /mnt/termux/ --remote={
+export alias termux = main /mnt/termux/ --remote={
   user: u0_a530
   ipv4: 100.97.157.38
   auth: ~/.ssh/id_ed25519

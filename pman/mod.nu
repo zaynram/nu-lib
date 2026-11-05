@@ -1,8 +1,7 @@
 # Package management for the system and provisioned tooling: upgrades, apt, plugins and the Nushell binary.
 
 use std/util null-device
-use config/ NU_LIB_DIRS
-
+use conf/machine.nu [ machine-config NU_LIB_DIRS ]
 export use nightly-toolkit get-latest-nightly-build
 
 # Ephemeral log file holding the output of the latest run.
@@ -44,11 +43,9 @@ export def upgrade [
       | if $in == null or $in > 24hr { ignore | upgrade --silent }
     } | get-job $in
   } else {
-    use config/ find
     use std/util "path add"
+    path add ...(machine-config user).binaries
     if $env not-has XDG_DATA_DIR { $env.XDG_DATA_DIR = $nu.home-dir | path join .local share }
-    let bins: list<path> = find bin-dirs --roots=[$env.XDG_DATA_DIR] --depth=3
-    path add ...$bins
     let base: record = $REGISTRY | if $system { merge $SYSTEM } else { }
     $in | match ($in | describe | str replace --regex '<.+' '') {
       nothing => $base
@@ -65,17 +62,18 @@ export def upgrade [
         $args | par-each --keep-order {|rest|
           let name: string = $cmd | first
           let rest: list = ($cmd | skip) ++ $rest
-          ^$name ...$rest | complete | if $in.exit_code == 0 {
-            rename --column={stdout: output}
-            | insert $.success true
-          } else {
-            rename --column={stderr: output}
-            | insert $.success false
-          } | select $.output $.success
+          let out = ^$name ...$rest | complete | if $in.exit_code == 0 {
+              rename --column={stdout: output}
+              | insert $.success true
+            } else {
+              rename --column={stderr: output}
+              | insert $.success false
+            } | select $.output $.success
           if $name == cargo and (^$nu.current-exe --version) !~ 'nightly' {
             # `cargo install-update --all` may overwrite a nightly build
             try { get-latest-nightly-build | ignore --stdout --stderr }
           }
+          return $out
         }
       } | {$bin: $in}
     } | into record

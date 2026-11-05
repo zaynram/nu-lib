@@ -7,7 +7,7 @@ use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
 use path
 use completion "into completions"
 use util/mod.nu editor
-use config/mod.nu [ NU_LIB_DIRS USER ]
+use conf/machine.nu [ NU_LIB_DIRS machine-config ]
 use docgen
 
 # ——— constants ————————————————————————————————————————————————————————————————
@@ -142,7 +142,9 @@ export def edit [
   target: string@_definitions # Name of the module or script to target
   --get (-g) # Return the resolved path instead of opening it
 ]: nothing -> oneof<nothing, path> {
-  [$USER.modules $USER.scripts]
+  machine-config user
+  | get $.modules $.scripts
+  | flatten
   | nu-glob
   | where $it has $target
   | sort-by {|p| $target not-in ($p | path split) } # exact segment matches first
@@ -287,8 +289,9 @@ export def --env main [
 
 def _module-names []: nothing -> list { 'use ' | commandline complete | where $it !~ '(.nu|/)$' }
 def _definitions []: nothing -> record {
-  $USER
+  machine-config user
   | get $.modules $.scripts
+  | flatten
   | par-each {|dir|
     glob --no-dir --depth=3 --exclude=$EXCLUDE ($dir | path rejoin ** *.nu)
     | path relative-to $dir

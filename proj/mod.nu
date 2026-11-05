@@ -5,7 +5,7 @@
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
-use /work/dev/nu/hook with
+use hook with
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -94,7 +94,6 @@ export def scan [
   # Clear all existing project data (including metadata) prior to scanning
 ]: nothing -> oneof<ScanMetadata, nothing> {
   drop-meta flat_list # drop cached list whenever scan runs in case of changes
-  deduplicate
   if $prune { prune-missing-dirs | return }
   if not ($reset or $force) {
     get-meta last_scan
@@ -102,7 +101,7 @@ export def scan [
   }
   if $reset { reset-table proj }
   let start: datetime = date now
-  $KIND | columns | intersect $kinds | par-each {|k|
+  let out: record = $KIND | columns | intersect $kinds | par-each {|k|
     let table: string = kind-to-table-name $k
     let exclude: list<string> = $env.project_exclude!?
       | default {}
@@ -238,11 +237,11 @@ def deduplicate []: nothing -> nothing {
   let map: record = $env.project_aliases!? | default {}
   $KIND | columns | par-each {|kind|
     let t: string = kind-to-table-name $kind
-    let q: table<name: string, path: path> = kv list --universal --table=$t | if $in != [] {
-        get $.value
-        | where path in $map and name != ($map | get $it.path)
-        | select $.name $.path
-      } | default []
+    let q: table<name: string, path: path> = kv list --universal --table=$t
+      | get $.value?
+      | compact
+      | where path in $map and name != ($map | get $it.path)
+      | select $.name $.path
     for row in $q {
       let a: string = $map | get $row.path
       kv drop --universal --table=$t $row.name
@@ -296,6 +295,7 @@ def record-scan-metadata [
 ]: table<found: int, added: int> -> oneof<ScanMetadata, record> {
   let totals: record = math sum
   let end: datetime = date now
+  job spawn --description=deduplicate-projects --auto-kill { deduplicate }
   $totals | set-meta --return=input total_count $in.found
   | set-meta --return=value last_scan {
     ...$in
@@ -329,7 +329,8 @@ def prune-missing-dirs []: nothing -> nothing {
 def list-kind [kind: string --insert = true]: nothing -> list<ProjectInfo> {
   let table: string = kind-to-table-name $kind
   kv list --universal --table=$table
-  | get $.value
+  | get $.value?
+  | compact
   | if $insert { insert $.kind $kind } else { }
 }
 

@@ -1,8 +1,9 @@
 # /work/dev/nu/prelude/mod.nu
 
-const module: path = path self ../config/mod.nu | path expand --strict
+export module var
+export module log
 
-export use $module NU_LIB_DIRS
-export-env {
-  if not $nu.is-login { source-env $module }
-}
+export module extras
+export module manage
+export module shell
+export module tools
