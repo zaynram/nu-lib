@@ -5,8 +5,9 @@
 use error
 use completion "into completions"
 use path
-use util/mod.nu editor
-use machine.nu machine-config
+use edit
+
+export use machine.nu *
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -14,13 +15,10 @@ const SCRIPT: path = path self machine.nu | path expand --strict
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
-alias config-dir = try { $env.XDG_CONFIG_DIR! } catch {
-  $nu.default-config-dir | path dirname
-}
+alias editor = edit
+alias config-dir = try { $env.XDG_CONFIG_DIR! } catch { $nu.default-config-dir | path dirname }
 
-def profile-env [
-  mode: string = user
-]: nothing -> record {
+def profile-env [mode: string = user]: nothing -> record {
   let mc: record = machine-config $mode
   match $mode {
     user => ({
@@ -95,7 +93,7 @@ def scope [vendor: bool]: nothing -> record {
 def submit [target: oneof<nothing, string> --return]: oneof<nothing, path> -> oneof<nothing, path> {
   # nu-lint-ignore: unused_parameter
   let p: oneof<nothing, path> = $in
-  if ($p | is-empty) { error wrap --code=config::unresolved_target $"no items found for target: '($target)'" }
+  if ($p | is-empty) { error raise --code=config::unresolved_target $"no items found for target: '($target)'" }
   $p | path expand | if $return { } else { editor }
 }
 
@@ -125,7 +123,7 @@ export def --env dir [
   let s: record = scope $vendor
   if $target == null { return $s }
   let p: oneof<nothing, path> = $s | get --ignore-case --optional $target
-  if $p == null { error wrap --code=config::dir::unresolved_target $"no directory named '($target)'" }
+  if $p == null { error raise --code=config::dir::unresolved_target $"no directory named '($target)'" }
   $p | if $return { return $in } else { cd $in }
 }
 
@@ -138,7 +136,7 @@ export def auto [
 ]: nothing -> oneof<nothing, path, table> {
   let dir: path = (scope $vendor).autoload
   try { mkdir $dir; cd $dir } catch {
-    error wrap --code=config::auto::internal_error "could not resolve autoload directory"
+    error raise --code=config::auto::internal_error "could not resolve autoload directory"
   }
   match {t: $target g: $return} {
     {t: null g: true} => { return $dir }
@@ -163,7 +161,7 @@ export def find [
   if $path != null { $path } else {
     let files: list = try { xglob **/* --no-dir } | default []
     match ($files | length) {
-      0 => { error wrap --code=config::app::unresolved_target $"no config files found for '($target)'" }
+      0 => { error raise --code=config::app::unresolved_target $"no config files found for '($target)'" }
       1 => { $files | first }
       _ => { $files | path truncate --root . | path select }
     }
@@ -181,10 +179,10 @@ export def prompt [
     oh-my-posh init nu
   } else if ($in | path type) != file {
     let msg: string = $"file not found: '($in)'"
-    error wrap --code=config::prompt::unresolved_config $msg
+    error raise --code=config::prompt::unresolved_config $msg
   } else if $in !~ $PROMPT_EXT {
     let msg: string = $"unexpected configuration file format: '($in)'"
-    error wrap --code=config::prompt::unknown_configuration_format $msg
+    error raise --code=config::prompt::unknown_configuration_format $msg
   } else {
     oh-my-posh init nu --config=($in)
   }

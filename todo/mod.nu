@@ -3,6 +3,7 @@
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use std/util null-device
+use command attempt
 use completion "into completions"
 
 # ——— constants ——————————————————————————————————————————————————————————————
@@ -174,7 +175,6 @@ def --wrapped todoist [
     with-auth --login={|| run-external td auth login } td ...$in
   } else {
     let args;
-    use util/ attempt
     attempt --merge td ...$args | get $.stdout
   } | if $struct {
     from json | collect {|| if $in has results { get $.results } else { append [] } }
@@ -209,7 +209,6 @@ def format-priority []: oneof<nothing, int> -> oneof<nothing, string> {
 }
 
 def repo-name []: nothing -> string {
-  use util/ attempt
   try { attempt --check git rev-parse --show-toplevel } catch {
     error make --unspanned 'not inside a repository: pass `--project`'
   } | str trim | path basename

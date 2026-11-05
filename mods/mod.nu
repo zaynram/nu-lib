@@ -6,8 +6,8 @@ use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
 
 use path
 use completion "into completions"
-use util/mod.nu editor
-use conf/machine.nu [ NU_LIB_DIRS machine-config ]
+
+use conf [ NU_LIB_DIRS machine-config ]
 use docgen
 
 # ——— constants ————————————————————————————————————————————————————————————————
@@ -152,7 +152,7 @@ export def edit [
   | match ($in | describe) {
     nothing => { error make --unspanned $"no definition found for '($target)'" }
     _ if $get => (path expand)
-    _ => (editor)
+    _ => ( use ../edit; $in | edit)
   }
 }
 

@@ -4,7 +4,7 @@
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
-const ROOT: path = path self . | path expand --strict
+const ROOT: path = path self .. | path expand --strict
 const MODE: list<string> = [user vendor]
 const STRATEGY: list<string> = [overwrite prepend append]
 const DEFAULT: record = {
