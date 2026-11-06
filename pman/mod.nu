@@ -1,8 +1,10 @@
 # Package management for the system and provisioned tooling: upgrades, apt, plugins and the Nushell binary.
+#
+# `get-latest-nightly-build` comes from the vendored `nightly-toolkit` module (it downloads and installs the
+# latest Nushell nightly).
 
-use std/util null-device
-use conf/machine.nu [ machine-config NU_LIB_DIRS ]
-export use nightly-toolkit get-latest-nightly-build
+use conf/machine.nu [ machine-config ]
+export use ../nightly-toolkit get-latest-nightly-build
 
 # Ephemeral log file holding the output of the latest run.
 export const LOG: record = {
@@ -30,12 +32,19 @@ alias get-job = do {|id: int| ignore | job list | where id == $id | first }
 alias apt-get = sudo apt-get
 
 # Run the configured updates.
+#
+# Runs every argument set of `REGISTRY` (merged with the piped record, whose entries win) for each binary on
+# PATH, after putting the user scope's binary directories on PATH. Results are saved to `LOG.upgrade` and
+# returned as `{<binary>: [{output, success}]}`; a missing binary or malformed arguments become a failed entry.
+# With `--async`, a background job runs the upgrade when the last one is over a day old, and the job's record
+# is returned.
 @category system
 export def upgrade [
   --async (-a) # Spawn the update runner as a background job
   --silent (-s) # Do not return the results record after completion
   --system # Include the system package manager (needs a sudo prompt, so not with `--async`)
-]: oneof<record, nothing> -> record {
+]: oneof<record, nothing> -> oneof<record, nothing> {
+  let input: oneof<nothing, record> = $in
   if $async {
     if $system { error make --unspanned '`--system` cannot run in the background: sudo needs a prompt' }
     job spawn --description=pkg-auto-upgrade {
@@ -45,11 +54,12 @@ export def upgrade [
   } else {
     use std/util "path add"
     path add ...(machine-config user).binaries
+    # The owner's tool environment names the data dir `XDG_DATA_DIR` (see conf/machine.nu); children expect it.
     if $env not-has XDG_DATA_DIR { $env.XDG_DATA_DIR = $nu.home-dir | path join .local share }
     let base: record = $REGISTRY | if $system { merge $SYSTEM } else { }
-    $in | match ($in | describe | str replace --regex '<.+' '') {
+    match ($input | describe | str replace --regex '<.+' '') {
       nothing => $base
-      record => (merge $base)
+      record => ($base | merge $input)
     } | items {|bin args|
       let cmd: list<string> = if $SYSTEM has $bin { [sudo $bin] } else { [$bin] }
       if (which $bin | is-empty) {
@@ -82,8 +92,8 @@ export def upgrade [
       mkdir $nu.cache-dir
       $res | save --force $LOG.upgrade
       if not $silent { $res }
-    } catch {
-      error make --unspanned
+    } catch {|e|
+      error make --unspanned {msg: $"could not save the upgrade results to ($LOG.upgrade): ($e.msg)"}
     }
   }
 }
@@ -135,6 +145,8 @@ export def --wrapped apt [
 }
 
 # Reload all plugins to ensure latest version is loaded.
+#
+# A plugin that fails to load again is reported on stderr and left as it is (re-add it with `plugin add`).
 @category plugin
 export def --env reload-plugins [
   ...names: string@_plugin-names
@@ -146,9 +158,8 @@ export def --env reload-plugins [
     try {
       plugin add $row.filename
       print $'(ansi green)added ($row.name)(ansi rst)'
-    } catch {
-      cargo uninstall ($row.filename | path basename) out+err>| complete
-      print --stderr $'(ansi red)uninstalled ($row.name)(ansi rst)'
+    } catch {|e|
+      print --stderr $'(ansi red)could not re-add ($row.name) from ($row.filename): ($e.msg)(ansi rst)'
     }
   }
 }
