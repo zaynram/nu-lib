@@ -102,6 +102,7 @@ def "test value-rule-evaluation" []: nothing -> nothing {
 def "test union-type-rule-evaluation" []: nothing -> nothing {
   assert length ($GOOD | insert doc.flag true | hints) 0 'string rules skip judgement on non-strings'
   let hints: list = $GOOD | insert doc.flag nope | hints
+  assert length $hints 2 'both string rules report'
   assert compare {|a b|
     $a | zip $b | all ($it.0? =~ $it.1?)
   } $hints [

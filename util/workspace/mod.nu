@@ -50,12 +50,11 @@ export def bump [
   # Return the version bump data without writing anything to disk
   --skip (-S) = true
   # Return missing files and unsupported formats with null `prev`/`curr` (the default); `--skip=false` raises
-  --keep-order (-k)
-  # Mapped to the same flag on `par-each`
 ]: table<file: path, cell: cell-path> -> table<file: path, cell: cell-path, prev: any, curr: any> {
   let rows: table = $in
   let wanted: any = $spec | if $in != null { into semver }
-  $rows | par-each --keep-order=$keep_order {|row|
+  # Sequential: two rows may name the same file, and parallel writes would lose one of the updates.
+  $rows | each {|row|
     # without `--skip`, the error of `ensure-bumpable` is the caller's
     let type: oneof<nothing, string> = if $skip { try { $row.file | ensure-bumpable } catch { null } } else { $row.file | ensure-bumpable }
     if $type == null { return {...$row prev: null curr: null} }

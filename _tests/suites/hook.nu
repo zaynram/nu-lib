@@ -172,6 +172,14 @@ def "test edit update merges a record" []: nothing -> nothing {
   assert not (hook is-enabled --name=named) 'and stores it'
 }
 
+def "test edit update turns a bare closure hook into a record" []: nothing -> nothing {
+  let h = hook edit $.pre_prompt.0 --update {disabled: true}
+  assert (($h | describe) starts-with record) 'the bare closure became a record'
+  assert equal $h.disabled true 'with the update applied'
+  assert equal ($h.code | describe) closure 'and the closure kept as code'
+  assert equal (hook with --name 'pre_prompt[0]' {disabled: false} {|| 'ran' }) ran '`with` works on it too'
+}
+
 def "test edit overwrite stores a closure" []: nothing -> nothing {
   hook edit $.pre_prompt.0 --overwrite {|| 7 } | ignore
   assert equal (hook pre_prompt 0 | describe) closure 'the closure, not its result (H1)'

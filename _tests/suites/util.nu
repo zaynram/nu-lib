@@ -103,10 +103,19 @@ version: 1.2.3
   [[file cell]; [($dir | path join app.yaml) $.version] [($dir | path join pkg.nuon) $.meta.v]]
 }
 
+def "test bump of two cells in the same file keeps both updates" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let f: path = $ctx.code | path join two.nuon
+    {a: {v: '1.0.0'} b: {v: '2.0.0'}} | to nuon | save --force $f
+    [[file cell]; [$f $.a.v] [$f $.b.v]] | util workspace bump | ignore
+    assert equal (open $f) {a: {v: '1.0.1'} b: {v: '2.0.1'}} 'sequential writes: neither bump is lost'
+  }
+}
+
 def "test bump writes the next patch version" []: nothing -> nothing {
   with-sandbox {|ctx|
     let files = seed $ctx.code
-    let out = $files | util workspace bump --keep-order | printable
+    let out = $files | util workspace bump | printable
     assert equal ($out | select prev curr) [[prev curr]; ['1.2.3' '1.2.4'] ['2.0.0+build.7' '2.0.1+build.7']] 'the build metadata is kept'
     assert equal ($out | get file) ($files | get file) 'every row names its file'
     assert equal (open ($files.0?.file?) | get version) '1.2.4' 'yaml is written'
@@ -133,7 +142,7 @@ def "test bump test mode writes nothing" []: nothing -> nothing {
   with-sandbox {|ctx|
     let files = seed $ctx.code
     let before = $files | each { open --raw $in.file }
-    let out = $files | util workspace bump --test --keep-order | printable
+    let out = $files | util workspace bump --test | printable
     assert equal ($out | get curr) ['1.2.4' '2.0.1+build.7'] 'the next versions are returned'
     assert equal ($files | each { open --raw $in.file }) $before 'the files are unchanged'
   }
@@ -142,7 +151,7 @@ def "test bump test mode writes nothing" []: nothing -> nothing {
 def "test bump meta replaces the build metadata" []: nothing -> nothing {
   with-sandbox {|ctx|
     let files = seed $ctx.code
-    let out = $files | util workspace bump --test --keep-order --meta 'ci.9' | printable
+    let out = $files | util workspace bump --test --meta 'ci.9' | printable
     assert equal ($out | get curr) ['1.2.4+ci.9' '2.0.1+ci.9'] 'the given metadata wins'
   }
 }
@@ -179,7 +188,7 @@ def "test bump skips missing and unsupported files" []: nothing -> nothing {
   with-sandbox {|ctx|
     'version = 1' | save ($ctx.code | path join notes.ini)
     let rows = [[file cell]; [($ctx.code | path join gone.yaml) $.version] [($ctx.code | path join notes.ini) $.version]]
-    let out = $rows | util workspace bump --keep-order
+    let out = $rows | util workspace bump
     assert equal ($out | select prev curr) [[prev curr]; [null null] [null null]] 'null versions'
     assert equal ($out | get file) ($rows | get file) 'the rows are returned'
   }
@@ -230,7 +239,7 @@ def "test bump formats toml and json files" []: nothing -> nothing {
     {package: {version: '0.1.0'}} | to toml | save $toml
     {version: '0.1.0'} | to json | save $json
     with-env {PATH: [$bin ...$env.PATH] STUB_LOG: $log} {
-      [[file cell]; [$toml $.package.version] [$json $.version]] | util workspace bump --keep-order | ignore
+      [[file cell]; [$toml $.package.version] [$json $.version]] | util workspace bump | ignore
     }
     assert equal (open $toml | get package.version) '0.1.1' 'toml is written'
     assert equal (open $json | get version) '0.1.1' 'json is written'
@@ -251,14 +260,14 @@ def "test bump ignores formatter failures" []: nothing -> nothing {
   }
 }
 
-def "test bump keeps the order with keep order" []: nothing -> nothing {
+def "test bump keeps the input order" []: nothing -> nothing {
   with-sandbox {|ctx|
     let rows = 1..8 | each {|i|
       let file = $ctx.code | path join $'v($i).nuon'
       {v: $'($i).0.0'} | to nuon | save $file
       {file: $file cell: $.v}
     }
-    assert equal ($rows | util workspace bump --test --keep-order | get prev | each { text }) (1..8 | each { $'($in).0.0' }) 'input order'
+    assert equal ($rows | util workspace bump --test | get prev | each { text }) (1..8 | each { $'($in).0.0' }) 'input order'
   }
 }
 

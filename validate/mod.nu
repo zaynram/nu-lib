@@ -356,14 +356,14 @@ export def rules [
     }
 
   let found: table = if $strict {
-    containers $rows | reduce --fold=[] {|box acc|
-      # A container with no declared children is open; one that failed, or sits under one that did, cannot be scanned.
-      if $result.dead != [] and ($result.dead | under $box.at) { return $acc }
+    # A container with no declared children is open; one that failed, or sits under one that did, cannot be scanned.
+    containers $rows
+    | where {|box| not ($result.dead != [] and ($result.dead | under $box.at)) }
+    | each --flatten {|box|
       let names: list<string> = $rows | where parent == $box.repr | get leaf
-      if $names == [] { return $acc }
-      $data | places $box
-      | each --flatten {|place| $place.value | foreign-keys $names $place.at }
-      | prepend $acc
+      if $names == [] { [] } else {
+        $data | places $box | each --flatten {|place| $place.value | foreign-keys $names $place.at }
+      }
     }
   } | prepend $result.found
     | compact --empty

@@ -381,6 +381,14 @@ def "test from bash cd follows the script into its final directory" []: nothing 
   rm --recursive --force $target
 }
 
+def "test from bash keeps stderr text that merely mentions a line" []: nothing -> nothing {
+  need-bash
+  let e: record = caught {|| "echo 'pipeline: broken' >&2; false" | env from-bash }
+  assert str contains $e.msg 'pipeline: broken' 'only bash location prefixes are stripped'
+  let f: record = caught {|| 'export A=1' | env from-bash --execute [nope] }
+  assert ($f.msg =~ "function 'nope' failed with status 127: nope: command not found") $'bash location prefix stripped from a function failure: ($f.msg)'
+}
+
 def "test from bash execute compares each function with the state before it" []: nothing -> nothing {
   # bash-env 0.10.1 compared each function with every earlier snapshot: SBFB_GONE (and KEEP once f1 removed it)
   # came back as null for every later function, and `export -n` inside a function went unreported.

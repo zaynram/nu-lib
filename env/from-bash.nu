@@ -109,10 +109,14 @@ def text []: oneof<string, binary> -> string {
 def failure-of [failure: record<phase: string, status: string> stderr: string]: nothing -> record<what: string, status: string, cause: string> {
   let phase: string = $failure.phase
   let err: string = $stderr | split row "\u{0}=phase\u{0}" | last
+  # Bash prefixes its own messages with the location (`environment: line 3: `, `environment: eval: line 20: `,
+  # `bash: line 27: `); the text after it is the cause. Only that prefix is removed, so a message that merely
+  # contains "line" keeps its text.
+  let strip: closure = {|l| $l | str replace --regex '^(?:[^:\s]+: )*line [0-9]+: ' '' }
   let cause: string = if $phase == '' {
-    $err | lines | str replace --regex '^.*line\s*[0-9]*:\s*' '' | str join (char newline) | str trim --right --char (char newline)
+    $err | lines | each $strip | str join (char newline) | str trim --right --char (char newline)
   } else {
-    $err | lines | get 0? | default ''
+    $err | lines | get 0? | default '' | do $strip $in
   }
   {
     what: (if $phase == '' { 'the script' } else { $"function '($phase)'" })
@@ -129,6 +133,8 @@ def failure-of [failure: record<phase: string, status: string> stderr: string]: 
 # that inherits this shell's environment; its stdout is discarded and it fails when its last command fails. It is
 # evaluated inside a bash function: `declare`/`local` without `-g` stay local, `return` ends it early and `exit`
 # is an error.
+# The script runs in an `||` context, so a `set -e` inside it has no effect (as in bash-env): a failing command
+# that is not the last one is not an error.
 # Exported variables are the `env` changes, unexported ones the `shellvars` changes; a variable the script removes
 # is null. Values are always strings, as bash has no types (an array gives its first element). `--return merge`
 # (the default) returns both in one record (`env` wins), with null and empty values dropped unless `--keep-empty`;

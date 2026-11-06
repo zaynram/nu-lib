@@ -254,7 +254,10 @@ export def --env edit [
     error raise $"no hook at '($ref)'" --kind not_found
   } else {
     # `update` calls a closure argument, so the overwrite value is wrapped: a closure is stored, not its result.
-    let value: closure = if $overwrite != null { {|| $overwrite } } else { {|| merge $update } }
+    # A bare closure/string hook becomes a `{code}` record before an update record is merged into it.
+    let value: closure = if $overwrite != null { {|| $overwrite } } else {
+      {|| let h = $in; (if ($h | describe) starts-with record { $h } else { {name: null code: $h} }) | merge $update }
+    }
     $env.config.hooks = $env.config.hooks | update $ref $value
     $env.config.hooks | get --ignore-case $ref
   }
