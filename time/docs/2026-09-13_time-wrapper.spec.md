@@ -1,7 +1,7 @@
 # `time`: Timewarrior wrapper
 
-Module `_internal/time`. Consumer: `~/.config/nushell/login.nu` (`use time`). Replaces the `time`
-submodule of `_internal/warrior`; that umbrella is gone, its Todoist half lives in `_internal/todo`.
+Module `time`. Consumer: `track` (and interactive use). Replaces the `time` submodule of the former
+`_internal/warrior`; that umbrella is gone, its Todoist half lives in `todo`.
 
 ## Purpose
 
@@ -44,7 +44,7 @@ export def stop [--at (-a): datetime@_datetimes]: nothing -> oneof<nothing, reco
 # Adjust one interval's bounds, tags or annotation; returns the updated interval.
 export def modify [id: int@_ids --start: datetime --end: datetime --tags: list<string> --annotate: string]: nothing -> record
 
-# Tags with their usage counts.
+# Tags with their usage counts (empty until the database has tags).
 export def tags []: nothing -> table<name: string, count: int>
 
 export alias today = list :day
@@ -62,8 +62,9 @@ export alias week = list :week
 - `start --at` backdates the start. `stop --at` runs `timew stop` and then moves the end, because
   `timew stop` takes no date and `timew modify end` refuses an open interval.
 - `modify --tags` replaces the tag set by untagging the current tags and tagging the new ones.
-- `tags` reads `<db>/data/tags.data`; `$env.TIMEWARRIORDB` overrides the database root, which
-  defaults to `~/.local/share/timewarrior`.
+- `tags` reads `<db>/data/tags.data` (an empty table before any interval was tagged);
+  `$env.TIMEWARRIORDB` overrides the database root, which defaults to `timewarrior` next to Nushell's
+  data directory (`~/.local/share/timewarrior`), resolved when the module is parsed.
 - Every `timew` call the module makes runs with `:yes :quiet`. A non-zero exit raises the stderr text.
 - Datetimes are passed as local ISO timestamps with a zone offset; Timewarrior accepts that form for
   `start`, ranges and `modify`.

@@ -79,10 +79,12 @@ export def modify [
   interval $id
 }
 
-# Tags with their usage counts.
+# Tags with their usage counts (empty until the database has tags).
 @category productivity
 export def tags []: nothing -> table<name: string, count: int> {
-  db | path join data tags.data | open --raw | from json | transpose name count | update count { get count }
+  let file: path = db | path join data tags.data
+  if not ($file | path exists) { return [] }
+  open --raw $file | from json | transpose name count | update count { get count }
 }
 
 # Database root in use: `$env.TIMEWARRIORDB`, or the default location.
