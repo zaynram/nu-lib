@@ -15,6 +15,11 @@
 # `$name` in command position silently evaluates to the string instead of
 # invoking it (the vacuous-runner trap this harness replaces)
 
+# TODO:
+# * Fix path resolution in `main`
+# * Fix hooks assignment in $results in `main`
+# * Ensure wiring is correct for the `--include-path`
+
 # ---
 # nu-lint-ignore-file: chained_str_transform
 # ---
