@@ -23,6 +23,7 @@ def "after each" []: record -> nothing { rm --recursive --force $in.dir }
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 def stub-td [path: path]: nothing -> nothing {
+  need-posix # a `#!` script made executable
   let program: string = r#'
 def --wrapped main [...args: string] {
   $"($args | to json --raw)(char nl)" | save --append $env.TD_LOG

@@ -9,6 +9,7 @@ use ../mod.nu *
 
 # Write an executable shell script `name` with `body` into `dir`.
 def stub [dir: path, name: path, body: string]: nothing -> path {
+  need-posix
   let file: path = $dir | path join $name
   $"#!/bin/sh\n($body)\n" | save --force $file
   ^chmod +x $file

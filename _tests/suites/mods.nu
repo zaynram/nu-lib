@@ -330,6 +330,7 @@ def "test local edit raises when nothing matches" []: nothing -> nothing {
 }
 
 def "test local edit opens the editor" []: nothing -> nothing {
+  need-posix
   with-sandbox {|ctx|
     let log: path = $ctx.code | path join editor.log
     let stub: path = $ctx.code | path join editor

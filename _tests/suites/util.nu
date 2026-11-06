@@ -220,6 +220,7 @@ def "test bump raises for an invalid cell path" []: nothing -> nothing {
 
 # Executable stubs for the formatters, appending their arguments to `log`.
 def stub-formatters [ctx: record]: nothing -> path {
+  need-posix
   let bin = $ctx.code | path join bin
   mkdir $bin
   for name in [tombi dprint] {
@@ -248,6 +249,7 @@ def "test bump formats toml and json files" []: nothing -> nothing {
 }
 
 def "test bump ignores formatter failures" []: nothing -> nothing {
+  need-posix
   with-sandbox {|ctx|
     let bin = $ctx.code | path join bin
     mkdir $bin

@@ -17,3 +17,11 @@ export use test [ skip with-sandbox sandboxed ]
 export const ROOT: path = path self ..
 # Fixture files, one directory per module: `$FIXTURES | path join docgen`.
 export const FIXTURES: path = path self fixtures
+
+# Skip the test unless POSIX stubs can run here: `#!/bin/sh` scripts made executable with `chmod` (`ln -s` and
+# `tar` come with the same hosts). Call it first in every helper that writes one, so native Windows reports a skip
+# with its reason instead of a failure.
+export def need-posix []: nothing -> nothing {
+  if $nu.os-info.name == windows { skip 'the stubs are POSIX shell scripts' }
+  if (which sh chmod | length) < 2 { skip '`sh` and `chmod` are needed to run the stubs' }
+}
