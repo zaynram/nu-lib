@@ -245,7 +245,9 @@ def "test fine" [] { }'}
   }}
 
   {name: 'config: timeout ends a hung child and is validated' run: {||
-    if (which timeout | is-empty) { error make --unspanned {msg: 'SKIP: needs the timeout program'} }
+    if (which timeout | is-empty) or (^timeout --version | complete).stdout !~ '(?i)coreutils' {
+      error make --unspanned {msg: 'SKIP: needs the coreutils timeout program'}
+    }
     let dir = project {'nutest.nuon': '{timeout: 1sec}' 'tests/suites/h.nu': 'def "test hangs" [] { sleep 20sec }
 def "test quick" [] { }'}
     let start = date now

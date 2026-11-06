@@ -258,6 +258,7 @@ export def main [
 export def discover [
   suite: path # Path to a suite file
   --config (-c): record # Effective configuration (default: resolved for the suite)
+  --limiter: oneof<nothing, list<path>> # The `timeout` program, as `timeout-program` gives it (default: looked up now)
 ]: nothing -> table<name: string, role: string, ignore: bool, positional: bool> {
   let file: path = $suite | path expand
   let cfg: record = $config | default { resolve $file {} }
@@ -272,7 +273,7 @@ export def discover [
     '| to nuon --serialize | encode base64'
     $"| print $\"\\n($ROW)\($in\)\""
   ] | str join (char newline)
-  let res: record = spawn $cfg $program {} --sandbox=$cfg.sandbox
+  let res: record = spawn $cfg $program {} --sandbox=$cfg.sandbox --limiter=$limiter
   if $res.exit_code != 0 {
     error make --unspanned {msg: $"could not load suite ($file)" help: ($res.stderr | str trim)}
   }
@@ -550,7 +551,7 @@ def run-suite [suite: path cfg: record opts: record]: nothing -> list {
   print --stderr $"('[' | tint dark_gray_bold $c)($stem | tint cyan_bold $c)(']' | tint dark_gray_bold $c)"
   if $opts.debug { print --stderr ($cfg | to nuon --indent 2) }
   let annotate: closure = {|rows| $rows | each { insert suite $stem | insert file $suite } }
-  let found: record = try { {cmds: (discover $suite --config=$cfg)} } catch {|e| {error: ($e | error-text)} }
+  let found: record = try { {cmds: (discover $suite --config=$cfg --limiter=$opts.limiter)} } catch {|e| {error: ($e | error-text)} }
   if $found has error {
     let row: record = {name: '(discover)' status: error duration: 0sec error: $found.error}
     render $row ($opts | update verbose true)

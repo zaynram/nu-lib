@@ -10,15 +10,19 @@ imports, and record the new reading here.
 evaluation in the `--config … -e` mode, so the library's share is measured as process wall time:
 
 ```nushell
-# min of 7, in a throwaway HOME/XDG tree, minus a bare `nu -c null` (8–11 ms)
-1..7 | each { timeit { ^nu --no-config-file --login --interactive -I <root> -c 'use <root> *; null' | complete } } | math min
+# wall time of one import, min of 7, in a throwaway HOME/XDG tree (a bare `nu --no-config-file -c null` is 8–11 ms of it)
+let sandbox = {HOME: $h XDG_CONFIG_HOME: ($h | path join .config) XDG_DATA_HOME: ($h | path join .local share) XDG_CACHE_HOME: ($h | path join .cache)}
+with-env $sandbox {
+  1..7 | each { timeit { ^nu --no-config-file --login --interactive -I $root -c $"use ($root | to nuon) *; null" | complete } } | math min
+}
 ```
 
 Login + interactive is the owner's case (every guarded loader in the barrel's `export-env` runs). "Owner shape" adds
-a `.nu` machine override and `WORK` holding 30 git repositories; "first" is a fresh HOME (cold registry, cold override
-cache), "warm" the next start. The script lives in the session runbook; the table is what it printed.
+a `.nu` machine override in the sandbox's config directory and `WORK` pointing at a directory of 30 `git init`
+repositories under `src/`; "first" is a fresh HOME (cold registry, cold override cache), "warm" the next start after
+a two-second pause for the hydration job.
 
-## Readings (ms, bare nu subtracted elsewhere; wall times here include the ~10 ms bare shell)
+## Readings (ms of wall time per import; the ~10 ms bare shell is included)
 
 | tree | plain `use` | login + interactive | owner shape: first / warm |
 |---|---|---|---|

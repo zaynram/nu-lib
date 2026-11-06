@@ -85,7 +85,10 @@ export use completion/local *
 # The `use` loads the environment set-up and every command of this barrel, with the `<module>/local` variants as
 # bare names (`alarm set`, `mods edit`, `set-completer`, …). The constant comes first because the barrel's modules
 # import each other by bare name, so the root must be on the include path when the barrel parses: without it the
-# file loads only in a shell whose configuration already lists the root. Writing is idempotent: an existing file
+# file loads only in a shell whose configuration already lists the root. Note that the barrel exports its own
+# `NU_LIB_DIRS` constant (the root and Nushell's module directories), which shadows a constant of the same name the
+# configuration defines once the file has loaded: a module directory of your own must also be in
+# `$env.NU_LIB_DIRS`, which the parser consults after the constant. Writing is idempotent: an existing file
 # with the same content is left alone, and one with different content is kept unless `--force` is given.
 @category env
 export def init-local [
@@ -95,7 +98,8 @@ export def init-local [
   let file: path = $path | default { $nu.user-autoload-dirs | first | path join $AUTOLOAD_FILE } | path expand
   let text: string = [
     '# Written by `init-local` (nu-lib): the interactive command surface, local variants as bare names.'
-    '# The constant puts the library root on the include path before the barrel parses (its modules import each other by name).'
+    '# The constant puts the library root on the include path before the barrel parses (its modules import each other by name);'
+    '# the barrel then exports its own NU_LIB_DIRS constant, so keep other module directories in $env.NU_LIB_DIRS too.'
     $"const NU_LIB_DIRS: list<path> = [($ROOT | to nuon)]"
     $"use ($ROOT | to nuon) *"
   ] | str join (char newline) | $in + (char newline)
