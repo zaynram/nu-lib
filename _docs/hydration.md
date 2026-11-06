@@ -24,18 +24,24 @@ describes the pattern the library uses instead, and when not to use it.
    (`proj list` is `[]` for a moment after the very first start on a machine).
 5. **Staleness is decided by a fingerprint, with a TTL as the fallback.** The fingerprint is cheap to compute on
    every import (for `proj`, the modification times of the four kind directories under `$env.WORK`, ~0.3 ms; for
-   `conf`, the override file's size and modification time plus the running `nu` version). The TTL (24 h for `proj`)
-   catches changes the fingerprint cannot see (a remote URL edited inside a repository).
+   `conf`, the override file's size and modification time — the file itself, a symlink is followed — plus the
+   library root and the running `nu` version). The TTL (24 h for both) catches what the fingerprint cannot see: a
+   remote URL edited inside a repository, a file or variable an override script reads. A fingerprint miss only
+   needs the cheap part redone (new project directories inspected, missing ones dropped); a TTL miss inspects
+   everything again. A command that changes the snapshot without inspecting anything (`proj scan --prune`) keeps the
+   stamp it found, so the next import still sees what the rows were computed from.
 6. **Observability.** `proj meta` reports the snapshot's `stamp` (with its age), the fingerprint it was taken from and
-   whether a hydration job is running (`hydrating`); `conf machine-config --verbose` prints `cache = hit|miss|off|none`.
-   A job that fails logs one warning through the `log` module and leaves the previous snapshot untouched.
+   whether a hydration job is running (`hydrating`: this shell's job, or another shell's fresh mark); while the very
+   first scan of a workspace is still running it reports only `{hydrating: true}`. `conf machine-config --verbose`
+   prints `cache = hit|miss|off|none`. A job that fails logs one warning through the `log` module and leaves the
+   previous snapshot untouched.
 
 ## Where it is used
 
 | Module | Snapshot | Hydration | Staleness |
 |---|---|---|---|
-| `proj` | kv table `proj`, key `snapshot`: `{stamp, last_scan, kinds}` | job at interactive import; `scan` in the foreground | fingerprint (kind directories' mtimes) or 24 h |
-| `conf` | `$nu.cache-dir/nu-lib/machine-override.nuon`: the override file's checked record | none needed: a miss loads synchronously (the first login after a change) | the file's mtime and size, and the `nu` version |
+| `proj` | kv table `proj`, key `snapshot`: `{stamp, last_scan, kinds}` | job at interactive import; `scan` in the foreground (it honours the same staleness rule; `--force` scans regardless) | fingerprint (kind directories' mtimes) or 24 h (then every project is inspected again) |
+| `conf` | `$nu.cache-dir/nu-lib/machine-override.nuon`: the override file's checked record | none needed: a miss loads synchronously (the first login after a change) | the file's mtime and size (symlink followed), the library root and the `nu` version; a script's record also expires after 24 h |
 | `completion/local` | none | — | the carapace runtime environment is recomputed per completion (cheaper than any staleness check) |
 | `track` | none | — | event-driven (hooks); nothing is computed at import |
 

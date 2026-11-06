@@ -92,8 +92,9 @@ name, `mod`). Modules that are configuration-dependent as a whole (`conf`, `proj
 
 The root barrel exposes the local variants as bare names (`alarm set`, `mods edit`, `set-completer`); no
 `local …`-prefixed form exists anywhere (a prefixed name and its bare twin are one declaration, so they could not
-be hidden separately and would clutter completions). `init-local` writes an autoload file holding `use <root> *`,
-which bootstraps a fresh machine on its own. The barrel runs the environment blocks it needs as guarded `use`
+be hidden separately and would clutter completions). `init-local` writes an autoload file holding `const NU_LIB_DIRS = [<root>]` and
+`use <root> *` (the constant puts the root on the parse-time module path, so the file bootstraps a fresh machine on
+its own). The barrel runs the environment blocks it needs as guarded `use`
 statements inside its own `export-env`: the modules are already parsed, so this costs nothing beyond the block
 itself (`source-env` would re-parse each file as a script on every load and execute its `use` statements
 unguarded).

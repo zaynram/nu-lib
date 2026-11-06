@@ -142,7 +142,8 @@ Many modules have side effects at import time (`export-env`) or persist state:
 
 - `std-rfc/kv` with `--universal` writes SQLite under `$nu.data-dir`; point `XDG_DATA_HOME` at a temp dir **and
   create `$XDG_DATA_HOME/nushell` first** (kv does not create it), or set `NU_UNIVERSAL_KV_PATH`.
-- `proj` scans `$env.WORK` on import (skipped when `WORK` is unset). Point `WORK` at a temp dir.
+- `proj` keeps its registry in kv and, in an interactive shell with `WORK` set, starts a background scan of `$env.WORK`
+  at import (a non-interactive reader scans on demand). Point `WORK` at a temp dir, or leave it unset.
 - The owner's interactive environment exports variables that change module behavior (`mods_home`, `ZELLIJ`,
   `NUPM_HOME`, `EDITOR`, `WORK`). For hermetic runs, start children from a scrubbed environment.
 - Never exercise privileged or destructive paths for real (`elevate`, `mount`, `link`, `pman` install/upgrade,
