@@ -88,7 +88,8 @@ export use prelude *
 # - `conf` (login shells): the vendor scope's NU_LIB_DIRS, NU_PLUGIN_DIRS and PATH;
 # - `mods` (interactive login shells): `mods_home`/`mods_refs` and the `use`/`hide` tracking hook;
 # - `completion/local` (interactive login shells): the external completers' variables and PATH entry;
-# - `windows` (Linux, i.e. WSL): splits the Windows entries of PATH into WINPATH.
+# - `windows` (WSL: `WSL_DISTRO_NAME` is set or the kernel release names Microsoft): splits the Windows entries of
+#   PATH into WINPATH.
 # Every block is idempotent, so loading the barrel again changes nothing.
 export-env {
   const root: path = path self .
@@ -99,5 +100,7 @@ export-env {
     source-env ($root | path join mods mod.nu)
     source-env ($root | path join completion local mod.nu)
   }
-  if $nu.os-info.name == linux { source-env ($root | path join windows mod.nu) }
+  if $env.WSL_DISTRO_NAME? != null or $nu.os-info.kernel_version =~ '(?i)microsoft' {
+    source-env ($root | path join windows mod.nu)
+  }
 }

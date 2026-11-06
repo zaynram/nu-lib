@@ -34,9 +34,8 @@ def login [ctx: record code: string --prelude: string = $USE_BARREL --vars: reco
   $res.stdout | lines | last | from nuon
 }
 
-def need-linux []: nothing -> nothing {
-  if $nu.os-info.name != linux { skip 'the windows loader only runs on Linux (WSL)' }
-}
+# Whether the kernel is WSL's (the windows loader then runs whatever the environment says).
+def wsl-kernel []: nothing -> bool { $nu.os-info.kernel_version =~ '(?i)microsoft' }
 
 # ——— surface ——————————————————————————————————————————————————————————————————
 
@@ -131,13 +130,21 @@ def "test plain shells skip the login loaders" []: nothing -> nothing {
   }
 }
 
-def "test windows loader splits PATH on linux" []: nothing -> nothing {
-  need-linux
+def "test windows loader splits PATH under WSL" []: nothing -> nothing {
   with-sandbox {|ctx|
     let path: string = ['/mnt/c/sbbarrel/win' ...$env.PATH] | str join (char esep)
-    let r: record = plain $ctx '{win: $env.WINPATH path: $env.PATH}' --vars {PATH: $path}
+    let r: record = plain $ctx '{win: $env.WINPATH path: $env.PATH}' --vars {PATH: $path WSL_DISTRO_NAME: sbdistro}
     assert equal $r.win ['/mnt/c/sbbarrel/win'] 'Windows entries move to WINPATH'
     assert not ('/mnt/c/sbbarrel/win' in $r.path) 'and leave PATH'
+  }
+}
+
+def "test windows loader follows the kernel without WSL_DISTRO_NAME" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let prelude: string = $"hide-env --ignore-errors WSL_DISTRO_NAME\n($USE_BARREL)"
+    let r: record = plain $ctx '{win: $env.WINPATH? distro: $env.WSL_DISTRO_NAME?}' --prelude $prelude
+    assert equal ($r.win != null) (wsl-kernel) 'loaded exactly when the kernel release names Microsoft'
+    assert equal ($r.distro != null) (wsl-kernel) 'which then sets WSL_DISTRO_NAME'
   }
 }
 
