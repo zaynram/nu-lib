@@ -40,6 +40,7 @@
 # ——— imports —————————————————————————————————————————————————————————————————
 
 use std-rfc/pb
+use style
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -223,10 +224,11 @@ export def main [
     error make --unspanned {msg: 'no test suites matched' help: $"--match: '($match)'"}
   }
   let started: datetime = date now
-  let opts: record = {test: $test verbose: $verbose debug: $debug}
+  # Colours (`config use-colors`) are decided once per run; children never see a terminal, so test output is plain.
+  let opts: record = {test: $test verbose: $verbose debug: $debug colors: (style colors)}
   let results: list = $suites | each {|suite| run-suite $suite (resolve $suite $flags) $opts } | flatten
   if (is-terminal --stderr) { pb clear }
-  summarize $results ((date now) - $started) $strict
+  summarize $results ((date now) - $started) $strict $opts.colors
   $results | select suite name status duration error file
 }
 
@@ -489,13 +491,14 @@ def role [cmd: record]: nothing -> oneof<string, nothing> {
 
 def run-suite [suite: path cfg: record opts: record]: nothing -> list {
   let stem: string = $suite | path parse | get stem
-  print --stderr $"(ansi dark_gray_bold)[(ansi reset)(ansi cyan_bold)($stem)(ansi reset)(ansi dark_gray_bold)](ansi reset)"
+  let c: bool = $opts.colors
+  print --stderr $"('[' | tint dark_gray_bold $c)($stem | tint cyan_bold $c)(']' | tint dark_gray_bold $c)"
   if $opts.debug { print --stderr ($cfg | to nuon --indent 2) }
   let annotate: closure = {|rows| $rows | each { insert suite $stem | insert file $suite } }
   let found: record = try { {cmds: (discover $suite --config=$cfg)} } catch {|e| {error: ($e | error-text)} }
   if $found has error {
     let row: record = {name: '(discover)' status: error duration: 0sec error: $found.error}
-    render $row true
+    render $row ($opts | update verbose true)
     return (do $annotate [$row])
   }
   let cmds: table = $found.cmds
@@ -521,8 +524,8 @@ def run-suite [suite: path cfg: record opts: record]: nothing -> list {
       | uniq-by name status error
     }
   }
-  for row in ($rows | where name == '(after all)') { render $row $opts.verbose }
-  for row in [...$ignored ...$uncallable] { render $row $opts.verbose }
+  for row in ($rows | where name == '(after all)') { render $row $opts }
+  for row in [...$ignored ...$uncallable] { render $row $opts }
   do $annotate [...$rows ...$ignored ...$uncallable]
 }
 
@@ -546,7 +549,7 @@ def run-child [suite: path cfg: record hooks: record names: list<string> opts: r
   }
   let all: list = [...$rows ...$crashed]
   # `(after all)` rows are rendered by the caller, once per suite.
-  for row in ($all | where name != '(after all)') { render $row $opts.verbose }
+  for row in ($all | where name != '(after all)') { render $row $opts }
   $all
 }
 
@@ -677,25 +680,30 @@ def error-text []: record -> string {
   | str join (char newline)
 }
 
-def render [row: record verbose: bool]: nothing -> nothing {
-  let color: string = match $row.status { ok => (ansi green) skip => (ansi yellow) _ => (ansi red) }
+# `style paint` with the run's colour decision (`opts.colors`, taken once in `main`), so every line renders alike.
+def tint [code: string on: bool]: string -> string { style paint $code --colors=$on }
+
+# Print one result row; `opts.verbose` adds the error text under failures (errors always show it).
+def render [row: record opts: record]: nothing -> nothing {
+  let c: bool = $opts.colors
+  let color: string = match $row.status { ok => 'green' skip => 'yellow' _ => 'red' }
   let name: string = $row.name | str replace --regex '^test ' ''
-  let reason: string = if $row.status == skip and $row.error != null { $" (ansi attr_dimmed)— ($row.error)(ansi reset)" } else { '' }
+  let reason: string = if $row.status == skip and $row.error != null { $" ($'— ($row.error)' | tint attr_dimmed $c)" } else { '' }
   let ms: float = ($row.duration / 1ms) | math round --precision 1
-  print --stderr $"  ($color)[($row.status)](ansi reset) ($name) (ansi attr_dimmed)($ms)ms(ansi reset)($reason)"
-  if ($verbose or $row.status == error) and $row.status in [fail error] and $row.error != null {
+  print --stderr $"  ($'[($row.status)]' | tint $color $c) ($name) ($'($ms)ms' | tint attr_dimmed $c)($reason)"
+  if ($opts.verbose or $row.status == error) and $row.status in [fail error] and $row.error != null {
     $row.error | lines | each { $"      ($in)" } | str join (char newline) | print --stderr $in
   }
 }
 
-def summarize [results: list elapsed: duration strict: bool]: nothing -> nothing {
+def summarize [results: list elapsed: duration strict: bool colors: bool]: nothing -> nothing {
   let count: closure = {|s| $results | where status == $s | length }
   let failed: int = (do $count fail) + (do $count error)
   print --stderr ([
-    $"(ansi green)(do $count ok) passed(ansi reset)"
-    $"(ansi red)($failed) failed(ansi reset)"
-    $"(ansi yellow)(do $count skip) skipped(ansi reset)"
-    $"(ansi attr_dimmed)in (($elapsed / 1sec) | math round --precision 2)s(ansi reset)"
+    ($'(do $count ok) passed' | tint green $colors)
+    ($'($failed) failed' | tint red $colors)
+    ($'(do $count skip) skipped' | tint yellow $colors)
+    ($'in (($elapsed / 1sec) | math round --precision 2)s' | tint attr_dimmed $colors)
   ] | str join ', ')
   if $strict and $failed > 0 { error make --unspanned {msg: $"($failed) test\(s) failed"} }
 }

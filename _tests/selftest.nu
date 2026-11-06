@@ -11,7 +11,11 @@
 
 # nu-lint-ignore-file: missing_output_type
 
+# The checkout is the include path for `use style` (a parse-time constant, so it must precede the import).
+const NU_LIB_DIRS: list<path> = [(path self ..)]
+
 use std/assert
+use style
 
 const ROOT: path = path self ..
 
@@ -481,6 +485,20 @@ def "test skipped inside a sandbox" [] { with-sandbox {|c| skip "nope" } }'}
     assert equal $r.extra x
   }}
 
+  {name: 'colors: progress on stderr follows use_ansi_coloring' run: {||
+    let dir = project {'tests/suites/p.nu': $PASSING}
+    let plain = runner $dir '$env.config.use_ansi_coloring = false; test'
+    assert equal $plain.exit_code 0 $plain.stderr
+    assert not ($plain.stderr =~ '\e\[') $'no escape sequences when colours are off: ($plain.stderr)'
+    assert str contains $plain.stderr '[ok] passes' 'the row renders plain'
+    assert str contains $plain.stderr '1 passed, 0 failed, 0 skipped' 'the summary renders plain'
+    let styled = runner $dir '$env.config.use_ansi_coloring = true; test'
+    assert str contains $styled.stderr $"('[ok]' | style paint green --colors=true) passes" 'the ok marker is green when colours are on'
+    assert str contains $styled.stderr ('1 passed' | style paint green --colors=true) 'the summary is coloured'
+    # The default, `auto`, means "stdout is a terminal": the runner child here writes to a pipe.
+    assert not ((runner $dir 'test').stderr =~ '\e\[') 'auto without a terminal is plain'
+  }}
+
   {name: 'init: scaffolds a runnable layout, keeps existing files, --force overwrites' run: {||
     let dir = project {'lib/greet/mod.nu': $GREET}
     let made = ok $dir 'test init demo --module lib/greet'
@@ -508,13 +526,14 @@ def main [
       }
       rm --recursive --force $tmp
       let status: string = if $outcome.error == null { 'pass' } else if ($outcome.msg? | default '' | str starts-with 'SKIP: ') { 'skip' } else { 'FAIL' }
-      let color: string = match $status { pass => (ansi green) skip => (ansi yellow) _ => (ansi red) }
-      let note: string = if $status == skip { $" (ansi attr_dimmed)— ($outcome.msg | str substring 6..)(ansi reset)" } else { '' }
-      print $"($color)[($status)](ansi reset) ($c.name) (ansi attr_dimmed)(((date now) - $start) / 1sec | math round --precision 1)s(ansi reset)($note)"
+      let color: string = match $status { pass => 'green' skip => 'yellow' _ => 'red' }
+      let note: string = if $status == skip { $" ($'— ($outcome.msg | str substring 6..)' | style paint attr_dimmed)" } else { '' }
+      let took: string = $'(((date now) - $start) / 1sec | math round --precision 1)s'
+      print $"($'[($status)]' | style paint $color) ($c.name) ($took | style paint attr_dimmed)($note)"
       {case: $c.name ok: ($status != 'FAIL') skipped: ($status == skip) error: (if $status == 'FAIL' { $outcome.error })}
     }
   let failed: list = $results | where not ok
-  for f in $failed { print $"\n(ansi red)FAIL(ansi reset) ($f.case)\n($f.error)" }
+  for f in $failed { print $"\n('FAIL' | style paint red) ($f.case)\n($f.error)" }
   print $"\n($results | length) cases, ($failed | length) failed, ($results | where skipped | length) skipped"
   if ($failed | is-not-empty) { exit 1 }
 }
