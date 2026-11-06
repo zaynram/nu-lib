@@ -16,7 +16,9 @@ const BUMPABLE: list<string> = [csv html json md kdl msgpack ndnuon nuon text to
 
 # Hide the `__workspace__` overlay (an error unless the user's config created it).
 export alias deactivate = overlay hide __workspace__
-# Leave and re-enter the current directory, re-running `env_change.PWD` hooks.
+# Leave for `$nu.temp-dir` and return to the current directory (`OLDPWD` is the temporary directory afterwards).
+# This does not re-run `env_change.PWD` hooks: Nushell runs them before the next prompt, from the net change of PWD
+# since the previous prompt, which a leave-and-return inside one command leaves at none.
 export alias reactivate = do --env { let cwd: path = pwd; cd $nu.temp-dir; cd $cwd }
 
 # ——— definitions ——————————————————————————————————————————————————————————————
@@ -48,14 +50,17 @@ export def bump [
   --spec (-s): string
   # An exact version to set instead of bumping (must be valid semver)
   --meta (-m): string
-  # Build metadata to set instead of preserving the existing
+  # Build metadata to set instead of preserving the existing (also replaces the metadata of `--spec`)
   --test (-t)
   # Return the version bump data without writing anything to disk
   --skip (-S) = true
   # Return missing files and unsupported formats with null `prev`/`curr` (the default); `--skip=false` raises
 ]: table<file: path, cell: cell-path> -> table<file: path, cell: cell-path, prev: any, curr: any> {
   let rows: table = $in
-  let wanted: any = $spec | if $in != null { into semver }
+  # `--meta` replaces the build metadata of the spec too (`into semver` validates the result)
+  let wanted: any = $spec | if $in == null { } else if $meta == null { into semver } else {
+    $"($in | str replace --regex '\+.*$' '')+($meta)" | into semver
+  }
   # Sequential: two rows may name the same file, and parallel writes would lose one of the updates.
   $rows | each {|row|
     # without `--skip`, the error of `ensure-bumpable` is the caller's

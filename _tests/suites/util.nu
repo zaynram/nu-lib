@@ -156,6 +156,15 @@ def "test bump meta replaces the build metadata" []: nothing -> nothing {
   }
 }
 
+def "test bump meta replaces the build metadata of a spec" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let files = seed $ctx.code | first 1
+    assert equal ($files | util workspace bump --test --spec '3.1.4+old' --meta 'ci.9' | get curr.0 | text) '3.1.4+ci.9' "the spec's own metadata is replaced"
+    assert equal ($files | util workspace bump --test --spec '3.1.4' --meta 'ci.9' | get curr.0 | text) '3.1.4+ci.9' 'or added'
+    assert error { $files | util workspace bump --test --spec '3.1.4' --meta 'not valid!' } 'the result is still validated as semver'
+  }
+}
+
 def "test bump spec sets an exact version" []: nothing -> nothing {
   with-sandbox {|ctx|
     let files = seed $ctx.code | first 1
@@ -285,10 +294,14 @@ overlay list | where active | get name | to nuon' --pipe
   }
 }
 
-def "test reactivate returns to the current directory" []: nothing -> nothing {
+# Nushell runs `env_change.PWD` hooks before the next prompt, from the net change of PWD, so a hook registered here
+# cannot observe the alias (and never runs in a test child); what it leaves behind can.
+def "test reactivate leaves and returns to the current directory" []: nothing -> nothing {
   with-sandbox {|ctx|
     cd $ctx.code
+    $env.OLDPWD = $ctx.code
     util workspace reactivate
     assert equal $env.PWD $ctx.code 'the directory is unchanged'
+    assert equal ($env.OLDPWD | path expand) ($nu.temp-dir | path expand) 'it did leave: the temporary directory is the previous one'
   }
 }
