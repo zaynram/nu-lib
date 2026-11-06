@@ -150,14 +150,14 @@ def "test plain shells skip the login loaders" []: nothing -> nothing {
       hooks: ($env.config.hooks.pre_execution? | default [] | length)
       pwd: ($env.config.hooks.env_change?.PWD? | default [] | length)
       carapace: ($env | columns | where $it starts-with CARAPACE)
-      scanned: (proj meta)
+      registry: (do { use std-rfc/kv *; kv list --universal --table=proj } | length)
     }'
     let r: record = plain $ctx $code --vars {WORK: (workspace $ctx)}
     assert equal $r.plugins $before.NU_PLUGIN_DIRS 'conf is not loaded outside login shells'
     assert equal [$r.home $r.hooks] [null 0] 'mods is not loaded outside interactive login shells'
     assert equal $r.carapace [] 'nor are the completers'
     assert equal $r.pwd 0 'nor the track hooks'
-    assert equal $r.scanned {} 'nor does proj scan WORK'
+    assert equal $r.registry 0 'nor does proj scan WORK (a reader would, on demand: the registry is what import leaves)'
   }
 }
 
@@ -210,10 +210,15 @@ def "test interactive login shells load track" []: nothing -> nothing {
   }
 }
 
-def "test interactive login shells scan the workspace" []: nothing -> nothing {
+# Wait (up to 10 s) for proj's hydration job to finish.
+const AWAIT_PROJ: string = 'mut n = 0; while (job list | is-not-empty) and $n < 100 { sleep 100ms; $n += 1 }'
+
+def "test interactive login shells scan the workspace in the background" []: nothing -> nothing {
   with-sandbox {|ctx|
     let work: path = workspace $ctx
-    assert equal (login $ctx 'proj meta | get total_count' --vars {WORK: $work}) 1 'proj registers the workspace'
+    let code: string = $"let spawned = job list | get description; ($AWAIT_PROJ); {spawned: $spawned, total: \(proj meta total_count\)}"
+    let r: record = login $ctx $code --vars {WORK: $work}
+    assert equal $r {spawned: ['proj: scanning the workspace'] total: 1} 'proj registers the workspace from a job'
   }
   with-sandbox {|ctx|
     assert equal (login $ctx 'proj meta') {} 'nothing is scanned without WORK'
@@ -222,19 +227,19 @@ def "test interactive login shells scan the workspace" []: nothing -> nothing {
 
 def "test non-interactive login shells skip proj and track" []: nothing -> nothing {
   with-sandbox {|ctx|
-    let code: string = '{pre: ($env.config.hooks.pre_execution? | default [] | length) scanned: (proj meta)}'
+    let code: string = '{pre: ($env.config.hooks.pre_execution? | default [] | length) registry: (do { use std-rfc/kv *; kv list --universal --table=proj } | length)}'
     let r: record = login $ctx $code --vars {WORK: (workspace $ctx)} --not-interactive
-    assert equal $r {pre: 0 scanned: {}} 'both need an interactive login shell'
+    assert equal $r {pre: 0 registry: 0} 'both need an interactive login shell'
   }
 }
 
 def "test loading the barrel twice changes nothing" []: nothing -> nothing {
   with-sandbox {|ctx|
-    let code: string = '{
-      env: ($env | select NU_LIB_DIRS NU_PLUGIN_DIRS PATH mods_home DIRS_LIST)
-      hooks: {pre: ($env.config.hooks.pre_execution | get name) pwd: ($env.config.hooks.env_change.PWD | get name)}
-      projects: (proj list | get name)
-    }'
+    let code: string = $"($AWAIT_PROJ); {
+      env: \($env | select NU_LIB_DIRS NU_PLUGIN_DIRS PATH mods_home DIRS_LIST\)
+      hooks: {pre: \($env.config.hooks.pre_execution | get name\) pwd: \($env.config.hooks.env_change.PWD | get name\)}
+      projects: \(proj list | get name\)
+    }"
     let vars: record = {WORK: (workspace $ctx)}
     let once: record = login $ctx $code --vars $vars
     let twice: record = login $ctx $code --prelude $"($USE_BARREL)\n($USE_BARREL)" --vars $vars

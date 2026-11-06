@@ -1,8 +1,10 @@
 # `proj` against a throwaway workspace: `test _tests/suites/proj.nu`.
 #
-# `use proj` scans `$env.WORK` on import and keeps its registry in universal kv, so every case builds its own
-# workspace inside a `with-sandbox` directory and runs `proj` in a sandboxed child interpreter. The real
-# registry and workspace are never touched.
+# `proj` keeps its registry (one snapshot) in universal kv and scans `$env.WORK` — in a background job when an
+# interactive shell imports it, synchronously when a non-interactive reader finds no snapshot — so every case builds
+# its own workspace inside a `with-sandbox` directory and runs `proj` in a sandboxed child interpreter. The real
+# registry and workspace are never touched. The sandboxed children are not interactive: the import-time job is
+# exercised through interactive grandchildren (`in-interactive`).
 # nu-lint-ignore-file: missing_output_type
 # (`in-proj` returns whatever the child produced: a nuon value, or its printed lines)
 use ../mod.nu *
@@ -64,7 +66,7 @@ def project [fx: record, name: string]: nothing -> record {
 
 # ——— cases ————————————————————————————————————————————————————————————————————
 
-def "test load auto scan registers every kind" []: nothing -> nothing {
+def "test load a reader builds the snapshot when there is none" []: nothing -> nothing {
   case {|fx|
       let meta = in-proj $fx 'proj meta'
       assert equal $meta.total_count 6
@@ -82,14 +84,14 @@ def "test scan reset returns the scan record" []: nothing -> nothing {
 
 def "test scan force with nothing new counts all adds none" []: nothing -> nothing {
   case {|fx|
-      let r = in-proj $fx 'proj scan --force'
+      let r = in-proj $fx 'proj scan --force | ignore; proj scan --force'
       assert equal [$r.found $r.added] [6 0]
   }
 }
 
 def "test scan force picks up a new directory" []: nothing -> nothing {
   case {|fx|
-      in-proj $fx 'null' | ignore
+      in-proj $fx 'proj scan --force' | ignore
       mkdir ($fx.work | path join src/delta)
       let r = in-proj $fx 'proj scan --force'
       assert equal [$r.found $r.added] [7 1]
@@ -175,7 +177,7 @@ def "test aliases project aliases renames on intake" []: nothing -> nothing {
 
 def "test prune removes missing directories and fixes counts" []: nothing -> nothing {
   case {|fx|
-      in-proj $fx 'null' | ignore # register everything
+      in-proj $fx 'proj scan --force' | ignore # register everything
       rm --recursive ($fx.work | path join txt/notes)
       let printed = in-proj $fx 'proj scan --prune' --printed
       assert equal $printed ['removed 1 projects']
@@ -186,7 +188,7 @@ def "test prune removes missing directories and fixes counts" []: nothing -> not
 
 def "test prune nothing missing removes nothing" []: nothing -> nothing {
   case {|fx|
-      assert equal (in-proj $fx 'proj scan --prune' --printed) ['removed 0 projects']
+      assert equal (in-proj $fx 'proj scan --force | ignore; proj scan --prune' --printed) ['removed 0 projects']
   }
 }
 
@@ -197,7 +199,7 @@ def caught-in-proj [fx: record, code: string]: nothing -> record {
 
 def "test prune missing metadata raises a helpful error" []: nothing -> nothing {
   case {|fx|
-      let err = caught-in-proj $fx 'use std-rfc/kv *; kv drop --universal --table=proj total_count | ignore; proj scan --prune'
+      let err = caught-in-proj $fx 'use std-rfc/kv *; kv drop --universal --table=proj snapshot | ignore; proj scan --prune'
       assert equal $err.msg 'no metadata found' 'the message'
       assert equal $err.code 'proj::prune-missing-dirs::not_found' 'the code'
       assert equal $err.help 'run a scan first' 'the remedy is the advice'
@@ -301,7 +303,7 @@ def "test empty work counts as unset" []: nothing -> nothing {
 
 def "test scan kinds limits the scan and keeps the other counts" []: nothing -> nothing {
   case {|fx|
-      let r = in-proj $fx 'let r = proj scan --reset --kinds [src]; {r: $r, meta: (proj meta | reject last_scan)}'
+      let r = in-proj $fx 'proj scan --force | ignore; let r = proj scan --reset --kinds [src]; {r: $r, meta: (proj meta | select src_count txt_count dev_count ext_count total_count)}'
       assert equal [$r.r.found $r.r.added] [3 3] 'only src is scanned'
       assert equal $r.meta {src_count: 3 txt_count: 1 dev_count: 1 ext_count: 1 total_count: 6} 'other kinds keep their counts, the total covers all (P7)'
   }
@@ -309,7 +311,7 @@ def "test scan kinds limits the scan and keeps the other counts" []: nothing -> 
 
 def "test scan kinds reset drops only that kind" []: nothing -> nothing {
   case {|fx|
-      in-proj $fx 'null' | ignore
+      in-proj $fx 'proj scan --force' | ignore
       rm --recursive ($fx.work | path join src/beta)
       let r = in-proj $fx 'proj scan --reset --kinds [src] | ignore; {names: (proj list | get name | sort), total: (proj meta total_count)}'
       assert equal $r.names [alpha gamma notes tools vend] 'src is rebuilt, the rest is kept'
@@ -353,7 +355,7 @@ def "test aliases by absolute path" []: nothing -> nothing {
 
 def "test aliases apply to registered projects on rescan" []: nothing -> nothing {
   case {|fx|
-      in-proj $fx 'null' | ignore # registers vend under its directory name
+      in-proj $fx 'proj scan --force' | ignore # registers vend under its directory name
       let names = in-proj $fx 'with-env {project_aliases: {vend: vendored}} { proj scan --force | ignore }; proj list | get name'
       assert ('vendored' in $names) 'renamed by directory name (P4), before the scan returns (P5)'
       assert ('vend' not-in $names) 'no duplicate left behind'
@@ -469,8 +471,92 @@ def "test main exec disables the zellij hook meanwhile" []: nothing -> nothing {
 
 def "test main scan picks up new projects first" []: nothing -> nothing {
   case {|fx|
-      in-proj $fx 'null' | ignore
+      in-proj $fx 'proj scan --force' | ignore
       mkdir ($fx.work | path join dev/fresh)
       assert equal (in-proj $fx 'proj --scan fresh; $env.PWD') ($fx.work | path join dev/fresh) 'found and entered'
+  }
+}
+
+# ——— snapshot and hydration ———————————————————————————————————————————————————
+
+# Run `code` after `use proj` in an INTERACTIVE grandchild (so the import-time hydration job runs); return
+# {value, stderr}. `--pre` runs before `use proj` (the import is a runtime statement, so a mark it sets is seen).
+def in-interactive [fx: record, code: string, --pre: string = '', --vars: record = {}]: nothing -> record<value: any, stderr: string> {
+  let program: string = $"($pre); use proj; ($code) | to nuon --serialize"
+  # The same throwaway HOME/XDG tree as `sandboxed` gives the non-interactive children: one registry per case.
+  let sandbox: record = {
+    HOME: $fx.ctx.home XDG_CONFIG_HOME: $fx.ctx.config XDG_DATA_HOME: $fx.ctx.data
+    XDG_CACHE_HOME: $fx.ctx.cache XDG_STATE_HOME: $fx.ctx.state
+  }
+  let res: record = with-env ($sandbox | merge {WORK: $fx.work GIT_CONFIG_GLOBAL: '/dev/null' GIT_CONFIG_NOSYSTEM: '1'} | merge $vars) {
+    '' | ^$nu.current-exe --no-config-file --interactive --include-path $ROOT -c $program | complete
+  }
+  if $res.exit_code != 0 { error make --unspanned {msg: $"interactive grandchild failed: ($res.stderr | str trim)"} }
+  {value: ($res.stdout | lines | last | from nuon) stderr: $res.stderr}
+}
+
+# Wait (up to 10 s) for the hydration job of the running shell to finish.
+const AWAIT: string = 'mut n = 0; while (job list | is-not-empty) and $n < 100 { sleep 100ms; $n += 1 }'
+
+def "test snapshot is the only key the registry holds" []: nothing -> nothing {
+  case {|fx|
+      let keys = in-proj $fx 'proj scan --force | ignore; use std-rfc/kv *; kv list --universal --table=proj | get key'
+      assert equal $keys [snapshot] 'one atomic value'
+  }
+}
+
+def "test snapshot a stale one is served as it is by a non-interactive shell" []: nothing -> nothing {
+  case {|fx|
+      in-proj $fx 'proj scan --force' | ignore
+      rm --recursive ($fx.work | path join txt/notes)
+      mkdir ($fx.work | path join src/delta)
+      assert equal (in-proj $fx 'proj list | get name | sort') [alpha beta gamma notes tools vend] 'no refresh: the snapshot as stored'
+      assert equal (in-proj $fx 'proj scan --force | ignore; proj list | get name | sort') [alpha beta delta gamma tools vend] 'a scan drops the missing and adds the new'
+  }
+}
+
+def "test hydration an interactive import refreshes in the background" []: nothing -> nothing {
+  case {|fx|
+      let r = in-interactive $fx $"let spawned = job list | get description; ($AWAIT); {spawned: $spawned, after: \(job list | length\), meta: \(proj meta | select total_count hydrating\)}"
+      assert equal $r.value.spawned ['proj: scanning the workspace'] 'one job, described'
+      assert equal $r.value.after 0 'it finished'
+      assert equal $r.value.meta {total_count: 6 hydrating: false} 'and wrote the snapshot'
+      assert equal (in-proj $fx 'proj meta hydrating') false 'no job elsewhere'
+  }
+}
+
+def "test hydration a fresh snapshot spawns nothing" []: nothing -> nothing {
+  case {|fx|
+      in-proj $fx 'proj scan --force' | ignore
+      let r = in-interactive $fx 'job list | length'
+      assert equal $r.value 0 'nothing to refresh'
+  }
+}
+
+def "test hydration a changed workspace is refreshed" []: nothing -> nothing {
+  case {|fx|
+      in-proj $fx 'proj scan --force' | ignore
+      mkdir ($fx.work | path join dev/fresh)
+      let r = in-interactive $fx $"let n = job list | length; ($AWAIT); {jobs: $n, names: \(proj list --kind dev | get name | sort\)}"
+      assert equal $r.value {jobs: 1 names: [fresh tools]} 'the kind directory changed, so a job ran and found it'
+  }
+}
+
+def "test hydration a fresh mark prevents a duplicate job" []: nothing -> nothing {
+  case {|fx|
+      let r = in-interactive $fx 'job list | length' --pre 'use std-rfc/kv *; kv set --universal --table=proj hydrating (date now) | ignore'
+      assert equal $r.value 0 'another shell is already at it'
+  }
+}
+
+def "test hydration a failing job keeps the previous snapshot and warns once" []: nothing -> nothing {
+  case {|fx|
+      in-proj $fx 'proj scan --force' | ignore
+      mkdir ($fx.work | path join dev/fresh)
+      # a string where a record of globs is expected makes the scan raise inside the job
+      let r = in-interactive $fx $"($AWAIT); {names: \(proj list --kind dev | get name\), keys: \(use std-rfc/kv *; kv list --universal --table=proj | get key\)}" --vars {project_exclude: oops}
+      assert equal $r.value.names [tools] 'the snapshot is the old one'
+      assert equal $r.value.keys [snapshot] 'the mark is cleared'
+      assert equal ($r.stderr | lines | where $it =~ 'proj: the background scan failed' | length) 1 'one warning'
   }
 }

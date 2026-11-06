@@ -1,4 +1,10 @@
 # Project discovery and catalog utilities.
+#
+# The registry is one snapshot in universal kv (table `proj`, key `snapshot`): the projects of every kind, the last
+# scan's totals and a stamp (when it was taken, and a fingerprint of the workspace's kind directories). Readers
+# never wait for a scan: an interactive shell refreshes a missing or stale snapshot in a background job at import
+# (`_docs/hydration.md`), a non-interactive shell scans synchronously only when there is no snapshot at all, and
+# `scan` always runs in the foreground and rewrites the snapshot in one write.
 
 # nu-lint-ignore-file: string_param_as_path
 
@@ -7,6 +13,7 @@
 use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
 use hook with
 use error
+use log
 use style
 
 # ——— constants ————————————————————————————————————————————————————————————————
@@ -30,7 +37,12 @@ const RE: record = {
   remote: '^(?:[a-z+]+://)?(?:[^@/]+@)?(?<host>[^/:.]+)(?:\.[^/:]+)?(?::\d+)?[:/](?<repo>[^/]+/[^/]+?)(?:\.git)?/?$'
 }
 
+# A snapshot older than this is refreshed even when the kind directories look unchanged (remotes change inside them).
 const TTL: duration = 24hr
+# A `hydrating` mark younger than this means another shell's job is already refreshing the snapshot.
+const HYDRATING: duration = 2min
+# The description of the hydration job (`job list`).
+const JOB: string = 'proj: scanning the workspace'
 
 # ——— aliases ——————————————————————————————————————————————————————————————————
 
@@ -42,12 +54,12 @@ alias kind-to-table-name = do {|k: string| return $"proj_kind_($k | str trim)" }
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
-# Automatically perform a scan when the module is used.
-# Without `$env.WORK` there is no workspace to scan, so the scan is skipped: importing the module never fails,
-# and the commands that need the workspace raise an error naming the variable instead.
+# An interactive shell with a workspace refreshes a missing or stale snapshot in the background. Nothing else happens
+# at import: a job would die with a non-interactive shell, whose readers scan on demand instead, and without
+# `$env.WORK` there is nothing to scan (the commands that need the workspace raise an error naming the variable).
 export-env {
   use std/dirs
-  if (has-workspace) { scan | ignore }
+  if (has-workspace) and $nu.is-interactive { hydrate }
 }
 
 # ——— type-aliases —————————————————————————————————————————————————————————————
@@ -55,7 +67,9 @@ export-env {
 type ScanMetadata = record<found: int, added: int, start: datetime, end: datetime, elapsed: string>
 type ProjectInfo = record<name: string, path: string, repo: oneof<nothing, string>, vcs: oneof<nothing, string>, host: oneof<nothing, string>>
 type KindSummary = record<name: string, root: directory, description: string, projects: list<ProjectInfo>>
-
+# The registry: `kinds` maps each kind to its projects; `stamp.fingerprint` maps each kind to its directory's
+# modification time (ns), null when the directory does not exist.
+type Snapshot = record<stamp: record<at: datetime, fingerprint: record>, last_scan: ScanMetadata, kinds: record>
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
@@ -85,11 +99,12 @@ export module test {
   }
 }
 
-# Scan for repositories for each kind and initialize their data tables.
+# Scan the workspace for projects and rewrite the registry snapshot.
 # ---
-# Returns the scan metadata `{found added start end elapsed}` for the scanned kinds (the cached record of the
-# last scan when it is younger than 24 hours and neither `--force` nor `--reset` is given); `--prune` prints the
-# number of removed projects and returns nothing. Scanning needs `$env.WORK` (the workspace root).
+# Returns the scan metadata `{found added start end elapsed}` for the scanned kinds (the record of the last scan
+# when it is younger than 24 hours and neither `--force` nor `--reset` is given). Registered projects are kept
+# unless their directory is gone; new directories are inspected and added. `--prune` only drops the missing ones,
+# prints how many and returns nothing. Scanning needs `$env.WORK` (the workspace root).
 # Notes:
 # - Projects can be saved under custom names with `$env.project_aliases!`
 #   - Entries map a dirname or absolute path (key) to the preferred name (value)
@@ -101,17 +116,16 @@ export def scan [
   --kinds (-k): list<string>@_kinds = [src dev txt ext]
   # Only operate on a subset of kinds
   --force (-f)
-  # Bypass the TTL and search only for new projects
+  # Bypass the TTL
   --prune (-p)
   # Only remove missing directories from the registry (no additions)
   --reset (-r)
-  # Clear the existing data of the scanned kinds (all metadata when every kind is scanned) prior to scanning
+  # Discard the registered projects of the scanned kinds first (all metadata when every kind is scanned)
 ]: nothing -> oneof<ScanMetadata, nothing> {
-  drop-meta flat_list # drop cached list whenever scan runs in case of changes
-  if $prune { prune-missing-dirs | return }
-  if not ($reset or $force) {
-    get-meta last_scan
-    | if $in != null and (date now) - $in.start < $TTL { return $in }
+  if $prune { print $"removed (prune-missing-dirs) projects"; return }
+  let current: oneof<nothing, record> = snapshot
+  if not ($reset or $force) and $current != null and (date now) - $current.last_scan.start < $TTL {
+    return $current.last_scan
   }
   let unknown: list<string> = $kinds | where {|k| $KIND not-has $k }
   if $unknown != [] {
@@ -119,21 +133,36 @@ export def scan [
   }
   let work: path = workspace
   let scanned: list<string> = $KIND | columns | where $it in $kinds
-  if $reset { reset-meta ...$scanned }
+  if $reset and ($KIND | columns | all {|k| $k in $kinds }) { reset-table proj }
   let start: datetime = date now
-  # Sequential: concurrent `kv` writers contend for SQLite's lock (and can leave placeholder rows behind).
-  $scanned | each {|k|
-    let table: string = kind-to-table-name $k
+  # The registered projects that stay: every kind's rows whose directory still exists; none for a kind being reset.
+  let kept: record = $KIND | columns | each {|k|
+    let rows: list<record> = if $reset and $k in $scanned { [] } else { $current | rows-of-snapshot $k }
+    {$k: ($rows | where ($it.path | path exists))}
+  } | into record
+  let results: list<record> = $scanned | each {|k|
     let exclude: list<string> = $env.project_exclude!?
       | default {}
       | get --ignore-case --optional $k
       | default []
       | append '**/.*'
-    if $reset { reset-table $table }
     # Collect only the immediate children, excluding tooling files
     glob --no-file --no-symlink ($work | path join $k *) --exclude=$exclude
-    | intake-kind --reset=$reset $k $table
-  } | record-scan-metadata $start
+    | intake-kind $k --known ($kept | get $k)
+  }
+  let kinds: record = $kept | merge ($results | each {|r| {($r.kind): $r.rows} } | into record) | apply-aliases
+  let end: datetime = date now
+  let last_scan: record = {
+    found: ($results | each {|r| $r.found } | append 0 | math sum)
+    added: ($results | each {|r| $r.added } | append 0 | math sum)
+    start: $start
+    end: $end
+    elapsed: ($end - $start | format duration ms) # format for readability
+  }
+  {stamp: (stamp $work) last_scan: $last_scan kinds: $kinds pruned_at: $current.pruned_at?}
+  | record where value != null
+  | write-snapshot
+  $last_scan
 }
 
 # Show descriptions and registrations for one or more `kind`s of projects.
@@ -151,25 +180,32 @@ export def kind [
       name: $kind
       root: (workspace | path join $kind)
       description: ($KIND | get $kind)
-      projects: (list-kind --insert=true $kind)
+      projects: (rows-of $kind | each {|p| $p | insert kind $kind })
     }
     nothing if not $all => { error raise 'a kind must be provided without `--all`' --kind invalid_argument }
     nothing => (
       $KIND | transpose name description
       | insert $.root {|row| workspace | path join $row.name }
-      | insert $.projects {|row| list-kind --insert=false $row.name }
+      | insert $.projects {|row| rows-of $row.name }
     )
   }
 }
 
 # Display metadata related to projects and module commands.
-export def meta [key?: string@_meta_keys]: nothing -> oneof<string, int, datetime, record, table> {
-  if $key != null { return (get-meta $key) }
-  list-meta | if $in == [] {
-    return {}
-  } else {
-    transpose --ignore-titles --header-row --as-record
-  }
+#
+# The counts per kind and in total, the last scan, the snapshot's `stamp` (with its `age`), whether a background
+# scan is running (`hydrating`) and, after a prune, `pruned_at`; `{}` when there is no snapshot.
+export def meta [key?: string@_meta_keys]: nothing -> oneof<nothing, string, int, bool, datetime, duration, record, table> {
+  let snap: oneof<nothing, record> = snapshot-for-reading
+  if $snap == null { return (if $key == null { {} } else { null }) }
+  let counts: record = $KIND | columns | each {|k| {$"($k)_count": ($snap | rows-of-snapshot $k | length)} } | into record
+  let all: record = $counts
+    | insert total_count ($counts | values | math sum)
+    | insert last_scan $snap.last_scan
+    | insert stamp ($snap.stamp | insert age ((date now) - $snap.stamp.at))
+    | insert hydrating (is-hydrating)
+    | merge ($snap | select --optional pruned_at | record where value != null)
+  if $key == null { $all } else { $all | get --optional $key }
 }
 
 # Every project directory configured under the workspace.
@@ -179,13 +215,11 @@ export def list [
   --long (-l)
   # Include `$.kind` in the output record
 ]: nothing -> list<ProjectInfo> {
-  get-meta flat_list | default {||
-    set-meta --return=value flat_list (
-      $KIND | columns | each {|k| list-kind --insert=true $k } | flatten
-    )
-  } | if $env.project_testing!? != null {
-    append (list-kind --insert=true $env.project_testing.kind)
-  } else { }
+  let snap: oneof<nothing, record> = snapshot-for-reading
+  $KIND | columns
+  | each {|k| $snap | rows-of-snapshot $k | each {|p| $p | insert kind $k } }
+  | flatten
+  | if $env.project_testing!? != null { append (fixture-rows) } else { }
   | if $kind == null { } else { where kind == $kind }
   | if $long { } else { reject $.kind }
 }
@@ -202,7 +236,7 @@ export def --env main [
   --kind (-k): string@_kinds
   # Scope the query to a specific kind of project
   --scan (-s)
-  # Scan for new projects first (`scan --force`: the import-time scan already honours the TTL)
+  # Scan for new projects first (`scan --force`: the import-time refresh already honours the TTL)
   --boot (-b)
   # Enter a `zellij` session for the project (creating if not existing)
   --exec (-x): closure
@@ -243,11 +277,11 @@ export def --env main [
 }
 
 # ——— helpers ———————————————————————————————————————————————————————————————————
+
 def create-session-in-project []: record -> nothing {
   cd $in.path
   ^zellij attach --create-background $in.name options --default-cwd $in.path
 }
-
 
 def is-existing-session []: ProjectInfo -> bool {
   let proj: record;
@@ -255,24 +289,85 @@ def is-existing-session []: ProjectInfo -> bool {
   $sessions has $proj.name or $sessions has ($proj.path | path basename)
 }
 
-# Rename registered projects whose directory has an alias in `$env.project_aliases!` (see `scan`).
-# Aliases match by absolute path first, then by directory name, exactly as on intake.
-def deduplicate []: nothing -> nothing {
+# ——— snapshot ——————————————————————————————————————————————————————————————————
+
+# The stored snapshot, or null.
+def snapshot []: nothing -> oneof<nothing, record> { get-meta snapshot }
+
+# The snapshot a reader uses. A missing one is built synchronously in a non-interactive shell with a workspace
+# (there is no job to wait for); an interactive shell leaves it to the import-time job and sees nothing yet.
+def snapshot-for-reading []: nothing -> oneof<nothing, record> {
+  snapshot | default {
+    if (has-workspace) and not $nu.is-interactive { scan --force | ignore; snapshot } else { null }
+  }
+}
+
+def write-snapshot []: record -> nothing {
+  let snap: record = $in
+  set-meta snapshot $snap | ignore
+}
+
+# A snapshot's rows of one kind (none for a null snapshot or an unknown kind).
+def rows-of-snapshot [kind: string]: oneof<nothing, record> -> list<record> {
+  if $in == null { [] } else { $in.kinds | get --optional $kind | default [] }
+}
+
+# The registered projects of a kind, from the snapshot a reader uses.
+def rows-of [kind: string]: nothing -> list<record> { snapshot-for-reading | rows-of-snapshot $kind }
+
+# The projects registered by the `test` fixture, with its kind.
+def fixture-rows []: nothing -> list<record> {
+  let kind: string = $env.project_testing.kind
+  kv list --universal --table=$env.project_testing.table | get $.value? | compact | each {|p| $p | insert kind $kind }
+}
+
+# The stamp of a snapshot taken now: when, and the fingerprint of the kind directories.
+def stamp [work: path]: nothing -> record { {at: (date now) fingerprint: (fingerprint $work)} }
+
+# The modification time (ns) of each kind directory: it changes when a project directory is added or removed.
+def fingerprint [work: path]: nothing -> record {
+  $KIND | columns | each {|k|
+    let dir: path = $work | path join $k
+    {$k: (if ($dir | path exists) { ls --directory $dir | get $.0.modified | into int } else { null })}
+  } | into record
+}
+
+# Whether a snapshot is older than the TTL or was taken from a different workspace layout.
+def is-stale [snap: record]: nothing -> bool { # nu-lint-ignore: unused_helper_functions
+  (date now) - $snap.stamp.at > $TTL or $snap.stamp.fingerprint != (fingerprint $env.work!)
+}
+
+# Whether a hydration job is running in this shell.
+def is-hydrating []: nothing -> bool { job list | any {|j| $j.description? == $JOB } }
+
+# Refresh a missing or stale snapshot in a background job, unless another shell is already at it. The job is
+# disposable (`--auto-kill`: the snapshot write is atomic, so a killed job leaves the previous snapshot in place) and
+# logs a failure once instead of raising into the prompt.
+def hydrate []: nothing -> nothing { # nu-lint-ignore: unused_helper_functions
+  let snap: oneof<nothing, record> = snapshot
+  if $snap != null and not (is-stale $snap) { return }
+  let mark: oneof<nothing, datetime> = get-meta hydrating
+  if $mark != null and (date now) - $mark < $HYDRATING { return }
+  set-meta hydrating (date now) | ignore
+  job spawn --auto-kill --description $JOB {||
+    try { scan --force | ignore } catch {|e| log warning $"proj: the background scan failed: ($e.msg)" }
+    drop-meta hydrating | ignore
+  } | ignore
+}
+
+# Rename the projects whose directory has an alias in `$env.project_aliases!` (by absolute path first, then by
+# directory name, as on intake); a project already registered under the alias name wins.
+def apply-aliases []: record -> record {
+  let kinds: record = $in
   let map: record = $env.project_aliases!? | default {}
-  if $map == {} { return }
-  for kind in ($KIND | columns) {
-    let t: string = kind-to-table-name $kind
-    let q: list<record> = kv list --universal --table=$t
-      | get $.value?
-      | compact
-      | each {|it| {name: $it.name alias: ($map | alias-for $it.path)} }
-      | where alias != null and name != alias
-    for row in $q {
-      kv drop --universal --table=$t $row.name
-      | if (kv get --universal --table=$t $row.alias) == null {
-        update $.name $row.alias | kv set --universal --table=$t $row.alias
-      }
-    }
+  if $map == {} { return $kinds }
+  $kinds | record each {|kind rows|
+    let named: list<record> = $rows | each {|r| $r | insert alias ($map | alias-for $r.path | default $r.name) }
+    let kept: list<record> = $named | where $it.alias == $it.name | each {|r| $r | reject alias }
+    let moved: list<record> = $named
+      | where $it.alias != $it.name and $it.alias not-in ($kept | each {|r| $r.name })
+      | each {|r| $r | update name $r.alias | reject alias }
+    {$kind: ($kept | append $moved)}
   }
 }
 
@@ -281,21 +376,21 @@ def alias-for [root: path]: record -> oneof<nothing, string> {
   get --ignore-case --optional $root ($root | path basename) | compact | first
 }
 
-# Register the kind's directories that are not registered yet (all of them with `--reset`).
-# Only the repository inspection (`git`) runs in parallel; the `kv` reads and writes do not.
-def intake-kind [kind: string table: string --reset]: list<path> -> record<found: int, added: int> {
+# The kind's projects after registering the directories not registered yet (`known` rows are kept).
+# Only the repository inspection (`git`) runs in parallel: each new root costs two child processes.
+def intake-kind [
+  kind: string # The kind being scanned
+  --known: list<record> = [] # Its registered projects, kept as they are
+]: list<path> -> record<kind: string, rows: list<record>, found: int, added: int> {
   let roots: list<path> = $in
   let map: record = $env.project_aliases!? | default {}
-  let known: list<string> = if $reset { [] } else { kv list --universal --table=$table | get $.key? | default [] }
-  let rows: list<record> = $roots
+  let names: list<string> = $known | each {|r| $r.name }
+  let new: list<record> = $roots
     | each {|root| {root: $root name: ($map | alias-for $root | default ($root | path basename))} }
     # Skip projects already registered to avoid duplicate entries
-    | where name not-in $known
-    | par-each {|it| inspect $it.root $it.name }
-  # Register the repositories in the kind-scoped `kv` store.
-  for row in $rows { kv set --universal --table=$table $row.name $row | ignore }
-  {found: ($roots | length) added: ($rows | length)}
-  | set-meta --return=input $'($kind)_count' $in.found
+    | where name not-in $names
+    | par-each --keep-order {|it| inspect $it.root $it.name }
+  {kind: $kind rows: ($known | append $new) found: ($roots | length) added: ($new | length)}
 }
 
 # The registry record of a project directory: git remote information when it is a repository.
@@ -322,62 +417,22 @@ def inspect [root: path name: string]: nothing -> record {
   | {name: $name path: $root ...$in}
 }
 
-# Apply aliases, then store the totals of the scanned kinds as `last_scan`; `total_count` covers every kind.
-def record-scan-metadata [
-  start: datetime
-]: list<record<found: int, added: int>> -> record {
-  # `math sum` rejects an empty list: scanning no kinds (`--kinds []`) totals zero.
-  let rows: list<record> = $in | default [{found: 0 added: 0}] --empty
-  let totals: record = {found: ($rows.found | math sum) added: ($rows.added | math sum)}
-  deduplicate
-  let end: datetime = date now
-  let counts: list<string> = $KIND | columns | each { $'($in)_count' }
-  list-meta | where key in $counts | get $.value | default [0] --empty | math sum | set-meta total_count
-  set-meta --return=value last_scan {
-    ...$totals
-    start: $start
-    end: $end
-    elapsed: ($end - $start | format duration ms) # format for readability
-  }
-}
-
-def prune-missing-dirs []: nothing -> nothing {
-  let total: int = get-meta total_count
+# Drop the registered projects whose directory is gone and restamp the snapshot; returns how many were dropped.
+def prune-missing-dirs []: nothing -> int {
+  let snap: record = snapshot
     | default { error raise 'no metadata found' --kind not_found --advice 'run a scan first' }
-  $KIND | columns | each {|k|
-    let table: string = kind-to-table-name $k
-    # Rows without a value are placeholders that concurrent `kv` writers can leave behind, not projects.
-    let queue: list<record> = kv list --universal --table=$table | where value != null
-    let missing: list<string> = $queue | where not ($it.value.path | path exists) | get $.key
-    for key in $missing { kv drop --universal --table=$table $key | ignore }
-    set-meta --return=value $"($k)_count" (($queue | length) - ($missing | length))
-  } | math sum
-  | set-meta --return=input total_count
-  | print $"removed ($total - $in) projects"
-  date now | set-meta pruned_at
+  let kinds: record = $snap.kinds | record each {|k rows| {$k: ($rows | where ($it.path | path exists))} }
+  let removed: int = ($snap.kinds | count) - ($kinds | count)
+  $snap | update kinds $kinds | update stamp (stamp (workspace)) | upsert pruned_at (date now) | write-snapshot
+  $removed
 }
 
-def list-kind [kind: string --insert = true]: nothing -> list<ProjectInfo> {
-  let table: string = kind-to-table-name $kind
-  kv list --universal --table=$table
-  | get $.value?
-  | compact
-  | if $insert { insert $.kind $kind } else { }
-}
+# The number of projects in a kinds record.
+def count []: record -> int { values | each { length } | append 0 | math sum }
 
 def reset-table [table: string]: nothing -> nothing {
   for key in (kv list --universal --table=$table).key {
     kv drop --universal --table=$table $key
-  }
-}
-
-# Clear the metadata of the given kinds (counts and labels); all metadata when every kind is given.
-def reset-meta [...kinds: string]: nothing -> nothing {
-  if ($KIND | columns | all {|k| $k in $kinds }) { reset-table proj; return }
-  for key in (list-meta | get $.key) {
-    if ($kinds | any {|k| $key == $'($k)_count' or ($key | str starts-with $'($k)(char psep)') }) {
-      drop-meta $key | ignore
-    }
   }
 }
 
@@ -411,4 +466,6 @@ def _names []: nothing -> record {
     completions: (list | select $.name $.path | rename --column={name: value path: description})
   }
 }
-def _meta_keys []: nothing -> list { list-meta | get $.key }
+def _meta_keys []: nothing -> list {
+  [src_count txt_count dev_count ext_count total_count last_scan stamp hydrating pruned_at]
+}
