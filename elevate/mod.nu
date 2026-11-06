@@ -32,7 +32,9 @@ export def --env --wrapped main [
 # Runs `sudo <shell> -c "<rest joined with spaces>"`, or `sudo <shell> <script> ...rest` with `--script`, and
 # returns its output. Any shell that accepts `-c` works. The pipeline input is forwarded to the shell's stdin
 # unless `--stdin=false`; a `nu` shell also gets `--stdin` so the command can read it as `$in`. The flags have
-# no short forms, so the command's own `-s`/`-i`/`-S` flags pass through.
+# no short forms, so the command's own `-s`/`-i`/`-S` flags pass through; the long names `--shell`, `--script`
+# and `--stdin` always belong to this command, wherever they appear on the line, so a command that needs one of
+# them must be wrapped in a quoted string (`--shell sh -c 'tool --stdin'`).
 @category system
 export def --env --wrapped sh [
   --shell: path = $nu.current-exe
@@ -59,7 +61,9 @@ export def --env --wrapped sh [
 # With arguments (or `--strict`) a non-zero exit raises the captured output; without them the merged stdout and
 # stderr is returned whatever the exit code. On an auth failure (output matching `--pattern`) in an interactive
 # session, `--login` runs once and the command is retried. The flags have no short forms, so the command's own
-# `-l`/`-s` flags pass through; put this command's flags before the command name.
+# `-l`/`-s` flags pass through; the long names `--login`, `--pattern` and `--strict` always belong to this
+# command, wherever they appear on the line, so a command that needs one of them must be wrapped
+# (`with-auth sh -c 'tool --strict'`).
 export def --wrapped with-auth [
   name: string
   # The name of the external command to run

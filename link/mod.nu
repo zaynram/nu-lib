@@ -7,7 +7,7 @@ use error
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
-# Link a binary to the user bin directory.
+# Link a binary into the bin directory (`/usr/bin` on Linux, `%USERPROFILE%\.local\bin` on Windows).
 #
 # The link is `/usr/bin/<name>` on Linux (created with `sudo ln -s`) and `%USERPROFILE%\.local\bin\<name>` on
 # Windows (created with `cmd /c mklink`). Its source is the first external `<name>` on PATH outside the link
