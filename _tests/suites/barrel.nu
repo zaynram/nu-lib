@@ -49,7 +49,9 @@ def "test barrel exposes the module namespaces" []: nothing -> nothing {
       'alarm' 'alarm set' 'alarm unset' 'alarm list' 'alarm show'
       'mods' 'mods define' 'mods edit' 'mods list' 'mods refresh'
       'elevate' 'elevate sh' 'elevate with-auth'
-      'win env' 'pwsh' 'into completions' 'into spans'
+      'win env' 'pwsh'
+      'structure' 'into completions' 'into spans' 'set-completer' 'run-completer'
+      'fish-complete' 'fish-complete parse-output' 'carapace-complete' 'carapace-complete runtime-env'
     ]
     let missing: list<string> = $expected | where $it not-in $names
     assert equal $missing [] 'every expected command is exposed'
@@ -116,9 +118,16 @@ def "test plain shells get the missing lib dirs only" []: nothing -> nothing {
 def "test plain shells skip the login loaders" []: nothing -> nothing {
   with-sandbox {|ctx|
     let before: record = plain $ctx '$env | select NU_PLUGIN_DIRS' --prelude ''
-    let r: record = plain $ctx '{plugins: $env.NU_PLUGIN_DIRS home: $env.mods_home? hooks: ($env.config.hooks.pre_execution? | default [] | length)}'
+    let code: string = '{
+      plugins: $env.NU_PLUGIN_DIRS
+      home: $env.mods_home?
+      hooks: ($env.config.hooks.pre_execution? | default [] | length)
+      carapace: ($env | columns | where $it starts-with CARAPACE)
+    }'
+    let r: record = plain $ctx $code
     assert equal $r.plugins $before.NU_PLUGIN_DIRS 'conf is not loaded outside login shells'
     assert equal [$r.home $r.hooks] [null 0] 'mods is not loaded outside interactive login shells'
+    assert equal $r.carapace [] 'nor are the completers'
   }
 }
 
@@ -137,6 +146,13 @@ def "test login shells load conf" []: nothing -> nothing {
     let r: record = login $ctx '{plugins: $env.NU_PLUGIN_DIRS vendor: (conf machine-config vendor --host other).plugins home: $env.mods_home?}' --not-interactive
     assert ($r.vendor | all {|d| $d in $r.plugins }) 'the vendor plugin dirs are loaded'
     assert equal $r.home null 'mods needs an interactive shell too'
+  }
+}
+
+def "test interactive login shells load the completers" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let vars: list<string> = login $ctx '$env | columns | where $it starts-with CARAPACE'
+    assert ($vars | is-not-empty) 'completion/local sets its CARAPACE_* variables'
   }
 }
 

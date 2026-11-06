@@ -36,19 +36,20 @@ module prelude {
   export use error
   export use elevate
 
-  # A `<module>/local` variant is used with `*` inside a module of the original name; its `main` is declared
-  # here because a re-exported `main` would take its module's name (`alarm local`).
+  # A `<module>/local` variant is re-exported inside a module of the original name. Its `main` is declared here,
+  # delegating, because a re-exported `main` takes its module's name (`alarm local`); for the same reason the
+  # subcommands of `alarm/local`, which has a `main`, are listed by name.
 
   export module alarm {
-    export use alarm/local *
-    use alarm
+    export use alarm/local [ set unset list show ]
 
-    # Set an alarm to print a message to the terminal.
+    # Show the alarms, or one alarm by name (delegates to `alarm/local`).
     @category productivity
     export def main [
-      name?: string # Name of the alarm to set or check
+      name?: string # Name of the alarm to check
     ]: nothing -> oneof<nothing, record, table> {
-      alarm $name
+      use alarm/local
+      local $name
     }
   }
 
@@ -86,6 +87,7 @@ export use prelude *
 # whose set-up the barrel needs (`source-env` evaluates a module's environment block without importing it):
 # - `conf` (login shells): the vendor scope's NU_LIB_DIRS, NU_PLUGIN_DIRS and PATH;
 # - `mods` (interactive login shells): `mods_home`/`mods_refs` and the `use`/`hide` tracking hook;
+# - `completion/local` (interactive login shells): the external completers' variables and PATH entry;
 # - `windows` (Linux, i.e. WSL): splits the Windows entries of PATH into WINPATH.
 # Every block is idempotent, so loading the barrel again changes nothing.
 export-env {
@@ -93,6 +95,9 @@ export-env {
   let missing: list<path> = $NU_LIB_DIRS | where $it not-in ($env.NU_LIB_DIRS? | default [])
   if $missing != [] { $env.NU_LIB_DIRS = ($env.NU_LIB_DIRS? | default []) ++ $missing }
   if $nu.is-login { source-env ($root | path join conf mod.nu) }
-  if $nu.is-interactive and $nu.is-login { source-env ($root | path join mods mod.nu) }
+  if $nu.is-interactive and $nu.is-login {
+    source-env ($root | path join mods mod.nu)
+    source-env ($root | path join completion local mod.nu)
+  }
   if $nu.os-info.name == linux { source-env ($root | path join windows mod.nu) }
 }
