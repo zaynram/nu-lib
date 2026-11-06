@@ -1,5 +1,6 @@
 # Extraction-layer coverage: target resolution, model shape, and failure
 # behavior, all against hermetic fixture modules.
+use docgen
 use docgen collect
 use ../mod.nu *
 
@@ -114,16 +115,59 @@ def "test collect-model-is-nuon-serializable" []: nothing -> nothing {
   assert equal ($model | to nuon | from nuon) $model
 }
 
+# The message of the error `action` raises.
+def error-of [action: closure]: nothing -> string {
+  try { do $action; '' } catch {|e| $e.msg }
+}
+
 def "test collect-raises-on-broken-module" []: nothing -> nothing {
-  assert error { collect ($FX | path join broken) }
+  let msg = error-of { collect ($FX | path join broken) }
+  let use = $"use ($FX | path join broken | to nuon)"
+  assert str contains $msg $"docgen: failed to collect after `($use)`" 'names the failing import'
+  assert str contains $msg 'nu::parser::unclosed_delimiter' "carries the child's stderr"
 }
 
 def "test collect-raises-on-missing-target" []: nothing -> nothing {
-  assert error { collect ($FX | path join nonexistent) }
+  let target = $FX | path join nonexistent
+  assert equal (error-of { collect $target }) $"docgen: target does not exist: ($target)" 'a missing path'
+  let use = $"use ('zz-no-such-module' | to nuon)"
+  assert str contains (error-of { collect zz-no-such-module }) $"docgen: failed to collect after `($use)`" 'an unknown name'
 }
 
 def "test collect-requires-a-target" []: nothing -> nothing {
-  assert error { collect }
+  assert equal (error-of { collect }) 'docgen collect: at least one module target is required' 'no targets'
+}
+
+def "test main-delegates-to-collect" []: nothing -> nothing {
+  let dir = $FX | path join sample
+  assert equal (docgen $dir) (collect $dir) 'same model'
+}
+
+def "test collect-treats-dot-targets-and-existing-names-as-paths" []: nothing -> nothing {
+  let by_dir = collect ($FX | path join sample)
+  cd ($FX | path join sample)
+  assert equal (collect .) $by_dir '`.` is the current directory'
+  with-sandbox {|ctx|
+    cp --recursive ($FX | path join sample) $ctx.code
+    mkdir ($ctx.code | path join sample inner)
+    cd ($ctx.code | path join sample inner)
+    let up = collect .. | first | get module
+    assert equal [$up.name $up.file] [sample ($ctx.code | path join sample mod.nu)] '`..` is the parent directory'
+  }
+  cd $FX
+  assert equal (collect sample) $by_dir 'a bare name that exists on disk is a path'
+}
+
+def "test collect-resolves-names-through-the-nupm-modules-directory" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let module = $ctx.code | path join modules zz-nupm-fixture
+    mkdir $module
+    "# Installed with nupm.\nexport def hello []: nothing -> string { 'hi' }\n" | save ($module | path join mod.nu)
+    $env.NUPM_HOME = $ctx.code
+    let model = collect zz-nupm-fixture | first
+    assert equal $model.module.file ($module | path join mod.nu) 'found under $NUPM_HOME/modules'
+    assert equal $model.commands.name ['zz-nupm-fixture hello'] 'its commands'
+  }
 }
 
 # The nested fixture's collected rows: the module plus its two submodules.
@@ -140,7 +184,8 @@ def "test collect-emits-submodules-as-qualified-rows" []: nothing -> nothing {
 
 def "test collect-names-nested-exports-as-imported" []: nothing -> nothing {
   # nested exports are callable only after `use nested sub`, and are named accordingly
-  assert equal (nested-model | get commands.name) [["nested single shout" "nested top"] [sub "sub inner"] ["leaf tip"]]
+  let names = nested-model | get commands | each { get name }
+  assert equal $names [["nested single shout" "nested top"] [sub "sub inner"] ["leaf tip"]] 'names per row'
 }
 
 def "test collect-lists-aliases-and-constants" []: nothing -> nothing {
@@ -169,4 +214,31 @@ def "test collect-folds-re-exported-modules-into-the-parent" []: nothing -> noth
   let rows = nested-model
   assert equal ($rows | where module.name =~ single | length) 0
   assert ("nested single shout" in ($rows | first | get commands.name))
+}
+
+# The shapes fixture's collected rows.
+def shapes-model []: nothing -> table {
+  collect ($FX | path join shapes)
+}
+
+def "test collect-keeps-every-signature-of-an-overloaded-command" []: nothing -> nothing {
+  let multi = shapes-model | first | get commands | where name == 'shapes multi' | first
+  assert equal $multi.io [{input: int output: string} {input: nothing output: string}] 'one io row per signature'
+  assert equal ($multi.params | get name) [loud] 'parameters come from one signature'
+}
+
+def "test collect-emits-submodules-without-commands-of-their-own" []: nothing -> nothing {
+  let rows = shapes-model
+  assert equal ($rows | get module.name) [shapes 'shapes consts' 'shapes holder' 'shapes holder inner' 'shapes odd name'] 'every submodule gets a row'
+  let consts = $rows | where module.name == 'shapes consts' | first
+  assert equal [$consts.commands $consts.constants] [[] [{name: C type: int}]] 'only constants'
+  let holder = $rows | where module.name == 'shapes holder' | first
+  assert equal [$holder.commands $holder.constants] [[] []] 'only a submodule'
+  let inner = $rows | where module.name == 'shapes holder inner' | first
+  assert equal ($inner.commands | get name) ['inner deep'] 'named as imported with `use holder inner`'
+}
+
+def "test collect-quotes-submodule-names-in-the-child-imports" []: nothing -> nothing {
+  let odd = shapes-model | where module.name == 'shapes odd name' | first
+  assert equal ($odd.commands | get name) ['odd name hi'] 'a name with a space'
 }
