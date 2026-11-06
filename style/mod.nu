@@ -17,6 +17,7 @@ const SHAPE_DEFAULTS: record = {
   shape_external_resolved: light_yellow_bold
   shape_externalarg: green_bold
 }
+const SHAPES: list<string> = [shape_external shape_external_resolved shape_externalarg]
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
@@ -82,7 +83,9 @@ export def --wrapped "ansi extern" [
     ' ' + ($rest | each { if $in =~ '\s' or $in == '' { to nuon } else { } } | str join ' ')
   }
   if not (colors) { return $"($name)($args)" }
-  let shapes: record = $SHAPE_DEFAULTS | merge ($env.config?.color_config? | default {} | select --optional ...($SHAPE_DEFAULTS | columns) | compact)
+  # `record where`, not `select`: `path` exports a `select`, and a module parsed before this one leaks its names into
+  # this parse (as the runner's `skip` does), so `use path` followed by `use style` would otherwise fail to parse.
+  let shapes: record = $SHAPE_DEFAULTS | merge ($env.config?.color_config? | default {} | record where key in $SHAPES and value != null)
   let end: string = if $args == '' { '' } else { $"(ansi $shapes.shape_externalarg)($args)(ansi reset)" }
   let color: any = if $resolved { $shapes.shape_external_resolved } else { $shapes.shape_external }
   $"(ansi $color)($pre)($name)(ansi reset)($end)"
