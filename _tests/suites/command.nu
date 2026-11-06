@@ -78,7 +78,7 @@ def "test post complete includes the inner error" []: nothing -> nothing {
 }
 
 def "test post complete accepts a caught error as inner" []: nothing -> nothing {
-  let inner = try { error make --unspanned {msg: 'root cause'} } catch {|e| $e }
+  let inner = try { error make --unspanned {msg: 'the root cause of the failure'} } catch {|e| $e }
   let e = caught { done '' x 1 | command post-complete --inner $inner }
   assert equal ($e.inner | length) 1 'one inner error'
 }
@@ -87,7 +87,7 @@ def "test post complete attaches a single label" []: nothing -> nothing {
   let span = (metadata 'here').span
   let e = caught { done '' x 1 | command post-complete --label {text: 'called here' span: $span} }
   assert equal ($e.labels | get text) ['called here'] 'a record is the error label'
-  assert equal ($e.labels.0.span) $span 'the label keeps its span'
+  assert equal ($e.labels.0?.span?) $span 'the label keeps its span'
 }
 
 def "test post complete attaches a table of labels" []: nothing -> nothing {
@@ -127,12 +127,14 @@ def "test post complete raises a failing closure instead of exiting" []: nothing
 def "test post complete accepts a closure that already completes" []: nothing -> nothing {
   need sh
   assert equal ({|| ^sh -c 'echo done' | complete } | command post-complete) "done\n" 'the returned record is used'
+  # nu-lint-ignore: check_complete_exit_code
   let e = caught { {|| ^sh -c 'exit 4' | complete } | command post-complete }
   assert equal $e.msg 'external command exited with code 4' 'a failing record raises'
 }
 
 def "test post complete accepts a multi line closure ending in complete" []: nothing -> nothing {
   need sh
+  # nu-lint-ignore: check_complete_exit_code
   let action = {||
     let script = 'echo multi'
     ^sh -c $script | complete
