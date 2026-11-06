@@ -9,6 +9,7 @@
 
 export use ../mod.nu [ define refresh list ]
 
+use error
 use path
 use completion "into completions"
 use conf [ machine-config ]
@@ -57,7 +58,9 @@ export def edit [
     | each {|tier| $defs | where $tier | get 0?.file }
     | compact
     | get 0?
-    | default { error make --unspanned $"no definition found for '($target)'" }
+    | default {
+      error raise $"no definition found for '($target)'" --kind not_found --advice 'definitions are the .nu files under the module and script directories of `conf machine-config user`'
+    }
   if $get { return ($found | path expand) }
   use edit
   $found | edit

@@ -155,9 +155,22 @@ def "test define writes the closure body as a module" []: nothing -> nothing {
 def "test define refuses to overwrite" []: nothing -> nothing {
   with-sandbox {|ctx|
     mods define sbmod {|| export def a [] { 1 } } --directory $ctx.code | ignore
-    assert error {|| mods define sbmod {|| export def b [] { 2 } } --directory $ctx.code } 'an existing module is kept'
+    let err: record = try { mods define sbmod {|| export def b [] { 2 } } --directory $ctx.code; {} } catch {|e| $e }
+    assert equal $err.details?.code? mods::define::conflict 'an existing module is kept'
+    assert ($err.details?.help? =~ '--overwrite') $'the advice names the flag: ($err.details?.help?)'
     mods define sbmod {|| export def b [] { 2 } } --directory $ctx.code --overwrite | ignore
     assert ((open --raw ($ctx.code | path join sbmod mod.nu)) =~ 'def b') '--overwrite replaces it'
+  }
+}
+
+def "test define raises when the definition cannot be saved" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    # a file where the module directory should be: `save` cannot write <file>/mod.nu
+    touch ($ctx.code | path join sbfile)
+    let err: record = try { mods define sbfile {|| } --directory $ctx.code; {} } catch {|e| $e }
+    assert equal $err.details?.code? mods::define::io 'the io code'
+    assert ($err.msg =~ 'could not save the module definition') $'the message: ($err.msg)'
+    assert ($err.details?.inner? | is-not-empty) 'the cause is the inner error'
   }
 }
 
@@ -173,7 +186,8 @@ def "test define without a directory or mods home raises" []: nothing -> nothing
   # Guard: with mods_home still set, define would write into it (the repository root in test children).
   if $env.mods_home != null { error make --unspanned {msg: 'could not unset mods_home'} }
   let err: record = try { mods define sbnone {|| }; {} } catch {|e| $e }
-  assert ($err.msg =~ 'mods_home') $'the error says how to fix it: ($err.msg?)'
+  assert equal $err.details?.code? mods::define::missing_dependency 'the missing configuration is the code'
+  assert ($err.details?.help? =~ 'mods_home') $'the advice says how to fix it: ($err.details?.help?)'
 }
 
 # ——— mods (main) ——————————————————————————————————————————————————————————————
@@ -201,7 +215,9 @@ def "test main defines a closure with a name" []: nothing -> nothing {
 }
 
 def "test main closure without a name raises" []: nothing -> nothing {
-  assert error {|| {|| } | mods } 'a name is required'
+  let err: record = try { {|| } | mods; {} } catch {|e| $e }
+  assert equal $err.details?.code? mods::invalid_argument 'a name is required (main has no command segment)'
+  assert ($err.msg =~ 'name is required') $'the message: ($err.msg)'
 }
 
 def "test main defines a details record" []: nothing -> nothing {
@@ -229,7 +245,9 @@ def "test main defines a mapping of modules" []: nothing -> nothing {
 }
 
 def "test main details record without a definition raises" []: nothing -> nothing {
-  assert error {|| {name: sbx definition: null directory: /tmp} | mods } 'a definition is required'
+  let err: record = try { {name: sbx definition: null directory: /tmp} | mods; {} } catch {|e| $e }
+  assert equal $err.details?.code? mods::invalid_argument 'a definition is required'
+  assert ($err.msg =~ 'definition is required') $'the message: ($err.msg)'
 }
 
 # ——— export-env ———————————————————————————————————————————————————————————————
@@ -308,6 +326,7 @@ def "test local edit falls back to a substring" []: nothing -> nothing {
 def "test local edit raises when nothing matches" []: nothing -> nothing {
   let r: record = with-sandbox {|ctx| sandboxed $ctx 'local edit sbmods_nothing_here --get' --prelude 'use mods/local' }
   assert ($r.exit_code != 0 and $r.stderr =~ 'no definition found') $'an unknown target raises: ($r.stderr)'
+  assert ($r.stderr =~ 'mods::local::edit::not_found') $'the code names the local module: ($r.stderr)'
 }
 
 def "test local edit opens the editor" []: nothing -> nothing {

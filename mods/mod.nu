@@ -9,6 +9,7 @@
 use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
 
 use docgen
+use error
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -145,14 +146,19 @@ export def --env define [
 ]: nothing -> path {
   let base: path = $directory
     | default $env.mods_home!?
-    | default { error make --unspanned 'no directory: pass --directory or set $env.mods_home' }
+    | default {
+      error raise 'no directory to save the module under' --kind missing_dependency --advice 'pass --directory or set $env.mods_home'
+    }
   let directory: directory = $base | path expand --no-symlink | append $name | path join
   if not ($directory | path exists) { mkdir $directory }
   let path: path = $directory | path join mod.nu
-  if not $overwrite and ($path | path exists) { error make --unspanned $"module '($name)' is already defined" }
-  $block | preserve-serialized-closure | try {
-    save --force --progress $path
-  } catch { error make --unspanned 'unable to save module definition' }
+  if not $overwrite and ($path | path exists) {
+    error raise $"module '($name)' is already defined at '($path)'" --kind conflict --advice 'pass --overwrite to replace it'
+  }
+  let source: list<string> = $block | preserve-serialized-closure
+  try { $source | save --force --progress $path } catch {|e|
+    $e | error raise $"could not save the module definition to '($path)'" --kind io
+  }
   return $path
 }
 
@@ -276,7 +282,7 @@ export def --env main [
   let input: any = $in
   list --update --short | ignore
   match ($input | describe | str replace --regex '<.*' '') {
-    closure if $name == null => (error make --unspanned 'name is required when defining a new module')
+    closure if $name == null => (error raise 'name is required when defining a new module' --kind invalid_argument)
     closure => (define $name $input)
     nothing if not $all and $name == null => (list-used | rename --column={key: name value: module_id})
     nothing => (list --short --overlays=$all $name)
@@ -290,11 +296,11 @@ export def --env main [
       let m: record = $input
         | default $name name
         | default false overwrite
-        | default { error make --unspanned 'module definition is required' } definition
-        | default { error make --unspanned 'name is required when defining a new module' } name
+        | default { error raise 'module definition is required' --kind invalid_argument } definition
+        | default { error raise 'name is required when defining a new module' --kind invalid_argument } name
       define $m.name $m.definition --directory=$m.directory? --overwrite=$m.overwrite
     }
-    $t => (error make --unspanned $"unsupported input: ($t)")
+    $t => (error raise $"unsupported input type '($t)'" --kind invalid_argument --advice 'pipe a closure, a details record or a record of name/closure pairs')
   }
 }
 
