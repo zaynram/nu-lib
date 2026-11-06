@@ -13,7 +13,7 @@ def format-remote-options []: record<user: string, ipv4: string, auth: path> -> 
   ]
 }
 
-# ——— aliases ——————————————————————————————————————————————————————————————————
+# ——— definitions ——————————————————————————————————————————————————————————————
 
 # Check whether a path is a mount point (`mountpoint -q`, or `findmnt` when `mountpoint` is not installed).
 export def is-mounted []: path -> bool {
@@ -75,10 +75,14 @@ export def main [
   ls --directory $mount | into record
 }
 
-# Mount the owner's Termux phone at `/mnt/termux/`.
-export alias termux = main /mnt/termux/ --remote={
-  user: u0_a530
-  ipv4: 100.97.157.38
-  auth: ~/.ssh/id_ed25519
-  port: 8022
+# Mount a Termux phone (by default at `/mnt/termux/`) from the remote described by `$env.TERMUX_REMOTE`.
+#
+# The remote record `{user ipv4 auth port}` is machine configuration and lives in the environment (set it in your
+# config or machine override), not in the library.
+export def termux [
+  mount: path = /mnt/termux/ # Where to mount the phone
+]: nothing -> oneof<nothing, record> {
+  let remote: record = $env.TERMUX_REMOTE?
+    | default { error raise 'TERMUX_REMOTE is not set' --kind missing_dependency --advice 'set $env.TERMUX_REMOTE to {user: <user>, ipv4: <address>, auth: <identity file>, port: <ssh port>}' }
+  main $mount --remote $remote
 }
