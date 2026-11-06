@@ -23,7 +23,8 @@ version checks. Check `nu --version` before assuming a language behavior; verify
   blocks with guarded `source-env (… <module> mod.nu)` calls. `source-env` of a file also executes its top-level
   `use` statements (running those modules' env blocks), so a file meant for `source-env` must import nothing.
 - Every module parses with only the repository on the include path; nothing outside it is imported at parse time.
-  Machine-specific values come from configuration (see `_docs/module-partition.md`), not from code.
+  Machine-specific values come from the per-machine override file (`machine.nuon`/`machine.nu` in Nushell's config
+  directory, see `_docs/machine-config.md`), never from code: the library holds no host names or machine paths.
 - Mixed modules are split: `<module>/local/mod.nu` re-exports the abstract part and adds the configuration-dependent
   commands (`alarm`, `completion`, `mods`). `completion/external` is a deprecated shim for `completion/local`. The
   root barrel exposes them as bare names and nothing exposes `local …`-prefixed forms; `init-local` writes the

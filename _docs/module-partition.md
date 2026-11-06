@@ -16,7 +16,8 @@ that shell out. The tables below record the classification at command granularit
 
 1. **Portability.** Abstract modules are the reusable core: anyone can `use` them. Config-dependent modules are
    the owner's environment glue. An abstract module must never import a config-dependent one; doing so silently
-   reclassifies it (e.g. a pure helper that imports `conf` drags in `conf/machine.nu`'s host branches).
+   reclassifies it (e.g. a pure helper that imports `conf` drags in its environment block, which reads the machine
+   override file).
 2. **Testing.** Abstract modules get full, unconditional test coverage. Config-dependent modules are tested in
    two tiers: the logic that can be isolated (argument construction, parsing, state handling) runs everywhere by
    sandboxing state and stubbing externals with scripts on `PATH`; anything that needs the real dependency is
@@ -29,7 +30,7 @@ that shell out. The tables below record the classification at command granularit
 | Kind | Examples in this library |
 |---|---|
 | External program | `timew`, `td` (Todoist CLI), `git`, `fish`, `carapace`, `zellij`, `sudo`, `sshfs`, `systemctl`, `oh-my-posh`, package managers |
-| OS / host | WSL interop (`/mnt/c`, `powershell.exe`), hostname-specific branches, Linux `reset`/`umount` |
+| OS / host | WSL interop (`/mnt/c`, `powershell.exe`), the machine override file (`_docs/machine-config.md`), Linux `reset`/`umount` |
 | Environment variable | `WORK`, `NUPM_HOME`, `mods_home`, `EDITOR`, `ZELLIJ`, `TIMEWARRIORDB`, `IPEX_LLM_OLLAMA_HOME` |
 | Nushell config | `$env.config.hooks`, `$env.config.color_config`, `buffer_editor` |
 | Persistent state | `std-rfc/kv` tables (universal SQLite under `$nu.data-dir`), msgpack caches, files under `WORK` |
@@ -60,7 +61,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 
 | Module | Depends on |
 |---|---|
-| `conf` | `conf/machine.nu` host branches (hostname; `~/.profile` via `env from-bash`, which runs `bash`; `WORK`), editor (`edit`), `oh-my-posh` (`prompt`). Its `export-env` adds missing directories to `NU_LIB_DIRS`/`NU_PLUGIN_DIRS`/`PATH`. Not split: the whole module is machine configuration. |
+| `conf` | The machine override file (`machine.nuon`/`machine.nu` in Nushell's config directory or `NU_MACHINE_CONFIG`; `_docs/machine-config.md`): a script runs in a child `nu`. The library is host-neutral — `conf/machine.nu` holds only defaults derived from `$nu`, and the owner's former host branch is the example script `_docs/examples/machine.nu` (`~/.profile` via `env from-bash`, `WORK`, `NUPM_HOME`). Also the editor (`edit`) and `oh-my-posh` (`prompt`). Its `export-env` adds missing directories to `NU_LIB_DIRS`/`NU_PLUGIN_DIRS`/`PATH`. Not split: the whole module is machine configuration. |
 | `mods/local` | `edit` and its completions resolve through `conf machine-config`. |
 | `pman` | Package managers, cargo; `bump-nu` downloads the latest Nushell nightly (network: GitHub's API and release assets), extracts it with `tar`, writes the nu binary and edits the plugin registry. Destructive. |
 | `link` | `sudo`, `ln`, `unlink`; Windows `cmd /c mklink`. Privileged. |
@@ -112,8 +113,9 @@ vendor it under the module that uses it, import it relatively, and record its pr
 
 ## Rules of thumb for new code
 
-- Vendor outside code the library runs (modules, scripts) and import it relatively; only configuration stays
-  host-specific.
+- Vendor outside code the library runs (modules, scripts) and import it relatively. Host-specific values (paths,
+  directory layouts) go in the machine override file (`_docs/machine-config.md`), never in a module: the library
+  holds no host names.
 
 - Put pure logic in an abstract module (or a private helper) and keep the external call at the edge, so the logic
   can be tested without the dependency.
