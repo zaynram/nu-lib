@@ -21,6 +21,10 @@ Measured 2026-11-06 on Nushell 0.116.2-nightly.32 with `std/bench` (`-n 10`, mea
 | | `each {…} \| flatten` | 2.3 | 0.03 |
 | | `reduce --fold [] {\|p acc\| $acc \| append $p}` | 1037.0 | 75.7 |
 
+`items` feeding `into record` costs the same whichever shape it returns: `[$k $v]` pairs 26.4 ± 0.6 ms,
+single-key records `{$k: $v}` 26.6 ± 0.2 ms (5,000 entries); the closure calls dominate. Both resolve duplicate
+keys to the later value; a pair list errors on any element that is not exactly two items.
+
 Accumulating with `mut` instead of `reduce` (20,000 items, `timeit`, single run): `mut xs ++= [...]` in a `for`
 loop took 1,375 ms against 8,607 ms for `reduce` + `append` and 20 ms for `each`. Mutation softens the quadratic
 cost but does not remove it; collecting with `each`/`items` does.
