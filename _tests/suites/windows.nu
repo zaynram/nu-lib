@@ -169,8 +169,9 @@ def "test run executes the resolved program" []: nothing -> nothing {
 
 def "test run of a missing command is an error" []: nothing -> nothing {
   with-win {|t|
-    let err = try { win run nope; null } catch {|e| $e.msg }
-    assert equal $err "command not found: 'nope'" 'error message'
+    let err = try { win run nope; null } catch {|e| $e }
+    assert equal $err.msg "command not found: 'nope'" 'error message'
+    assert equal $err.details?.code? windows::win-run::not_found 'the code'
   }
 }
 
@@ -219,8 +220,9 @@ def "test env rejects an unknown path mode even when cached" []: nothing -> noth
     with-env {WINPATH: [/mnt/c/W]} {
       assert error { win env --path bogus } 'before caching'
       win env | ignore
-      let err = try { win env --path bogus; null } catch {|e| $e.msg }
-      assert equal $err "invalid value for `--path`: 'bogus'" 'after caching'
+      let err = try { win env --path bogus; null } catch {|e| $e }
+      assert equal $err.msg "invalid value for `--path`: 'bogus'" 'after caching'
+      assert equal $err.details?.code? windows::win-env::invalid_argument 'the code'
     }
   }
 }
@@ -287,8 +289,10 @@ def "test home cd changes into USERPROFILE" []: nothing -> nothing {
   with-win {|t|
     win home --cd
     assert equal $env.PWD $t.home 'cd'
-    let err = try { win home --cd --join [missing]; null } catch {|e| $e.msg }
-    assert str contains $err 'resolved path is not a valid directory' 'missing directory'
+    let err = try { win home --cd --join [missing]; null } catch {|e| $e }
+    assert str contains $err.msg 'resolved path is not a valid directory' 'missing directory'
+    assert equal $err.details?.code? windows::win-home::not_found 'the code'
+    assert ($err.details?.inner? | is-not-empty) 'the cd error is the inner error'
   }
 }
 
@@ -314,7 +318,8 @@ def "test path cd changes into the resolved directory" []: nothing -> nothing {
   with-win {|t|
     win path --user --cd
     assert equal $env.PWD $t.home 'cd'
-    assert error { win path --user --cd --join [missing] } 'missing directory'
+    let err = try { win path --user --cd --join [missing]; null } catch {|e| $e }
+    assert equal $err.details?.code? windows::win-path::not_found 'missing directory'
   }
 }
 

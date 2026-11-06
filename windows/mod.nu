@@ -2,6 +2,12 @@
 
 # nu-lint-ignore-file: missing_output_type
 
+# ——— imports ——————————————————————————————————————————————————————————————————
+
+use error
+
+# ——— constants ————————————————————————————————————————————————————————————————
+
 const _save: path = $nu.data-dir | path join windows_env.msgpack
 # Where Windows executables are expected when neither PATH nor WINPATH has them.
 const SYSTEM32: path = '/mnt/c/Windows/System32'
@@ -74,10 +80,11 @@ export def --wrapped "win run" [
   ...rest: string
   # Arguments to pass through to the application if it resolves
 ]: nothing -> any {
+  # The last arm receives the match input (the resolved value), which `error raise` does not take: hence `null |`.
   win which $name | match ($in | describe) {
     string => { run-external $in ...$rest }
-    nothing => { error make --unspanned $"command not found: '($name)'" }
-    $t => { error make --unspanned $"unexpected return type: `win which` -> '($t)'" }
+    nothing => { error raise $"command not found: '($name)'" --kind not_found }
+    $t => { null | error raise $"unexpected return type of `win which`: '($t)'" --kind internal }
   }
 }
 
@@ -123,7 +130,9 @@ export def --env "win env" [
   # Force invalidate any cached environment data
 ]: oneof<nothing, record> -> oneof<nothing, record, any> {
   let input: record = default {}
-  if $path not-in [merge overwrite] { error make --unspanned $"invalid value for `--path`: '($path)'" }
+  if $path not-in [merge overwrite] {
+    error raise $"invalid value for `--path`: '($path)'" --kind invalid_argument --advice 'merge or overwrite'
+  }
   # the cache holds the raw Windows variables; `--path` is applied afterwards
   let windows: record = if $reset { null } else { try { open $_save | from msgpack } }
     | default --empty {
@@ -165,7 +174,7 @@ export def --env "win home" [
   } else if $edit {
     run-external $env.EDITOR? $p
   } else if $cd {
-    try { cd $p } catch { error make --unspanned $"resolved path is not a valid directory: '($p)'" }
+    try { cd $p } catch {|e| $e | error raise $"resolved path is not a valid directory: '($p)'" --kind not_found }
   }
 }
 
@@ -191,6 +200,6 @@ export def --env "win path" [
   } else if $edit {
     run-external $env.EDITOR? $p
   } else if $cd {
-    try { cd $p } catch { error make --unspanned $"resolved path is not a valid directory: '($p)'" }
+    try { cd $p } catch {|e| $e | error raise $"resolved path is not a valid directory: '($p)'" --kind not_found }
   }
 }
