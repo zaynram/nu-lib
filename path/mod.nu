@@ -2,6 +2,7 @@
 
 use error
 use std/util "path add"
+use style
 export use std-rfc/path [ with-extension with-parent with-stem ]
 
 # Prepend (or append) directories to `$env.PATH`.
@@ -82,7 +83,7 @@ export def select [
   let items: any = $in
   if ($items | is-not-empty) {
     let prompt: string = $"open file with ($env.EDITOR? | default editor)"
-    let choice: any = $items | input list --fuzzy $"(ansi dark_gray)($prompt)(ansi rst)"
+    let choice: any = $items | input list --fuzzy ($prompt | style paint dark_gray)
     match ($choice | describe) { string => $choice _ => { $choice | get --optional $column } }
   } else if not $optional {
     # The message is the caller's `--message`, whose span lies at the call site, so the code cannot be derived here.
