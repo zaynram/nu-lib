@@ -67,7 +67,8 @@ def "test list ranges and tag filter" []: record -> nothing {
   assert equal (time list --from=($t.now - 4hr) --span=90min | length) 1 'from with span'
   assert equal (time list --to=($t.now - 2hr) --span=90min | length) 1 'to with span'
   assert equal (time list gamma | length) 1 'tag filter'
-  assert error { time list --to=$t.now } '--to alone is an error'
+  let err: record = try { time list --to=$t.now; {} } catch {|e| $e }
+  assert equal $err.details?.code? time::range::invalid_argument '--to alone is an error'
 }
 
 def "test tags and passthrough" []: record -> nothing {
@@ -146,8 +147,10 @@ def "test today and week" []: record -> nothing {
 def "test start without tags and in the future" []: record -> nothing {
   $env.TIMEWARRIORDB = $in.db
   assert equal (time start | get tags) [] 'an untagged interval'
-  let msg: string = try { time start --at=((date now) + 1hr) x; 'no error' } catch {|e| $e.msg }
-  assert equal $msg 'timew start: Time tracking cannot be set in the future.' 'timew stderr is the error'
+  let err: record = try { time start --at=((date now) + 1hr) x; {} } catch {|e| $e }
+  assert ($err.msg =~ '^timew start exited with code \d+$') $'the message names the subcommand: ($err.msg)'
+  assert equal $err.details?.help? 'Time tracking cannot be set in the future.' 'timew stderr is the advice'
+  assert equal $err.details?.code? time::tw::external_failure 'the external_failure code'
 }
 
 def "test stop returns the closed interval" []: record -> nothing {
@@ -170,8 +173,9 @@ def "test modify start and empty tags" []: record -> nothing {
 
 def "test modify an unknown id raises" []: record -> nothing {
   $env.TIMEWARRIORDB = $in.db
-  let msg: string = try { time modify 99 --annotate x; 'no error' } catch {|e| $e.msg }
-  assert equal $msg "timew annotate: ID '@99' does not correspond to any tracking." 'timew stderr'
+  let err: record = try { time modify 99 --annotate x; {} } catch {|e| $e }
+  assert ($err.msg =~ '^timew annotate exited with code \d+$') $'the message names the subcommand: ($err.msg)'
+  assert equal $err.details?.help? "ID '@99' does not correspond to any tracking." 'timew stderr is the advice'
 }
 
 def "test passthrough returns timew output" []: record -> nothing {

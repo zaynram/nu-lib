@@ -1,6 +1,7 @@
 # Time tracking with the Timewarrior CLI: typed intervals, completions and datetime conversion.
 
 use completion "into completions"
+use error
 
 # ——— constants ——————————————————————————————————————————————————————————————
 
@@ -98,10 +99,13 @@ export alias week = list :week
 
 # ——— helpers ————————————————————————————————————————————————————————————————
 
-# Run `timew` without prompts or feedback; a non-zero exit raises its stderr.
+# Run `timew` without prompts or feedback; a non-zero exit raises with its stderr as the advice.
 def tw [...args: string]: nothing -> string {
-  timew ...$args :yes :quiet | complete
-  | if $in.exit_code != 0 { error make --unspanned $"timew ($args.0): ($in.stderr | str trim)" } else { $in.stdout }
+  let res: record = timew ...$args :yes :quiet | complete
+  if $res.exit_code != 0 {
+    error raise $"timew ($args.0) exited with code ($res.exit_code)" --kind external_failure --advice ($res.stderr | str trim)
+  }
+  $res.stdout
 }
 
 # A tracked interval by id.
@@ -119,7 +123,7 @@ def range [bounds: record]: nothing -> list<string> {
     {from: $f} => [from ($f | iso) to (date now | iso)]
     {to: $t span: $s} => [from ($t - $s | iso) to ($t | iso)]
     {span: $s} => [from ((date now) - $s | iso) to (date now | iso)]
-    {to: _} => { error make --unspanned '`--to` needs `--from` or `--span`' }
+    {to: _} => { error raise '`--to` needs `--from` or `--span`' --kind invalid_argument }
     _ => []
   }
 }
