@@ -54,7 +54,7 @@ export def truncate [
     {|n: int| first $n }
   } else { error make --unspanned $'unknown value for `--from`: ($from)' }
   let glob: bool = $queue | any { describe | $in == string }
-  $queue | par-each --keep-order {|item|
+  $queue | each {|item|
     let base: path = if $glob { $item } else { $item.name }
       | if $root == null { $in } else { path relative-to ($root | path expand) }
     let list: list<string> = $base | path split

@@ -69,7 +69,9 @@ export def upgrade [
         let type: string = $args | describe
         [{output: $"invalid arguments: ($repr) \(($type))" success: false}]
       } else {
-        $args | par-each --keep-order {|rest|
+        # Sequential and in order: a binary's argument sets depend on each other (`apt-get update` before
+        # `upgrade`) and often share a lock.
+        $args | each {|rest|
           let name: string = $cmd | first
           let rest: list = ($cmd | skip) ++ $rest
           let out = ^$name ...$rest | complete | if $in.exit_code == 0 {

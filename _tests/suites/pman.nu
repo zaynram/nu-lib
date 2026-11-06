@@ -162,7 +162,7 @@ def "test upgrade runs every registry entry" []: nothing -> nothing {
     assert equal ($r.value | columns) $REGISTRY_BINS 'one result per binary'
     assert equal $r.value.rustup [{output: "rustup upgrade\n" success: true}] 'stdout of a successful call'
     assert equal ($r.value.pixi | get output) ["pixi self-update\n" "pixi global update\n"] 'argument sets run in order'
-    assert equal ($r.calls | where $it starts-with bun | sort) ['bun --global update' 'bun upgrade --canary'] 'every set runs'
+    assert equal ($r.calls | where $it starts-with bun) ['bun upgrade --canary' 'bun --global update'] 'every set runs, one after another, in order'
     assert not ($r.calls | any { $in starts-with 'sudo' }) 'no system packages without --system'
   }
 }
@@ -206,6 +206,7 @@ def "test upgrade system runs apt get through sudo" []: nothing -> nothing {
   with-sandbox {|ctx|
     let r: record = stubbed-upgrade $ctx 'pman upgrade --system'
     assert equal ($r.value.apt-get | get output) ["sudo apt-get update --yes\n" "sudo apt-get upgrade --yes\n"] 'update then upgrade'
+    assert equal ($r.calls | where $it starts-with 'sudo apt-get') ['sudo apt-get update --yes' 'sudo apt-get upgrade --yes'] "upgrade runs only after update (they share apt's lock)"
   }
 }
 

@@ -79,13 +79,13 @@ export def "into completions" [
     }
   return {
     options: ($OPTIONS | merge $options | compact)
-    # `--keep-order`: completers that pass `sort: false` (time, hook) rely on the input order surviving.
+    # Completers that pass `sort: false` (time, hook) rely on the input order surviving (`each` keeps it).
     completions: (
       $value | if $table {
         update value $format
       } else if $to_string == null and ($value | describe) == 'list<string>' {
         quote-strings $format
-      } else { par-each --keep-order $format }
+      } else { each $format }
     )
   }
 }
@@ -97,7 +97,7 @@ def quote-strings [format: closure]: list<string> -> list<string> {
   let value: list<string>;
   let quoted: list<string> = $value | parse --regex $UNSAFE_ELEMENT | get capture0
   if ($quoted | str join '') =~ '["\\\x00-\x1f\x7f]' {
-    $value | par-each --keep-order $format
+    $value | each $format
   } else { $value | str replace --regex $UNSAFE_ELEMENT '"$1"' }
 }
 
