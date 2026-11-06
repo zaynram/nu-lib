@@ -47,13 +47,15 @@ alias hook-getter = do --capture-errors {|target: cell-path|
 }
 
 alias hook-setter = do {|target: cell-path|
-  let type: string = $target | into string | split row . | skip | first
-  {|_: closure|
-    $env.config.hooks = $env.config.hooks | match $type {
-        display_output | command_not_found => { upsert $type { do $_ | first } }
-        _ => { upsert $target $_ }
-      }
-  }
+  {|_: closure| $env.config.hooks = $env.config.hooks | upsert $target $_ }
+}
+
+# The hook type (first member) of a hook reference, e.g. `env_change` for `$.env_change.PWD`.
+def hook-type []: cell-path -> string { into string | split row . | skip | first }
+
+# A text target such as `env_change.PWD` as a cell-path (one member per dot-separated part).
+def into-target []: oneof<string, cell-path> -> cell-path {
+  if ($in | describe) == string { split row . | into cell-path } else { }
 }
 
 def add-descriptions [
@@ -130,7 +132,7 @@ export def --env main [
   index?: int@_hook-indices
   # Retrieve the configured hook record at this index
 ]: nothing -> oneof<nothing, HookData, list<HookData>> {
-  hook-getter $target | invoke $index
+  hook-getter ($target | into-target) | invoke $index
 }
 
 # Check whether a hook is enabled or not (useful for `$.disabled` conditions).
@@ -147,15 +149,18 @@ export def is-enabled [
     not (show $ref disabled --strict=$strict --default=false)
   } else if $name != null {
     not (list $name --strict=$strict | get $.0?.disabled!? | default false)
+  } else {
+    error make --unspanned {msg: 'a ref or --name is required' help: "pass the hook's cell-path or its --name"}
   }
 }
 
 # Execute a closure in a temporary environment with a modified hook.
 # ---
-# If pipeline input is provided, it will be loaded into the closure environment.
+# If pipeline input is provided, it will be loaded into the closure environment. When the hook cannot be
+# resolved, the closure still runs (without any modification) unless `--strict` is given.
 export def with [
   modification: record
-  # The temporary `disabled` state of the hook
+  # Merged into the hook record for the duration of the closure, e.g. `{disabled: true}`
   closure: closure
   # The closure to execute with or without the hook enabled
   --root(-r): directory
@@ -171,8 +176,11 @@ export def with [
   if $name == null and $hook == null { error make --unspanned 'either a name or reference is required' }
   let ref: oneof<nothing, cell-path> = $hook
     | default (if $name != null { list $name --strict=$strict | get $.0?.ref })
-  if $ref == null { return null }
-  edit $ref --update=$modification
+  if $ref != null and ($env.config.hooks | get --optional --ignore-case $ref) != null {
+    edit $ref --update=$modification | ignore
+  } else if $strict {
+    error make --unspanned $'invalid hook reference: ($ref)'
+  }
   if $root != null and ($root | path type) == dir { cd $root }
   with-env $vars $closure
 }
@@ -241,13 +249,14 @@ export def --env edit [
   # Value to replace the referenced hook with
   --update: record
   # An update record to merge into an existing hook record
-]: nothing -> oneof<HookData, error> {
+]: nothing -> HookType {
   if $overwrite == null and $update == null {
     error make --unspanned 'no overwrite value or update record was given'
-  } else if $overwrite == null and ($env.config.hooks | get --optional --ignore-case $ref) == null {
+  } else if ($env.config.hooks | get --optional --ignore-case $ref) == null {
     error make --unspanned $'invalid hook reference: ($ref)'
   } else {
-    let value = $overwrite | default { {|| merge $update } }
+    # `update` calls a closure argument, so the overwrite value is wrapped: a closure is stored, not its result.
+    let value: closure = if $overwrite != null { {|| $overwrite } } else { {|| merge $update } }
     $env.config.hooks = $env.config.hooks | update $ref $value
     $env.config.hooks | get --ignore-case $ref
   }
@@ -305,7 +314,8 @@ export def --env add [
   value?: oneof<string, closure, record>
   # The configuration to add to the hook type (appended to pipeline input if present)
   --index (-i): int@_hook-indices = -1
-  # Insert the pipeline input before this index (negative counts from the end; the default appends)
+  # Insert before this index (negative counts from the end; the default appends). `display_output` and
+  # `command_not_found` hold a single value: the (last) new value replaces it and the index does not apply.
   --dedupe (-d)
   # Check for the existence of the hooks and only add them if not found
 ]: oneof<nothing, list<HookType>> -> nothing {
@@ -317,6 +327,10 @@ export def --env add [
       [_ ..] => { }
       _ => { return null }
     } | compact
+  if ($target | hook-type) in [display_output command_not_found] {
+    $env.config.hooks = $env.config.hooks | upsert $target ($hooks | last)
+    return
+  }
   hook-setter $target | invoke {||
     let all: list = append []
     let idx: int = $index
