@@ -1,7 +1,8 @@
 # `session` with a stub `zellij`: `test _tests/suites/session.nu`.
 #
 # The stub logs every invocation and answers `list-sessions` from a canned file (an empty file plays "no sessions";
-# `--short` prints the names). No real Zellij client or session is touched.
+# `--short` prints the names); any invocation listed in the fail file exits 1. No real Zellij client or session is
+# touched.
 use session
 use ../mod.nu *
 
@@ -9,28 +10,32 @@ use ../mod.nu *
 
 const SESSIONS: string = "legal-marketplace [Created 1day 10h 41m 15s ago] \nsrs-drafting [Created 6h 19m 42s ago] (EXITED - attach to resurrect)\nnu-lib [Created 2m 2s ago] (current)\n"
 
-# Run `body` with a stub `zellij` first on PATH. The closure receives {log, sessions}: the invocation log and the
-# canned `list-sessions` output file (overwrite it to change the answer; empty it for "no sessions").
+# Run `body` with a stub `zellij` first on PATH. The closure receives {log, sessions, fail}: the invocation log, the
+# canned `list-sessions` output file (overwrite it to change the answer; empty it for "no sessions") and the fail
+# file (one argument string per line; a matching invocation fails with `sbzellij: <args> failed` on stderr).
 def with-stub [body: closure]: nothing -> nothing {
+  need-posix
   with-sandbox {|ctx|
     let stubs: path = $ctx.code | path join stubs
     let log: path = $ctx.code | path join calls.log
     let sessions: path = $ctx.code | path join sessions.txt
+    let fail: path = $ctx.code | path join fail.txt
     mkdir $stubs
     $SESSIONS | save --force $sessions
     [
       '#!/bin/sh'
       $"echo \"ZELLIJ:$*\" >> '($log)'"
+      $"if [ -f '($fail)' ] && grep -qxF -- \"$*\" '($fail)'; then echo \"sbzellij: $* failed\" >&2; exit 1; fi"
       'case "$*" in'
       $"  list-sessions*) if [ -s '($sessions)' ]; then case \"$*\" in *--short*) cut -d' ' -f1 '($sessions)';; *) cat '($sessions)';; esac; else echo 'No active zellij sessions found.' >&2; exit 1; fi;;"
-      '  "delete-session nope"|"delete-all-sessions --yes --fail") echo "No session named \"nope\" found." >&2; exit 1;;'
+      '  "delete-session --force nope") echo "No session named \"nope\" found." >&2; exit 1;;'
       '  *) exit 0;;'
       'esac'
     ] | str join (char newline) | save --force ($stubs | path join zellij)
     ^chmod +x ($stubs | path join zellij)
     with-env {PATH: ($env.PATH | prepend $stubs)} {
       assert equal (which zellij | get $.0.path) ($stubs | path join zellij) 'the stub shadows any real client'
-      do $body {log: $log sessions: $sessions}
+      do $body {log: $log sessions: $sessions fail: $fail}
     }
   } | ignore
 }
@@ -79,23 +84,54 @@ def "test list parses every humantime unit" []: nothing -> nothing {
   with-stub {|t|
     "old [Created 1year 2months 3days 4h 5m 6s 7ms ago] \n" | save --force $t.sessions
     let age = session list | get $.0.age
-    assert equal $age (31557600sec + 2 * 2629800sec + 3day + 4hr + 5min + 6sec + 7ms) 'years and months are averages'
+    assert equal $age (31557600sec + 2 * 2630016sec + 3day + 4hr + 5min + 6sec + 7ms) 'years and months are humantime averages (365.25 and 30.44 days)'
+  }
+}
+
+# ——— the client ———————————————————————————————————————————————————————————————————
+
+def "test every command raises missing_dependency without a client" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let empty: path = $ctx.code | path join empty
+    mkdir $empty
+    with-env {PATH: [$empty]} {
+      assert (which zellij | is-empty) 'no client on PATH'
+      let codes: list<string> = [
+        { session list }
+        { session down --all }
+        { session switch nu-lib }
+        { session manage --session nu-lib new-pane }
+        { session exec 'cargo build' }
+        { session enter nu-lib }
+        { session enter nu-lib --attach=false }
+      ] | each {|c| null | code-of $c } # `null |`: the closure's input must not reach `do`
+      assert equal ($codes | uniq) ['session::need-client::missing_dependency'] $'one error for all of them: ($codes)'
+    }
   }
 }
 
 # ——— down ———————————————————————————————————————————————————————————————————————
 
-def "test down kills then deletes one session" []: nothing -> nothing {
+def "test down kills and deletes one session in one call" []: nothing -> nothing {
   with-stub {|t|
     session down nu-lib
-    assert equal (calls $t.log) ['kill-session nu-lib' 'delete-session nu-lib'] 'kill, then delete'
+    assert equal (calls $t.log) ['delete-session --force nu-lib'] 'a forced delete, no separate kill to race'
   }
 }
 
 def "test down --all never prompts" []: nothing -> nothing {
   with-stub {|t|
     session down --all
-    assert equal (calls $t.log) ['kill-all-sessions --yes' 'delete-all-sessions --yes'] '--yes on both'
+    assert equal (calls $t.log) ['delete-all-sessions --yes --force'] '--yes and --force, in one call'
+  }
+}
+
+def "test down --all reports a failed delete" []: nothing -> nothing {
+  with-stub {|t|
+    'delete-all-sessions --yes --force' | save --force $t.fail
+    assert equal (code-of { session down --all }) 'session::down::external_failure' 'the code'
+    let err = try { session down --all } catch {|e| $e }
+    assert str contains ($err.details?.help? | default '') 'sbzellij: delete-all-sessions --yes --force failed' 'the client message is the advice'
   }
 }
 
@@ -135,6 +171,15 @@ def "test manage targets the session explicitly, from the shell, or fails" []: n
   }
 }
 
+def "test manage leaves the action -s to the action" []: nothing -> nothing {
+  with-stub {|t|
+    session manage --session nu-lib new-pane -s --floating
+    assert equal (calls $t.log | last) '--session=nu-lib action new-pane -s --floating' '-s is not a short --session'
+    with-env {ZELLIJ: '0'} { session manage new-pane -s --floating }
+    assert equal (calls $t.log | last) 'action new-pane -s --floating' 'nor is it swallowed inside a session'
+  }
+}
+
 def "test exec splits the command line and forwards run options" []: nothing -> nothing {
   with-stub {|t|
     session exec 'cargo build --release' --floating --name build
@@ -142,6 +187,15 @@ def "test exec splits the command line and forwards run options" []: nothing -> 
     [-la /tmp] | session exec 'ls ignored' --direction right
     assert equal (calls $t.log | last) 'run --direction right -- ls -la /tmp' 'a piped list replaces the split arguments'
     assert equal (code-of { session exec }) 'session::exec::invalid_argument' 'a command line is required'
+  }
+}
+
+def "test exec rejects a command line without a program" []: nothing -> nothing {
+  with-stub {|t|
+    assert equal (code-of { session exec '' }) 'session::exec::invalid_argument' 'an empty command line'
+    assert equal (code-of { session exec '   ' --floating }) 'session::exec::invalid_argument' 'a blank one'
+    assert equal (code-of { [-la] | session exec ' ' }) 'session::exec::invalid_argument' 'the piped list never names the program'
+    assert equal (calls $t.log) [] 'nothing was run'
   }
 }
 
@@ -164,6 +218,8 @@ def "test enter without attaching starts a session" []: nothing -> nothing {
     assert equal (calls $t.log | last) '--session nu-lib --new-session-with-layout dev' 'a fresh session with the layout'
     session enter --attach=false
     assert equal (calls $t.log | last) '' 'nothing to pass: a plain client start'
+    session enter nu-lib --attach=false --layout dev --debug
+    assert equal (calls $t.log | last) '--session nu-lib --new-session-with-layout dev --debug' 'the further arguments reach the client here too'
   }
 }
 
