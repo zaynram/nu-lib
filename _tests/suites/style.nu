@@ -38,11 +38,30 @@ def "test colors honours the colour variables only for auto" []: nothing -> noth
     # The child's stdout is a pipe, so `auto` is off already: NO_COLOR is only observable against CLICOLOR, which
     # opens the gate without a terminal.
     assert equal (do $auto {CLICOLOR: '1'}) true 'CLICOLOR=1 turns auto on without a terminal'
+    assert equal (do $auto {CLICOLOR: '0'}) false 'CLICOLOR=0 is off'
+    assert equal (do $auto {CLICOLOR: ''}) false 'an empty CLICOLOR is off'
+    assert equal (do $auto {CLICOLOR_FORCE: '1'}) false 'CLICOLOR_FORCE has no effect'
     assert equal (do $auto {CLICOLOR: '1' NO_COLOR: '1'}) false 'NO_COLOR turns auto off again'
     assert equal (do $auto {NO_COLOR: '1' FORCE_COLOR: '1'}) true 'FORCE_COLOR beats NO_COLOR'
+    assert equal (do $auto {FORCE_COLOR: '0'}) false 'FORCE_COLOR=0 forces nothing'
+    assert equal (do $auto {FORCE_COLOR: '0' NO_COLOR: '1' CLICOLOR: '1'}) false 'FORCE_COLOR=0 counts as unset: NO_COLOR still wins'
     let forced: bool = sandboxed $ctx '$env.config.use_ansi_coloring = true; style colors | to nuon' --prelude 'use style' --vars {NO_COLOR: '1'} --pipe
     assert equal $forced true 'an explicit true wins over NO_COLOR'
   }
+}
+
+def "test colors on a terminal is off for TERM=dumb" []: nothing -> nothing {
+  # util-linux `script` lends the child a pseudo-terminal (BSD `script` takes other flags; Windows has none).
+  if not ((do { ^script --version } | complete).stdout =~ 'util-linux') { skip 'needs util-linux script' }
+  let on_tty: closure = {|vars|
+    let cmd: string = $"'($nu.current-exe)' --no-config-file --include-path '($ROOT)' --commands 'use style; style colors | to nuon'"
+    let res: record = with-env $vars { '' | ^script -qec $cmd /dev/null | complete }
+    assert equal $res.exit_code 0 $res.stderr
+    $res.stdout | str trim | from nuon
+  }
+  assert equal (do $on_tty {TERM: xterm}) true 'with a terminal, auto is on'
+  assert equal (do $on_tty {TERM: dumb}) false 'TERM=dumb turns it off'
+  assert equal (do $on_tty {TERM: dumb CLICOLOR: '1'}) true 'CLICOLOR is consulted before the terminal'
 }
 
 # ——— paint ————————————————————————————————————————————————————————————————————
