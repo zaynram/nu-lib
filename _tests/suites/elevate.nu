@@ -59,8 +59,17 @@ def "test elevate execs the current nu through sudo" []: nothing -> nothing {
 
 def "test elevate passes the binary login and arguments" []: nothing -> nothing {
   with-sudo {|t|
-    let res = sandboxed $t.ctx "elevate /opt/nu --login=true -c 'print 1'" --prelude 'use elevate' --vars {PATH: $t.path}
+    let res = sandboxed $t.ctx "elevate --binary /opt/nu --login=true -c 'print 1'" --prelude 'use elevate' --vars {PATH: $t.path}
     assert equal ($res.stdout | args-of) [/opt/nu --login -c 'print 1'] 'binary, --login, then the arguments'
+    let short = sandboxed $t.ctx "elevate -c 'print 1' -b /opt/nu" --prelude 'use elevate' --vars {PATH: $t.path}
+    assert equal ($short.stdout | args-of) [/opt/nu -c 'print 1'] '-b is the short form, taken wherever it appears'
+  }
+}
+
+def "test elevate passes a leading path as an argument" []: nothing -> nothing {
+  with-sudo {|t|
+    let res = sandboxed $t.ctx 'elevate script.nu' --prelude 'use elevate' --vars {PATH: $t.path}
+    assert equal ($res.stdout | args-of) [$nu.current-exe script.nu] 'a positional is an argument for nu, not the binary'
   }
 }
 
@@ -75,8 +84,7 @@ def "test elevate follows the login state of the shell" []: nothing -> nothing {
   }
 }
 
-# ignore: pending decision E6 (a flag-like first argument is captured as `binary`; proposal: a `--binary` flag)
-def "test elevate takes a leading flag as the binary" []: nothing -> nothing {
+def "test elevate passes a leading flag to nu" []: nothing -> nothing {
   with-sudo {|t|
     let res = sandboxed $t.ctx "elevate -c 'print 1'" --prelude 'use elevate' --vars {PATH: $t.path}
     assert equal ($res.stdout | args-of) [$nu.current-exe -c 'print 1'] 'nu flags reach the elevated nu'

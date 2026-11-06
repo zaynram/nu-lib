@@ -12,12 +12,12 @@ const UNAUTHORIZED: string = '(?i)\b(401|403|unauthori[sz]ed|not (logged in|auth
 
 # Elevate the current shell process.
 #
-# Replaces the current process with `sudo <binary> [--login] ...rest`. Because the command is wrapped, a first
-# argument is always taken as `binary`: pass the binary explicitly before `nu` flags (`elevate $nu.current-exe
-# -c 'whoami'`).
+# Replaces the current process with `sudo <binary> [--login] ...rest`, where `binary` is `--binary` (default: the
+# running `nu`). Every other argument, flags included, is passed to that `nu` (`elevate -c 'whoami'`); only
+# `--binary`/`-b` and `--login`/`-l` are taken by this command, wherever they appear.
 @category system
 export def --env --wrapped main [
-  binary: path = $nu.current-exe
+  --binary (-b): path = $nu.current-exe
   # Path to a `nu` binary to use
   --login (-l) = $nu.is-login
   # Whether to elevate as a login shell (default: whether this shell is one); takes a value: `--login=false`
