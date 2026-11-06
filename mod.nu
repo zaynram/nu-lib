@@ -2,7 +2,9 @@
 #
 # Modules are exposed under their own names (`pman upgrade`, `conf vars`, `mods edit`, ...); `windows` and
 # `completion` are flattened (`win env`, `into completions`, ...). Modules that mix abstract and
-# configuration-dependent commands are exposed through their full `<module>/local` variant.
+# configuration-dependent commands are exposed through their full `<module>/local` variant. The `local` barrel
+# gathers every `<module>/local` variant under its module's name (`local alarm set`, `local completion
+# set-completer`, `local mods edit`): `use <library root> local`, or `local …` after `use <library root> *`.
 #
 # `export use` does not run a module's `export-env`, so the environment set-up the barrel needs is triggered by
 # the `export-env` at the end, which loads only those blocks (see there).
@@ -75,6 +77,21 @@ module prelude {
 
   export use windows *
   export use completion/local *
+}
+
+export module local {
+  # Every `<module>/local` variant, under its module's name: `local alarm …`, `local completion …`, `local mods …`.
+  #
+  # Each is re-exported with `export use`, which makes its commands this module's own (`alarm set`), since
+  # `use <root> local` reaches one level of commands only (an `export module` would be two). `alarm` and `mods`
+  # are the prelude's wrappers, which declare their `main`.
+
+  export use prelude [ alarm mods ]
+
+  module completion {
+    export use completion/local *
+  }
+  export use completion
 }
 
 # ——— activation ———————————————————————————————————————————————————————————————

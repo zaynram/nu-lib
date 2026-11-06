@@ -89,8 +89,37 @@ def "test flattened names do not shadow builtins" []: nothing -> nothing {
 
 def "test local variants have no stray main" []: nothing -> nothing {
   with-sandbox {|ctx|
-    let names: list<string> = plain $ctx "scope commands | where name =~ '^(alarm|mods) (local|mod|alarm|mods)$' | get name"
+    let names: list<string> = plain $ctx "scope commands | where name =~ '^(local )?(alarm|mods|completion) (local|mod|alarm|mods|completion)$' | get name"
     assert equal $names [] 'a re-exported main would show up as <module> local/mod'
+    let top: list<string> = plain $ctx "scope commands | where name =~ '^(local )?(local|mod)$' | get name"
+    assert equal $top [] 'nor as local, local local or local mod'
+  }
+}
+
+def "test local barrel has every local variant under its module name" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let names: list<string> = plain $ctx "scope commands | where name starts-with 'local' | get name" --prelude $'use ($ROOT) local'
+    let modules: list<string> = glob ($ROOT | path join * local mod.nu) | each { path dirname --num-levels 2 | path basename }
+    assert equal ($modules | sort) [alarm completion mods] 'the local variants today'
+    let absent: list<string> = $modules | where {|m| $names | all {|n| $n != $"local ($m)" and not ($n starts-with $"local ($m) ") } }
+    assert equal $absent [] 'one module per <module>/local/mod.nu'
+    let expected: list<string> = [
+      'local alarm' 'local alarm set' 'local alarm unset' 'local alarm list' 'local alarm show'
+      'local completion set-completer' 'local completion run-completer' 'local completion into completions'
+      'local completion fish-complete' 'local completion fish-complete parse-output' 'local completion carapace-complete'
+      'local mods' 'local mods define' 'local mods edit' 'local mods list' 'local mods refresh'
+    ]
+    assert equal ($expected | where $it not-in $names) [] 'their commands'
+    let star: list<string> = plain $ctx "scope commands | where name starts-with 'local' | get name"
+    assert equal ($star | sort) ($names | sort) 'use <root> * exposes the same local commands'
+  }
+}
+
+def "test local barrel mains delegate" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = plain $ctx '{mods: (local mods | columns) alarm: (local alarm | describe)}' --prelude $'use ($ROOT) local'
+    assert equal $r.mods [name module_id] 'local mods returns the tracked modules'
+    assert ($r.alarm =~ '^(list|table|nothing)') $'local alarm lists the alarms: ($r.alarm)'
   }
 }
 
