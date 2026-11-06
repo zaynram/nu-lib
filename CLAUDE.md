@@ -93,6 +93,10 @@ or a new external dependency.
   state (`std-rfc/kv`/SQLite, files, `$env`): parallel kv writes contend on SQLite's lock and race.
 - Batch persistent state: every `kv get`/`kv set --universal` opens SQLite (~0.5 ms). Data that is read or written as
   a whole (a registry, a cache) belongs in one value, not one key per row.
+- Slow import-time work (a workspace scan, a child process) is hydrated in the background: the module's `export-env`
+  starts a `job spawn --auto-kill` in interactive shells that ends in one atomic write of the whole snapshot, readers
+  never wait for it (defaults when it is missing, a stale snapshot served as is), and non-interactive shells compute
+  on demand because a job dies with its process. Parse cost cannot be deferred this way (`_docs/hydration.md`).
 - `describe` walks the whole value; type dispatch with `match ($in | describe)` is free on scalars and records but
   scales with list/table size — use `first | describe` when only the element shape matters.
 - Hook bodies (`pre_execution`, `pre_prompt`, `env_change`) run on every command or `cd`: read `$env`, not storage,

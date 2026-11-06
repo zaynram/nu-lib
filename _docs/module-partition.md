@@ -61,7 +61,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 
 | Module | Depends on |
 |---|---|
-| `conf` | The machine override file (`machine.nuon`/`machine.nu` in Nushell's config directory or `NU_MACHINE_CONFIG`; `_docs/machine-config.md`): a script runs in a child `nu`. The library is host-neutral — `conf/machine.nu` holds only defaults derived from `$nu`, and the owner's former host branch is the example script `_docs/examples/machine.nu` (`~/.profile` via `env from-bash`, `WORK`, `NUPM_HOME`). Also the editor (`edit`) and `oh-my-posh` (`prompt`). Its `export-env` adds missing directories to `NU_LIB_DIRS`/`NU_PLUGIN_DIRS`/`PATH`. Not split: the whole module is machine configuration. |
+| `conf` | The machine override file (`machine.nuon`/`machine.nu` in Nushell's config directory or `NU_MACHINE_CONFIG`; `_docs/machine-config.md`): a script runs in a child `nu`. The library is host-neutral — `conf/machine.nu` holds only defaults derived from `$nu`, and the owner's former host branch is the example script `_docs/examples/machine.nu` (`~/.profile` via `env from-bash`, `WORK`, `NUPM_HOME`). Also the editor (`edit`) and `oh-my-posh` (`prompt`). Its `export-env` adds missing directories to `NU_LIB_DIRS`/`NU_PLUGIN_DIRS`/`PATH`. The override file's checked record is cached in `$nu.cache-dir/nu-lib/` (`_docs/hydration.md`). Not split: the whole module is machine configuration. |
 | `mods/local` | `edit` and its completions resolve through `conf machine-config`. |
 | `pman` | Package managers, cargo; `bump-nu` downloads the latest Nushell nightly (network: GitHub's API and release assets), extracts it with `tar`, smoke-tests the new `nu` (it must report its version and load this library as a login shell, so `conf`'s loader runs) before writing the nu binary, keeps the replaced files as `.previous` for `--rollback`, and edits the plugin registry. Destructive. |
 | `link` | `sudo`, `ln`, `unlink`; Windows `cmd /c mklink`. Privileged. |
@@ -72,7 +72,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `windows` | WSL interop (`/mnt/c`, `powershell.exe`, `where.exe` — resolved on PATH/WINPATH, else System32 — and `wslpath`). |
 | `mount` | `sshfs`, `fusermount3`, `mount`/`umount` (bind mounts need root), `mountpoint` or `findmnt`. Privileged. Device records (a phone's user/address/key/port) stay in the user's config: `_docs/examples/mount-termux.nu`. |
 | `ipex-llm-ollama` | `systemctl` service, `bash`, vendor scripts (`start-ollama.sh`, `ls-sycl-device`), `IPEX_LLM_OLLAMA_HOME` (default `~/.local/share/ipex-llm-ollama`). |
-| `proj` | `$env.WORK` directory tree, `git`, kv registry; scans on import when `WORK` is set (`scan`/`kind` need it). `--boot` needs `zellij`. |
+| `proj` | `$env.WORK` directory tree, `git`, kv registry (one snapshot, `_docs/hydration.md`); an interactive shell refreshes a missing or stale snapshot in a background job at import, a non-interactive reader scans only when there is none (`scan`/`kind` need `WORK`). `--boot` needs `zellij`. |
 | `track` | `timew`, `git`, optional `td`; installs the `track::sync`/`track::focus` hooks on import (deduplicated); focus per shell in `$env.TRACK`, only `disabled` in universal kv. |
 | `alarm/local` | `tui` commands and an interactive terminal for the expiry dialog; prints the text without them. |
 | `time` | `timew` (hermetic with a temp `TIMEWARRIORDB`). |

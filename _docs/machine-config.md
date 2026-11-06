@@ -21,15 +21,16 @@ In order of precedence:
    `conf::machine::override-path::conflict`; keep one.
 
 A file named by `--file` or `NU_MACHINE_CONFIG` must exist (`conf::machine::override-path::not_found`) and must end in
-`.nuon` or `.nu` (`conf::machine::load::invalid_argument`). Nothing is cached: every `machine-config` call reads the
-file again.
-`conf machine-config --verbose` prints the lookup (`mode`, `host`, `os`, `strategy`) and `override = <path>` or
-`override = none`.
+`.nuon` or `.nu` (`conf::machine::load::invalid_argument`). The configured file's checked record is cached (see
+"Cache" below); a file named by `--file` is read on every call.
+`conf machine-config --verbose` prints the lookup (`mode`, `host`, `os`, `strategy`), `override = <path>` or
+`override = none`, and `cache = hit|miss|off|none`.
 
 ## Two forms
 
-**`machine.nuon` — static.** A record of literals, read with `open` (about 0.1 ms). Preferred unless a value has to
-be computed.
+**`machine.nuon` — static.** A record of literals, read with `open` (about 0.1 ms; a `machine-config` call that
+reads and validates one costs about 13 ms end to end, a cache hit about 5 ms). Preferred unless a value has to be
+computed.
 
 ```nuon
 {
@@ -56,7 +57,8 @@ def main []: nothing -> record {
 ```
 
 `machine-config` runs it in a child interpreter — `nu --no-config-file --include-path <library root> --commands
-"run <file> | to nuon"` (about 15 ms) — and parses the child's stdout. The script executes in-process in that child,
+"run <file> | to nuon"` (about 15 ms for the bare child; a call that runs and validates the example script costs
+about 50 ms end to end, which is why the result is cached) — and parses the child's stdout. The script executes in-process in that child,
 so `$nu`, `$env` and the library's modules (`use env from-bash`, `use conf`, …) are available; `$NU_LIB_DIRS | first`
 is the library root. Only the returned record crosses the boundary, as nuon, so:
 
@@ -72,6 +74,17 @@ is the library root. Only the returned record crosses the boundary, as nuon, so:
 
 To try a script by hand: `nu --no-config-file -I <library root> -c 'run ~/.config/nushell/machine.nu'`, or
 `conf machine-config --file <script> --verbose`.
+
+## Cache
+
+The checked record of the configured file (not of a `--file`) is kept in `$nu.cache-dir/nu-lib/machine-override.nuon`
+together with its key: the file's path, modification time and size, and the running `nu` version. A call whose key
+matches returns the cached record without running the script or validating anything (about 5 ms instead of 13 ms
+for a `.nuon`, 50 ms for the example `.nu`; `use conf` at login takes this path). Editing the file, or running
+another `nu`, misses the cache and rewrites it; `conf machine-config --no-cache` does so on demand (`cache = off`).
+The cache is written to a temporary name and renamed into place, so a reader never sees a partial file; a cache
+directory that cannot be written is not an error (the file is loaded again next time). `_docs/hydration.md` has the
+general pattern.
 
 ## Shape
 
