@@ -1,5 +1,9 @@
 # Open files in the configured editor, or in an editor pane when running inside Zellij.
 
+# ——— imports ——————————————————————————————————————————————————————————————————
+
+use error
+
 # ——— definitions ——————————————————————————————————————————————————————————————
 
 # Open a file in the default editor or the editor pane of an active Zellij session.
@@ -72,7 +76,7 @@ def with-zellij [...items: string]: nothing -> nothing {
   # focus an existing editor pane, so that it is the one replaced instead of the current one
   get-editor-pane-id ($editor | first | path basename) | each {|id| ^zellij action focus-pane-id $id }
   match ($items | length) {
-    0 => { error make --unspanned 'no paths were provided' }
+    0 => { error raise 'no paths were provided' --kind invalid_argument }
     1 => { ^zellij edit --in-place --cwd $env.PWD ($items | first) }
     _ => {
       # the same name prefix lets later calls find and replace this pane
