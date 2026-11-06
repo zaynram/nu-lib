@@ -7,6 +7,9 @@
 # - A description whose first word is `ignore` (`# ignore`, `# ignore: not ready`), or an `@ignore` attribute, reports
 #   the test as skipped without running it.
 # - `skip <reason>` inside a test aborts it and reports it as skipped (missing tool, wrong OS, no credentials, ...).
+# - A test's name is written into the child program as bare words, so it must parse as such: no quotes, brackets,
+#   braces, `|`, `;`, `#`, `^`, `%`, `>`, no word starting with `$`, and no bare `=` or `&&` word (an assignment or
+#   the shell operator to the parser). Other names are reported as `error` without stopping the suite.
 #
 # Hooks (optional; named `def "before all"` etc. or marked `@before-all` etc.)
 # - `before all`  runs once per child interpreter, before its tests; its output is the suite context.
@@ -56,10 +59,10 @@ const HOOKS: list<string> = [before-all before-each after-each after-all]
 const ISOLATION: list<string> = [test suite]
 # The ignore marker: a description whose first word is `ignore`, alone or followed by `:` ("Ignores whitespace" is not one).
 const IGNORE: string = r#'(?i)^\s*ignore(\s|:|$)'#
-# Test names the runner can call (it writes them into the child program as bare words): no quotes, brackets, braces,
-# pipes, semicolons, comments, carets, percent signs or `>` (a redirection), and no word starting with `$`.
+# Test names the runner can call (see the header): no quotes, brackets, braces, pipes, semicolons, comments, carets,
+# percent signs or `>` (a redirection), no word starting with `$`, and no bare `=` or `&&` word.
 const CALLABLE: string = r#'^[^'"`()\[\]{}|;#^%>\n]*$'#
-const UNCALLABLE_WORD: string = '(^| )\$'
+const UNCALLABLE_WORD: string = r#'(^| )(\$|(=|&&)( |$))'#
 # A `def` line in suite source: the command name, double/single/back-quoted or bare. Double- and single-quoted names
 # are captured with their quotes, escapes and adjacent segments (`"say \"hi\""`, `'it''s'`) included, so `from nuon`
 # can read them exactly as the parser does; back-quoted names have no escapes.
@@ -391,6 +394,16 @@ def normalize-layer [base: path source: string --internal]: record -> record {
       error make --unspanned {msg: $"invalid ($key) '($v)' in ($source)" help: 'expected an integer of at least 1'}
     }
   }
+  for key in [paths lib-dirs passthrough] {
+    let v: any = $layer | get --optional $key
+    if $v != null and not (($v | describe) starts-with list and ($v | all {|i| ($i | describe) == string })) {
+      error make --unspanned {msg: $"invalid ($key) '($v)' in ($source)" help: 'expected a list of strings such as [tests/suites]'}
+    }
+  }
+  let e: any = $layer | get --optional env
+  if $e != null and not (($e | describe) starts-with record) {
+    error make --unspanned {msg: $"invalid env '($e)' in ($source)" help: 'expected a record of variable names to values such as {LOG: run.log}'}
+  }
   let absolute: closure = {|p|
     let p: string = if ($p | str starts-with '~') { $p | path expand } else { $p }
     $base | path join $p | path expand
@@ -400,14 +413,19 @@ def normalize-layer [base: path source: string --internal]: record -> record {
   | if $in.lib-dirs? != null { update lib-dirs { each {|p| do $absolute $p } } } else { }
 }
 
-# The `$env.NU_TEST` layer: a record, or nuon text as received by a child interpreter.
+# The `$env.NU_TEST` layer: a record, or nuon text as received by a child interpreter. Empty text counts as unset
+# (`NU_TEST= …` on a command line).
 def env-layer []: nothing -> record {
-  let layer: record = match ($env.NU_TEST? | describe) {
+  let raw: any = $env.NU_TEST?
+  let value: any = match ($raw | describe) {
     nothing => ({})
-    string => ($env.NU_TEST | from nuon)
-    $t if $t starts-with record => $env.NU_TEST
-    $t => { error make --unspanned {msg: $"$env.NU_TEST must be a record, got ($t)"} }
+    string => (if ($raw | str trim) == '' { {} } else { $raw | from nuon })
+    _ => $raw
   }
+  if not (($value | describe) starts-with record) {
+    error make --unspanned {msg: $"$env.NU_TEST must be a record, got ($value | describe)"}
+  }
+  let layer: record = $value
   # A child receives the complete configuration the runner resolved (`resolved: true` plus every key). Only that record
   # may carry the internal keys; in a user's layer they are unknown keys like any other.
   let resolved: bool = ($layer.resolved? | describe) == bool and $layer.resolved? and ($DEFAULTS | columns | all {|k| $k in $layer })
@@ -538,9 +556,17 @@ def run-suite [suite: path cfg: record opts: record]: nothing -> list {
   # A test is called by writing its name into the child program, so the name must parse as bare words.
   let callable: closure = {|n| $n =~ $CALLABLE and $n !~ $UNCALLABLE_WORD }
   let uncallable: list = $runnable | where not (do $callable $it.name) | each {|t|
-    {name: $t.name status: error duration: 0sec error: "this name cannot be called: remove quotes, brackets, braces, | ; # ^ % > and words starting with $"}
+    {name: $t.name status: error duration: 0sec error: "this name cannot be called: remove quotes, brackets, braces, | ; # ^ % >, words starting with $, and bare = or && words"}
   }
   let names: list<string> = $runnable | where {|t| do $callable $t.name } | get name
+  # A hook name is written into every test's chain: one that cannot be called would break the whole child program.
+  let bad_hooks: list<string> = $hooks | values | flatten | where not (do $callable $it)
+  if ($bad_hooks | is-not-empty) {
+    let reason: string = $"the hook '($bad_hooks | first)' cannot be called: hooks follow the same naming rule as tests"
+    let blocked: list = $runnable | each {|t| {name: $t.name status: error duration: 0sec error: $reason} }
+    for row in [...$ignored ...$blocked] { render $row $opts }
+    return (do $annotate [...$blocked ...$ignored])
+  }
   let rows: list = match $cfg.isolation {
     suite => (run-child $suite $cfg $hooks $names $opts)
     test => {
@@ -563,14 +589,22 @@ def run-child [suite: path cfg: record hooks: record names: list<string> opts: r
   if ($names | is-empty) { return [] }
   let program: string = program $suite $hooks $names
   if $opts.debug { print --stderr $program }
+  let started: datetime = date now
   let res: record = spawn $cfg $program {} --sandbox=$cfg.sandbox
+  let elapsed: duration = (date now) - $started
   let rows: list = $res.stdout | tagged | where ($it | describe) starts-with record
   # A child that dies (parse error, `exit`, crash) emits no row for the remaining tests: report each as an error.
   let missing: list<string> = $names | where $it not-in ($rows | get name)
-  let crashed: list = $missing | each {|n|
-    let why: string = if $res.exit_code == 124 and $cfg.timeout > 0sec { $"timed out after ($cfg.timeout)" } else { $"exited with code ($res.exit_code) before reporting" }
-    {name: $n status: error duration: 0sec error: $"child interpreter ($why)\n($res.stderr | str trim)"}
+  let why: string = if $res.exit_code == 124 and $cfg.timeout > 0sec and $elapsed >= $cfg.timeout {
+    # Exit code 124 alone is not a timeout (a test may `exit 124`): the child must also have run for the bound.
+    $"child interpreter timed out after ($cfg.timeout)"
+  } else if ($rows | is-empty) and $res.stderr =~ 'nu::parser::' {
+    # The suite itself loaded during discovery, so a parser error before any row is in the generated program.
+    $"the child program did not parse: ($res.stderr | lines | compact --empty | first); a test or hook name the runner cannot call?"
+  } else {
+    $"child interpreter exited with code ($res.exit_code) before reporting"
   }
+  let crashed: list = $missing | each {|n| {name: $n status: error duration: 0sec error: $"($why)\n($res.stderr | str trim)"} }
   let all: list = [...$rows ...$crashed]
   # `(after all)` rows are rendered by the caller, once per suite.
   for row in ($all | where name != '(after all)') { render $row $opts }

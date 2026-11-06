@@ -153,16 +153,21 @@ def "test say \"hi\"" [] { error make {msg: ran} }
 def 'test it''s' [] { }
 def "test a\\b" [] { }
 def "test a --flag" [] { }
+def "test a && b" [] { }
+def "test a = b" [] { }
+def "test a =" [] { }
+def "test a=b" [] { }
 def "test fine one" [] { }`}
+    # A bare `=` or `&&` word is an assignment or the shell operator to the parser; glued to a word it is just text.
     let expected = {
-      'test a --flag': ok 'test fine one': ok 'test a\b': ok
+      'test a --flag': ok 'test fine one': ok 'test a\b': ok 'test a=b': ok
       "test it's broken": error 'test a|b': error 'test a {b}': error 'test a;b': error 'test a]b': error
-      'test say "hi"': error "test it''s": error
+      'test say "hi"': error "test it''s": error 'test a && b': error 'test a = b': error 'test a =': error
     }
     let rows = ok $dir 'test --isolation suite'
     assert equal ($rows | statuses) $expected
     assert equal (ok $dir 'test' | statuses) $expected 'the same under test isolation'
-    for name in ["test it's broken" 'test a]b' 'test say "hi"' "test it''s"] {
+    for name in ["test it's broken" 'test a]b' 'test say "hi"' "test it''s" 'test a && b' 'test a = b'] {
       assert str contains ($rows | row $name).error 'cannot be called' $name
     }
   }}
@@ -226,6 +231,14 @@ def "test quick" [] { }'}
     assert str contains (runner $dir 'test --isolation suite' --vars {NU_TEST: '{timeout: -1sec}'}).stderr "invalid timeout"
   }}
 
+  {name: 'config: a child that exits 124 on its own is not a timeout' run: {||
+    let dir = project {'nutest.nuon': '{timeout: 30sec}' 'tests/suites/x.nu': 'def "test x" [] { exit 124 }'}
+    let rows = ok $dir 'test'
+    assert equal ($rows | statuses) {'test x': error}
+    assert str contains ($rows | row 'test x').error 'exited with code 124'
+    assert not (($rows | row 'test x').error =~ 'timed out') 'the exit code alone does not make a timeout'
+  }}
+
   {name: 'config: a timeout without the timeout program warns instead of silently dropping the bound' run: {||
     let dir = project {'nutest.nuon': '{timeout: 1sec}' 'tests/suites/t.nu': 'def "test runs" [] { }'}
     # A PATH holding only `env` (the runner scrubs children with it; `nu` is started by its absolute path).
@@ -241,7 +254,8 @@ def "test quick" [] { }'}
     }
   }}
 
-  {name: 'env: --no-sandbox keeps custom XDG directories' run: {||
+  {name: 'env: the scrub allowlist forwards custom XDG directories (what --no-sandbox relies on)' run: {||
+    # `test exec` is never sandboxed, so what the child sees is what the KEEP allowlist let through.
     let dir = project {}
     let xdg = $dir | path join xdg
     mkdir ($xdg | path join nushell)
@@ -313,6 +327,22 @@ def "test c" [] { }'}
     assert str contains ($suite | row 'test b').error 'exited with code 3'
     let isolated = ok $dir 'test'
     assert equal ($isolated | statuses) {'test a': ok 'test b': error 'test c': ok}
+  }}
+
+  {name: 'hooks: a hook name the runner cannot call blocks the suite with a reason' run: {||
+    # A hook marked by attribute can carry a name the runner cannot write into the program: every test is reported
+    # as an error naming the hook, and nothing runs.
+    let dir = project {'tests/suites/u.nu': 'use std/testing *
+@before-each
+def "set && up" [] { }
+def "test a" [] { }
+def "test b" [] { }'}
+    let rows = ok $dir 'test --isolation suite'
+    assert equal ($rows | statuses) {'test a': error 'test b': error}
+    for name in ['test a' 'test b'] {
+      assert str contains ($rows | row $name).error "the hook 'set && up' cannot be called" $name
+    }
+    assert str contains (ok $dir 'test' | row 'test a').error 'cannot be called' 'the same under test isolation'
   }}
 
   {name: 'crash: a suite that fails to load is reported and the others still run' run: {||
@@ -415,6 +445,26 @@ def "test greet" [] { assert equal (greet hello) hi }'
     assert equal (ok $dir 'let c = test config; with-env {NU_TEST: ($c | to nuon)} { test config } | get resolved') true
   }}
 
+  {name: 'config: list and record keys are type-checked, an empty $env.NU_TEST counts as unset' run: {||
+    let dir = project {'tests/suites/p.nu': $PASSING}
+    for bad in [
+      [layer key];
+      ['{paths: tests/suites}' paths] ['{paths: [1 2]}' paths] ['{lib-dirs: lib}' lib-dirs]
+      ['{passthrough: X}' passthrough] ['{passthrough: [1]}' passthrough] ['{env: foo}' env] ['{env: [A]}' env]
+    ] {
+      let res = runner $dir 'test config' --vars {NU_TEST: $bad.layer}
+      assert not equal $res.exit_code 0 $bad.layer
+      assert str contains $res.stderr $"invalid ($bad.key)" $bad.layer
+      assert str contains $res.stderr 'in $env.NU_TEST' $bad.layer
+    }
+    '{env: foo}' | save --force ($dir | path join nutest.nuon)
+    assert str contains (runner $dir 'test config').stderr 'invalid env' 'the project file is checked the same way'
+    rm ($dir | path join nutest.nuon)
+    # `NU_TEST= …` on a command line is no configuration, and nuon text must still read as a record.
+    assert equal (ok $dir 'test' --vars {NU_TEST: ''} | statuses) {'test passes': ok}
+    assert str contains (runner $dir 'test config' --vars {NU_TEST: '5'}).stderr '$env.NU_TEST must be a record, got int'
+  }}
+
   {name: 'env: children start scrubbed; passthrough and env opt variables in' run: {||
     let dir = project {
       'nutest.nuon': '{passthrough: [KEEP_ME], env: {SET_ME: set}}'
@@ -501,7 +551,8 @@ def "test reading stdin gets nothing" [] { assert equal (try { input --numchar 1
     if (which script timeout | length) < 2 { error make --unspanned {msg: 'SKIP: needs `script` and `timeout`'} }
     # Run the runner on a pseudo-terminal: a child that could reach the terminal would block in `input`.
     let cmd = $"timeout 15 '($nu.current-exe)' --no-config-file --include-path='($ROOT)' --commands 'use test; test | get status | to nuon'"
-    let res = do { cd $dir; ^script -qec $cmd /dev/null | complete }
+    # As `runner` does, drop a host `NU_TEST` (its `paths` would point the run elsewhere).
+    let res = do { cd $dir; with-env {NU_TEST: null} { ^script -qec $cmd /dev/null | complete } }
     assert equal $res.exit_code 0 $'the run finishes instead of timing out: ($res.stdout)'
     assert str contains $res.stdout '[ok]' 'the test ran and passed'
   }}

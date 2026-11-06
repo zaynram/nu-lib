@@ -24,8 +24,9 @@ def "test needs fish" []: nothing -> nothing {
   (`use std/testing *` makes the attributes parse). Imported commands never count, even when named `test …`.
 - Tests run in the order they are defined.
 - The runner calls each test by writing its name into the child program, so a name must parse as bare words:
-  no quotes, brackets, braces, `|`, `;`, `#`, `^`, `%`, `>`, and no word starting with `$`. Other names are reported
-  as `error` ("this name cannot be called") without stopping the rest of the suite.
+  no quotes, brackets, braces, `|`, `;`, `#`, `^`, `%`, `>`, no word starting with `$`, and no bare `=` or `&&`
+  word (an assignment or the shell operator to the parser; `a=b` and `a&&b` are plain words). Other names are
+  reported as `error` ("this name cannot be called") without stopping the rest of the suite.
 - A description whose first word is `ignore` (`# ignore`, `# ignore: not ready`), or an `@ignore` attribute, reports
   a test as `skip` with reason `ignored` without running it. A description that merely starts with those letters
   (`# Ignores leading whitespace`) is not a marker.
@@ -35,7 +36,10 @@ def "test needs fish" []: nothing -> nothing {
   parsed after it): use `drop nth 0` (or `slice 1..`) to drop list items in suites, and do not apply nu-lint's
   `slice_to_skip` suggestion there, since `skip 1` would then be the runner's `skip` with reason `1`.
 - Statuses: `ok`, `fail` (the test raised), `skip`, and `error` (infrastructure: a hook failed, the suite did not
-  load, or the child interpreter died before reporting).
+  load, or the child interpreter died before reporting). Hook names follow the same naming rule as test names; a
+  hook the runner cannot call blocks its suite (every test reports `error` naming the hook). A child that still
+  dies with a parser error before any test reports is said to have a program that "did not parse" (a safety net:
+  the suite loaded during discovery, so something the runner wrote into the program is the cause).
 
 ### Hooks
 
@@ -111,7 +115,8 @@ dies before reporting (it is then attached to the `error` rows). Put diagnostics
 Settings come from four layers, lowest precedence first:
 
 1. built-in defaults (`test config --defaults`);
-2. `$env.NU_TEST`, a record (or its nuon text) that acts as the global default/override, e.g. set in `config.nu`;
+2. `$env.NU_TEST`, a record (or its nuon text; empty text counts as unset) that acts as the global
+   default/override, e.g. set in `config.nu`;
 3. the nearest `nutest.nuon` at or above the suite file (above `$env.PWD` when deciding which `paths` to search);
 4. command flags.
 
@@ -126,12 +131,13 @@ Settings come from four layers, lowest precedence first:
 | `passthrough` | `[]` | Extra variable names kept when scrubbing |
 | `env` | `{}` | Variables set in every child |
 | `sandbox` | `false` | Give every runner child (discovery and tests) a throwaway HOME/XDG tree |
-| `timeout` | `0sec` | Kill a child that runs longer (reported as `error`, "timed out"); needs the `timeout` program, without which the run warns once on stderr and the bound is not enforced |
+| `timeout` | `0sec` | Kill a child that runs longer (reported as `error`, "timed out", only when the child ran for the bound: a test that itself exits with status 124 is reported by that code); needs the `timeout` program, without which the run warns once on stderr and the bound is not enforced |
 
 Scalars take the highest layer that sets them; `lib-dirs` and `passthrough` accumulate (most specific first) and
 `env` records merge. Relative paths resolve from the file that names them (`nutest.nuon`) or from `$env.PWD`
 (`$env.NU_TEST`, flags). The directory containing the `test` module is always appended to `lib-dirs`, so suites
-and seams can `use test`. Unknown keys and invalid values are errors that name their source; that includes
+and seams can `use test`. Unknown keys and invalid values (a `paths` that is not a list of strings, an `env` that
+is not a record, a negative `timeout`, …) are errors that name their source; that includes
 `resolved` and `project`, the keys the runner adds to the configuration it hands children, which only a complete
 resolved record in `$env.NU_TEST` (what `test config` returns) may carry.
 
