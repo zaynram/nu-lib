@@ -21,8 +21,8 @@ version checks. Check `nu --version` before assuming a language behavior; verify
 - `export use <module>` (as in the root barrel) does **not** run the re-exported module's `export-env` block; only a
   direct `use` does. Environment set-up must therefore be triggered explicitly: the barrel runs only the env blocks
   with `export-env { source-env (path self . | path join <module> mod.nu) }` under guards.
-- Every module parses with only the repository on the include path: outside machinery is vendored (`bash-env/`)
-  and imported relatively. See `_docs/module-partition.md` for provenance.
+- Every module parses with only the repository on the include path; nothing outside it is imported at parse time.
+  Machine-specific values come from configuration (see `_docs/module-partition.md`), not from code.
 - Mixed modules are split: `<module>/local/mod.nu` re-exports the abstract part and adds the configuration-dependent
   commands (`alarm`, `completion`, `mods`). `completion/external` is a deprecated shim for `completion/local`.
 

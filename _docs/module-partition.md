@@ -31,7 +31,6 @@ that shell out. The tables below record the classification at command granularit
 | External program | `timew`, `td` (Todoist CLI), `git`, `fish`, `carapace`, `zellij`, `sudo`, `sshfs`, `systemctl`, `oh-my-posh`, package managers |
 | OS / host | WSL interop (`/mnt/c`, `powershell.exe`), hostname-specific branches, Linux `reset`/`umount` |
 | Environment variable | `WORK`, `NUPM_HOME`, `mods_home`, `EDITOR`, `ZELLIJ`, `TIMEWARRIORDB`, `IPEX_LLM_OLLAMA_HOME` |
-| Vendored outside code | `bash-env/` (see *Vendored dependencies*) |
 | Nushell config | `$env.config.hooks`, `$env.config.color_config`, `buffer_editor` |
 | Persistent state | `std-rfc/kv` tables (universal SQLite under `$nu.data-dir`), msgpack caches, files under `WORK` |
 
@@ -47,7 +46,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `error` | `error raise` with coded errors. |
 | `log` | Thin wrappers over `std/log`. |
 | `var` | Named values in `std-rfc/kv` (state follows `$nu.data-dir`). |
-| `env` | `.env` parsing, env-var helpers. |
+| `env` | `.env` parsing, env-var helpers. `env from-bash` runs `bash` (and `env`) to read a bash script's variables; bash is not counted as a dependency, since a bash script implies it. |
 | `path` | Path rewriting helpers. `path select` is interactive (needs a TTY). |
 | `completion` | Builds completion records (`into completions`, `into spans`). |
 | `hook` | Reads and edits `$env.config.hooks`; pure over the config record. |
@@ -61,10 +60,9 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 
 | Module | Depends on |
 |---|---|
-| `conf` | `conf/machine.nu` host branches (hostname; `~/.profile` via the vendored `bash-env`, which needs `bash` and `jq`; `WORK`), editor (`edit`), `oh-my-posh` (`prompt`). Its `export-env` adds missing directories to `NU_LIB_DIRS`/`NU_PLUGIN_DIRS`/`PATH`. Not split: the whole module is machine configuration. |
+| `conf` | `conf/machine.nu` host branches (hostname; `~/.profile` via `env from-bash`, which runs `bash`; `WORK`), editor (`edit`), `oh-my-posh` (`prompt`). Its `export-env` adds missing directories to `NU_LIB_DIRS`/`NU_PLUGIN_DIRS`/`PATH`. Not split: the whole module is machine configuration. |
 | `mods/local` | `edit` and its completions resolve through `conf machine-config`. |
 | `pman` | Package managers, cargo; `bump-nu` downloads the latest Nushell nightly (network: GitHub's API and release assets), extracts it with `tar`, writes the nu binary and edits the plugin registry. Destructive. |
-| `bash-env` (vendored) | `bash`, `jq`. |
 | `link` | `sudo`, `ln`, `unlink`; Windows `cmd /c mklink`. Privileged. |
 | `edit` | `$EDITOR` / `buffer_editor`, `zellij`. |
 | `elevate` | `sudo`. Privileged. |
@@ -97,14 +95,13 @@ the original (for `alarm` and `mods`, the barrel's wrappers that declare `main`)
 import reaches one level of a module's commands, so a submodule of `local` would not be callable as
 `local <module> …`.
 
-## Vendored dependencies
+## Outside code
 
-Outside code the library executes is vendored into the repository and imported relatively; only configuration
-stays host-specific.
-
-| Directory | Upstream | Version | Copied |
-|---|---|---|---|
-| `bash-env/` | `/work/ext/bash-env` = github.com/zaynram/bash-env-nushell (fork of tesujimath/bash-env-nushell) | commit 6d0a7e7 plus its uncommitted local changes; `bin/bash-env-json` is upstream v0.10.1; MIT | 2026-11-06 |
+Nothing outside the repository is imported at parse time, and no third-party code is vendored. Two components
+started as outside code and were adopted as first-class module members instead: `pman bump-nu` (from the owner's
+`nightly-toolkit` rewrite) and `env from-bash` (a jq-free reimplementation of the owner's `bash-env` fork; its
+header credits tesujimath/bash-env-nushell, MIT). If outside code the library must execute ever appears again,
+vendor it under the module that uses it, import it relatively, and record its provenance here.
 
 ## Rules of thumb for new code
 
