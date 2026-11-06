@@ -246,7 +246,7 @@ def foreign-keys [names: list<string> at: cell-path]: any -> list<record> {
 #   row is reported under the row's index (`$.rows.0.typo`).
 @category test
 @example 'every failure as a row' {
-  {name: 5} | validate rules [{path: $.name type: string required: true} {path: $.size type: int required: true}] | get hint
+  {name: 5} | validate rules [{path: $.name type: string required: true} {path: $.size type: int required: true}] --colors=false | get hint
 } --result ['$.name has type int; expected string' '$.size must be a non-null value']
 @example 'a guard in a pipeline' { {name: a} | validate rules [{path: $.name type: string}] --errors } --result {name: a}
 export def rules [
