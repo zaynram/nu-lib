@@ -20,6 +20,9 @@ const STRATEGY: list<string> = [overwrite prepend append]
 # The override file in Nushell's config directory: `machine.nuon` (static) or `machine.nu` (a script).
 const OVERRIDE: string = 'machine'
 const FORMS: list<string> = [nuon nu]
+# The cache of the configured override file's checked record: one nuon file in Nushell's cache directory, keyed by
+# the file's path, modification time and size and by the running `nu` version (`_docs/hydration.md`).
+const CACHE: path = $nu.cache-dir | path join nu-lib machine-override.nuon
 const WINDOWS_APPS: path = $nu.home-dir | path join AppData Local Microsoft WindowsApps
 const DEFAULT: record = {
   user: {
@@ -125,6 +128,30 @@ def load [file: path]: nothing -> record {
   $value
 }
 
+# The cache key of an override file: its path, modification time (ns) and size, and the `nu` version.
+def cache-key [file: path]: nothing -> record {
+  let entry: record = ls --directory $file | first
+  {file: $file modified: ($entry.modified | into int) size: ($entry.size | into int) nu: (version).version}
+}
+
+# The checked record of the configured override file, served from the cache when the key matches (a `.nu` override
+# otherwise runs a child `nu`, and either form is validated, on every call), else loaded, checked and cached.
+# `cache` says what happened: `hit`, `miss` (the cache was rewritten) or `off` (`--no-cache`: loaded and rewritten).
+def override-record [file: path --no-cache]: nothing -> record<value: record, cache: string> {
+  let key: record = cache-key $file
+  let cached: any = if $no_cache { null } else { try { open $CACHE } catch { null } }
+  if ($cached | describe) =~ '^record' and $cached.key? == $key { return {value: $cached.value cache: hit} }
+  let value: record = load $file | check $file
+  # A cache that cannot be written is not an error: the next call loads the file again.
+  try {
+    mkdir ($CACHE | path dirname)
+    let tmp: path = $"($CACHE).($nu.pid)"
+    {key: $key value: $value} | to nuon | save --force $tmp
+    mv --force $tmp $CACHE
+  } catch { null }
+  {value: $value cache: (if $no_cache { 'off' } else { 'miss' })}
+}
+
 # The rules an override must satisfy: an optional `strategy`, and under `user`/`vendor` the keys of that scope, typed
 # like its defaults (paths are strings: the file holds literals, or values that crossed `to nuon`).
 def rules []: nothing -> table {
@@ -178,8 +205,10 @@ def main [
   # Use this override file instead of the configured one
   --no-file
   # Ignore any override file: the defaults and `--with` only
+  --no-cache
+  # Load and check the configured override file even when its cached record is current (the cache is rewritten)
   --verbose (-v)
-  # Print the lookup target and which override file was used
+  # Print the lookup target, which override file was used and whether its record came from the cache
 ]: nothing -> oneof<MachineConfig, error> {
   if $DEFAULT not-has $mode {
     error raise $"unsupported mode: '($mode)'" --kind invalid_argument --advice $"expected one of: ($MODE | str join ', ')"
@@ -189,11 +218,19 @@ def main [
   }
   if $file != null and $no_file { error raise '--file and --no-file are exclusive' --kind invalid_argument }
   let path: oneof<nothing, path> = if $no_file { null } else { override-path $file }
-  let override: record = if $path == null { {} } else { load $path | check $path }
+  # `--file` names an ad-hoc file: it is not cached (the cache holds the configured file's record).
+  let loaded: record = if $path == null {
+    {value: {} cache: none}
+  } else if $file != null {
+    {value: (load $path | check $path) cache: off}
+  } else {
+    override-record $path --no-cache=$no_cache
+  }
+  let override: record = $loaded.value
   let with: record = if $with == null { {} } else { $with | check '--with' }
   let strategy: string = $strategy | default $with.strategy? | default $override.strategy? | default 'overwrite'
   if $verbose {
-    {mode: $mode host: ($host | default (sys host).hostname) os: $os strategy: $strategy override: ($path | default 'none')}
+    {mode: $mode host: ($host | default (sys host).hostname) os: $os strategy: $strategy override: ($path | default 'none') cache: $loaded.cache}
     | transpose k v
     | format pattern '{k} = {v}'
     | each {|line| print $line }

@@ -735,3 +735,80 @@ def "test prompt rejects a missing or unknown config" []: nothing -> nothing {
     assert ($unknown.stderr =~ 'conf::prompt::invalid_argument') $'the invalid_argument code: ($unknown.stderr)'
   }
 }
+
+# ——— machine-config: the override cache ———————————————————————————————————————
+
+# A `.nu` override that logs every run into `log` (so cache hits are visible as runs that did not happen).
+def logging-override [ctx: record]: nothing -> record<file: path, log: path> {
+  let log: path = $ctx.code | path join runs.log
+  let file: path = override $ctx machine.nu $"def main []: nothing -> record { \"run\\n\" | save --append '($log)'; {user: {state: '/sbstate'}} }"
+  {file: $file log: $log}
+}
+
+def runs [log: path]: nothing -> int { if ($log | path exists) { open $log | lines | length } else { 0 } }
+
+def "test machine config caches a script override until the file changes" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let o = logging-override $ctx
+    with-env {NU_MACHINE_CONFIG: $o.file} {
+      assert equal (conf machine-config).state /sbstate 'the first call runs the script'
+      assert equal (conf machine-config).state /sbstate 'the second is served from the cache'
+      assert equal (runs $o.log) 1 'one run'
+      assert equal (conf machine-config --no-cache).state /sbstate '--no-cache runs it again'
+      assert equal (runs $o.log) 2 'and the record is current'
+      conf machine-config | ignore
+      assert equal (runs $o.log) 2 'the rewritten cache serves the next call'
+      "\n# edited\n" | save --append $o.file
+      conf machine-config | ignore
+      assert equal (runs $o.log) 3 'a changed file (size, mtime) misses the cache'
+      conf machine-config --file $o.file | ignore
+      assert equal (runs $o.log) 4 '--file never uses the cache'
+      let cache: path = $nu.cache-dir | path join nu-lib machine-override.nuon
+      assert equal (open $cache | get key.file) $o.file 'the cache names the configured file'
+    }
+  }
+}
+
+def "test machine config cache misses on another nu version" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let o = logging-override $ctx
+    with-env {NU_MACHINE_CONFIG: $o.file} {
+      conf machine-config | ignore
+      let cache: path = $nu.cache-dir | path join nu-lib machine-override.nuon
+      open $cache | update key.nu '0.0.0' | save --force $cache
+      conf machine-config | ignore
+      assert equal (runs $o.log) 2 'a record checked by another nu is not trusted'
+      assert equal (open $cache | get key.nu) (version).version 'and the cache is rewritten for this one'
+    }
+  }
+}
+
+def "test machine config verbose reports the cache" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let o = logging-override $ctx
+    let vars: record = {NU_MACHINE_CONFIG: $o.file}
+    # `use conf` already filled the cache (its export-env resolves the vendor scope): drop it to see a miss.
+    let cache: string = '($nu.cache-dir | path join nu-lib machine-override.nuon)'
+    assert ((child $ctx $"rm --force ($cache); conf machine-config --verbose" --vars $vars).stdout =~ 'cache = miss') 'a call without a cache misses'
+    assert ((child $ctx 'conf machine-config --verbose' --vars $vars).stdout =~ 'cache = hit') 'the next call hits (as does `use conf` itself)'
+    assert ((child $ctx 'conf machine-config --verbose --no-cache' --vars $vars).stdout =~ 'cache = off') '--no-cache says so'
+    assert ((child $ctx $"conf machine-config --verbose --file ($o.file | to nuon)").stdout =~ 'cache = off') 'so does --file'
+    assert ((child $ctx 'conf machine-config --verbose --no-file').stdout =~ 'cache = none') 'nothing to cache without a file'
+  }
+}
+
+def "test machine config a cache that cannot be written is not an error" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let o = logging-override $ctx
+    let dir: path = $nu.cache-dir | path join nu-lib
+    rm --recursive --force $dir
+    mkdir ($dir | path dirname)
+    'not a directory' | save --force $dir
+    with-env {NU_MACHINE_CONFIG: $o.file} {
+      assert equal (conf machine-config).state /sbstate 'the record is returned'
+      conf machine-config | ignore
+      assert equal (runs $o.log) 2 'every call loads the file while the cache cannot be written'
+    }
+    rm $dir
+  }
+}
