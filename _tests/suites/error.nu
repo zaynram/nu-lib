@@ -61,7 +61,8 @@ def "test raise with a kind" []: nothing -> nothing {
 def "test raise accepts every documented kind" []: nothing -> nothing {
   let kinds = [invalid_argument not_found unsupported missing_dependency external_failure conflict io internal]
   assert equal $error.KINDS $kinds 'the vocabulary is fixed'
-  # `each` feeds the kind to `caught` as pipeline input, which `do` would hand to the raise; a raise takes none.
+  # `each` feeds the kind to `caught` as pipeline input, which `do` would hand to the raise; a raise ignores input
+  # that is not an error record, so the `null` only keeps the raise input-free.
   let codes = $kinds | each {|k| null | caught { error raise 'it broke' --kind $k } | get $.code }
   assert equal $codes ($kinds | each { $'($HERE)::test-raise-accepts-every-documented-kind::($in)' }) 'each kind ends the code'
 }

@@ -50,7 +50,7 @@ site when the error is raised.
 | Segment | Derived from | Examples |
 |---|---|---|
 | namespace | The raising file's path under the library root that contains it: directories joined with `::`, plus the file stem unless the file is `mod.nu`. The library roots are the `NU_LIB_DIRS` entries and the directory holding the `error` module. | `conf/mod.nu` → `conf`; `mods/local/mod.nu` → `mods::local`; `conf/machine.nu` → `conf::machine`; `env/from-bash.nu` → `env::from-bash` |
-| command | The enclosing `def` (`export def`, `def --env`, `def --wrapped`, quoted or bare names), with spaces turned into `-`. Omitted for `main` and when no `def` precedes the raise in the file. | `export def "win env"` → `win-env`; `export def main` → `<namespace>::<kind>` |
+| command | The enclosing `def` (`export def`, `def --env`, `def --wrapped`, quoted or bare names), with spaces turned into `-`; in practice the last `def` line before the raise (see below). Omitted for `main` and when no `def` precedes the raise in the file. | `export def "win env"` → `win-env`; `export def main` → `<namespace>::<kind>` |
 | kind | `--kind`, default `internal`. | `not_found` |
 
 Fallbacks never fail a raise:
@@ -71,6 +71,11 @@ The consequence: **write the message at the raise site**. A literal or an interp
 raise` call carries the span of that call. A message built in the same command (`let msg = $"…"`) still lies in
 that command. A message returned by a helper, or stored in a constant, carries the span of *its* site, so the
 derived command would be the helper's: pass `--code` in that case, or build the message where it is raised.
+
+The command segment is an approximation too: the last line matching a `def` before the raise, not a parse. Two
+shapes mislead it: a helper `def` nested inside the command body (a raise after it is attributed to the helper),
+and a multi-line string literal that contains a `def …` line (attributed to that name). Pass `--code` in either
+case, or move the helper out of the command. Nothing in the library has either shape today.
 
 ### The directive
 
@@ -155,5 +160,5 @@ size; the rest scales with the file: fetching its text, the directive search, an
 the site first, the whole prefix only for a longer command body). The derivation runs only on the error path; a
 command that does not fail pays nothing.
 
-When measuring raises yourself, do not let `each` feed its item into the raise: `1..50 | each { try { … } }`
-pipes the counter into `error raise`, whose input type rejects it, so the loop times a type error instead.
+When measuring raises yourself, `1..50 | each { try { … } }` pipes the counter into `error raise`; input that is
+not an error record is ignored, so the loop times the raise itself.

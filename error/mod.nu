@@ -3,7 +3,9 @@
 # `error raise` derives the code `<namespace>::<command>::<kind>` by introspection: the span of its `message`
 # argument locates the file that raised it (`view files`), the file's path under the library root gives the
 # namespace, and the enclosing `def` gives the command. The message must therefore be written at the raise site;
-# `--code` is the escape hatch when it cannot be.
+# `--code` is the escape hatch when it cannot be. The enclosing `def` is approximated by the last `def` line before
+# the raise, so a helper `def` nested in the command body, or a multi-line string literal holding a `def …` line,
+# names that `def` instead: pass `--code` where either occurs (nothing in the library does today).
 #
 # With `--labels`, `error raise` returns a closure instead of raising, intentionally:
 # - Calling `error make` from a nested scope causes error duplication as it propagates upwards.
