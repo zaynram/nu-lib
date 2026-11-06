@@ -2,7 +2,6 @@
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
-use std/util null-device
 use command attempt
 use completion "into completions"
 
@@ -30,12 +29,20 @@ export def --wrapped main [
 @category productivity
 export def list [
   --project (-p): string@_projects # Project name (default: every project)
-  --label (-l): list<string>@_labels # Only tasks carrying every one of these labels
+  --label (-l): list<string>@_labels # Only tasks carrying any of these labels (`td` ORs them)
   --parent: string@_tasks # Subtasks of this task (id or exact content)
-  --filter (-f): string # Raw Todoist filter query
-  --completed (-c) # Completed tasks instead of open ones
+  --filter (-f): string # Raw Todoist filter query (combined with `--label` by `td` as `(filter) & (labels)`)
+  --completed (-c) # Completed tasks instead of open ones (only `--project` and `--since` apply)
   --since: datetime # With `--completed`: lower bound (default: today; at most three months back)
 ]: nothing -> table<id: string, content: string, description: string, labels: list<string>, project: string, parent: oneof<nothing, string>, due: oneof<nothing, datetime>, priority: int, url: string> {
+  let open_only: list<string> = {label: $label parent: $parent filter: $filter} | transpose flag value
+    | where value != null | get flag
+  if $completed and $open_only != [] {
+    error make --unspanned {
+      msg: $"`--completed` cannot be combined with ($open_only | each { $'`--($in)`' } | str join ', ')"
+      help: '`td completed list` filters only by `--project` and `--since`'
+    }
+  }
   if $completed {
     todoist --json --options={
       project: $project
@@ -95,7 +102,7 @@ export def edit [
     labels: ($labels | join-labels)
     due: ($due | format-due)
     priority: ($priority | format-priority)
-    no_due: $no_due
+    no-due: $no_due
   } task update $ref | hydrate null | first
 }
 
@@ -154,7 +161,9 @@ export def find [
 
 # ——— helpers ————————————————————————————————————————————————————————————————
 
-# Run `td` through the auth retry.
+# Run `td`: through the auth retry (`--auth`, or without `--json`/`--ndjson`), else as a structured read.
+#
+# A structured read parses stdout as JSON and raises with `td`'s output on a non-zero exit (no auth retry).
 def --wrapped todoist [
   ...rest: string
   # Arguments to pass through to `td`
@@ -175,7 +184,14 @@ def --wrapped todoist [
     with-auth --login={|| run-external td auth login } td ...$in
   } else {
     let args;
-    attempt --merge td ...$args | get $.stdout
+    let res: record = attempt td ...$args
+    if $res.exit_code != 0 {
+      error make --unspanned {
+        msg: $"`td` exited with code ($res.exit_code)"
+        help: ([$res.stderr $res.stdout] | str trim | compact --empty | str join (char nl))
+      }
+    }
+    $res.stdout
   } | if $struct {
     from json | collect {|| if $in has results { get $.results } else { append [] } }
   } else { }
@@ -233,9 +249,12 @@ def hydrate [name: oneof<nothing, string> --long = false]: table -> table {
   let rows: table = $in
   # one `td project list` call, and only when a name has to be resolved
   let projects: table = if $name == null and ($rows | is-not-empty) { projects } else { [] }
-  $rows | if $long { } else {
-    select $.id $.content $.description $.labels? $.projectId? $.parentId? $.due.date? $.priority $.url
-  } | rename --column={projectId: project parentId: parent due.date: due}
+  $rows | if $long {
+    default null $.projectId? $.parentId? | rename --column={projectId: project parentId: parent}
+  } else {
+    select $.id $.content $.description? $.labels? $.projectId? $.parentId? $.due?.date? $.priority $.url?
+    | rename --column={projectId: project parentId: parent due.date: due}
+  }
   | default [] labels
   | update $.project {|row| $name | default { $projects | where id == $row.project | get $.0?.name } }
   | update $.priority { into int | 5 - $in }

@@ -1,8 +1,8 @@
 # `todo`: Todoist tasks over `td`
 
-Module `_internal/todo`. Replaces the Taskwarrior submodule of the former `_internal/warrior`; the
+Module `todo`. Replaces the Taskwarrior submodule of the former `_internal/warrior`; the
 name avoids `task`, which is Taskwarrior's binary. Shared helpers: `elevate with-auth` (moved from
-`util` on 2026-09-18) and `util attempt`.
+`util` on 2026-09-18) and `command attempt`.
 
 ## Purpose
 
@@ -82,8 +82,12 @@ export def find [
   otherwise one extra `td project list` call resolves ids to names. `parent` is the parent task id.
   `due` is `due.date` parsed as a datetime. `priority` uses the app's vocabulary, 1 for p1 (urgent)
   through 4 for p4, which is `5 - api_priority`.
+- `list --label a b` sends `--label a,b`, which `td` turns into the filter `(@a | @b)`: tasks carrying
+  any of the labels. `--filter` is combined with it as `(filter) & (labels)`.
 - `list --completed` runs `td completed list`, whose window defaults to today and spans at most three
-  months; `--since` sets the lower bound. Completed rows have the same shape.
+  months; `--since` sets the lower bound. Completed rows have the same shape. `td completed list` has no
+  label, parent or filter options, so combining `--completed` with `--label`, `--parent` or `--filter`
+  is an error.
 - `add --due` and `edit --due` format a datetime as `YYYY-MM-DD`; a string passes through as the
   Todoist due string.
 - `done`, `reopen` and `rm` loop over their references; `rm` passes `--yes`.
@@ -92,8 +96,10 @@ export def find [
   threshold are dropped; the highest score wins; a tie for the top score yields null. Without pipeline
   input the candidates are `list --project`, and without `--project` the project is the basename of
   the repository root, or an error outside a repository.
-- Writes (`done`, `reopen`, `rm`, `browse`) and plain passthrough go through `with-auth`; JSON reads
-  go through `util attempt --merge` and raise on a non-zero exit. `td` writes errors as JSON to
+- Writes (`done`, `reopen`, `rm`, `browse`) go through `with-auth`; plain passthrough (`todo` without
+  `--json`) runs `td` directly, so its output streams to the terminal. JSON reads go through `command
+  attempt`, parse stdout only (stderr notices cannot corrupt the JSON) and raise on a non-zero exit with
+  `td`'s output as the help text. `td` writes errors as JSON to
   stderr with exit code 1, and reports auth failures with a `td auth login` hint, which the default
   pattern matches.
 - `with-auth` never prompts outside interactive sessions; it raises instead.
@@ -111,7 +117,8 @@ parse. The same rule keeps `rm` and `find` out of any module this one imports.
 
 ## Verification
 
-`test _tests/suites/todo.nu` checks the matcher offline against fixture rows. The live read
+`test _tests/suites/todo.nu` checks the matcher offline against fixture rows, and every command against a
+`td` stub that logs its arguments and serves canned JSON. The live read
 commands run only with the real home directory (`--no-sandbox`) and `TODO_TEST_LIVE=1`; setting
 `TODO_TEST_WRITE=1` as well runs add, edit, done, reopen and rm on a throwaway task in Inbox. Static checks: `nu --ide-check` and `nu-lint` report
 nothing for `todo/mod.nu` and `util/mod.nu`.
