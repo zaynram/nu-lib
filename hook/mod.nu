@@ -58,6 +58,25 @@ alias hook-setter = do {|target: cell-path|
 # The hook type (first member) of a hook reference, e.g. `env_change` for `$.env_change.PWD`.
 def hook-type []: cell-path -> string { into string | split row . | skip | first }
 
+# Does a reference name one hook: an entry of a hook type's list (`$.pre_prompt.0`, `$.env_change.PWD.0`) or a
+# single-valued type (`$.display_output`), whose value is a record, closure or string? A hook type's list
+# (`$.pre_prompt`, `$.env_change.PWD`) and the `env_change` record are not one hook.
+def names-one-hook []: cell-path -> bool {
+  let ref: cell-path = $in
+  let entry: bool = ($ref | split cell-path | length) > 1 or ($ref | hook-type) in [display_output command_not_found]
+  $entry and ($env.config.hooks | get --optional --ignore-case $ref | describe) =~ '^(record|closure|string)'
+}
+
+# Does a target name a hook list to add to: a hook type (`$.pre_prompt`, also the single-valued types) or an
+# `env_change` variable (`$.env_change.PWD`)? An entry of a list (`$.pre_prompt.0`) is not one.
+def names-hook-list []: cell-path -> bool {
+  match ($in | split cell-path | get value) {
+    [$type] => ($type in $HOOK_TYPES)
+    [env_change _] => true
+    _ => false
+  }
+}
+
 # A text target such as `env_change.PWD` as a cell-path (one member per dot-separated part).
 def into-target []: oneof<string, cell-path> -> cell-path {
   if ($in | describe) == string { split row . | into cell-path } else { }
@@ -167,7 +186,8 @@ export def is-enabled [
 # If pipeline input is provided, it will be loaded into the closure environment. When the hook cannot be
 # resolved, the closure still runs (without any modification) unless `--strict` is given. `display_output` and
 # `command_not_found` hold a single closure or string, not a record: targeting one raises
-# `hook::edit::invalid_argument` (replace them with `hook edit --overwrite` instead).
+# `hook::edit::invalid_argument` (replace them with `hook edit --overwrite` instead); so does a reference to a
+# hook list rather than one of its entries (`$.pre_prompt`, `$.env_change.PWD`).
 export def with [
   modification: record
   # Merged into the hook record for the duration of the closure, e.g. `{disabled: true}`
@@ -255,6 +275,9 @@ export def list [
 }
 
 # Interact with properties of configured hooks.
+#
+# The reference names one hook: an entry of a hook list (`$.pre_prompt.0`, `$.env_change.PWD.0`) or a single-valued
+# type; the list itself (`$.pre_prompt`, `$.env_change.PWD`) is refused (`hook add` appends to it).
 @category env
 export def --env edit [
   ref: cell-path@_hook-refs
@@ -272,6 +295,11 @@ export def --env edit [
     }
   } else if ($env.config.hooks | get --optional --ignore-case $ref) == null {
     error raise $"no hook at '($ref)'" --kind not_found
+  } else if not ($ref | names-one-hook) {
+    error raise $"'($ref)' is a list of hooks, not one hook" ...{
+      kind: invalid_argument
+      advice: 'reference one entry (`$.pre_prompt.0`, `$.env_change.PWD.0`); `hook add` appends to the list'
+    }
   } else if $overwrite == null and ($ref | hook-type) in [display_output command_not_found] {
     error raise $"the hook at '($ref)' holds a single closure or string, not a record" ...{
       kind: invalid_argument
@@ -331,6 +359,9 @@ export def --wrapped test [
 }
 
 # Add hook(s) to the current environment configuration.
+#
+# The target is a hook type (`$.pre_prompt`) or an `env_change` variable (`$.env_change.PWD`); an entry of a list
+# (`$.pre_prompt.0`) is refused (`hook edit` changes one).
 @category env
 export def --env add [
   target: cell-path@_possible-hook-types
@@ -343,7 +374,15 @@ export def --env add [
   --dedupe (-d)
   # Skip hook records whose name is already registered (enabled or disabled)
 ]: oneof<nothing, list<HookType>> -> nothing {
-  let hooks: list = if $value != null { append $value } else { } | match $in {
+  # bound first: only the first pipeline of the block receives the input
+  let given: oneof<nothing, list<HookType>> = $in
+  if not ($target | names-hook-list) {
+    error raise $"'($target)' is not a hook type or an env_change variable" ...{
+      kind: invalid_argument
+      advice: 'add to a hook type (`$.pre_prompt`) or an env_change variable (`$.env_change.PWD`); `hook edit` changes one entry'
+    }
+  }
+  let hooks: list = $given | if $value != null { append $value } else { } | match $in {
       [_ ..] if $dedupe => {
         let names: list<string> = flatten-hooks {|| true } | get $.name
         $in | where ($it | describe) !~ ^record or $it.name? not-in $names

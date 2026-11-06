@@ -224,6 +224,24 @@ def "test edit update refuses a single valued hook" []: nothing -> nothing {
   assert equal (hook list | get name) ['pre_prompt[0]' named pwd display_output command_not_found] 'both are untouched and still listable'
 }
 
+def "test edit refuses a hook list" []: nothing -> nothing {
+  for ref in [$.pre_prompt $.env_change.PWD $.env_change] {
+    let e = caught { hook edit $ref --update {disabled: true} }
+    assert equal $e.msg $"'($ref)' is a list of hooks, not one hook" $'a list is not one hook: ($ref)'
+    assert equal $e.code 'hook::edit::invalid_argument' 'the derived code'
+    assert str contains $e.help '$.pre_prompt.0' 'the advice shows an entry reference'
+    assert equal (caught { hook edit $ref --overwrite {|| 1 } }).code 'hook::edit::invalid_argument' 'overwrite too'
+  }
+  assert equal (hook list | get name) ['pre_prompt[0]' named pwd display_output] 'nothing changed'
+}
+
+def "test with refuses a hook list" []: nothing -> nothing {
+  for ref in [$.pre_prompt $.env_change.PWD] {
+    assert equal (caught { hook with --hook=$ref {disabled: true} {|| 'ran' } }).code 'hook::edit::invalid_argument' $'the edit raises before the closure runs: ($ref)'
+  }
+  assert equal (hook list | get name) ['pre_prompt[0]' named pwd display_output] 'nothing changed'
+}
+
 def "test edit overwrite replaces a single valued hook" []: nothing -> nothing {
   hook edit $.display_output --overwrite 'table' | ignore
   assert equal (hook display_output) table 'text'
@@ -299,6 +317,17 @@ def "test add dedupe skips registered names" []: nothing -> nothing {
   hook add --dedupe $.pre_prompt {name: fresh code: {|| 1 }}
   assert equal (names $.pre_prompt) ['' named fresh] 'only the new name'
   assert equal (hook pre_execution | length) 1 'a disabled hook counts as registered'
+}
+
+def "test add refuses an entry reference" []: nothing -> nothing {
+  for target in [$.pre_prompt.0 $.env_change.PWD.0 $.nope] {
+    let e = caught { hook add $target {|| 2 } }
+    assert equal $e.msg $"'($target)' is not a hook type or an env_change variable" $'not a list to add to: ($target)'
+    assert equal $e.code 'hook::add::invalid_argument' 'the derived code'
+  }
+  assert equal (hook pre_prompt | length) 2 'nothing was added'
+  assert (hook pre_prompt | all ($it | describe) !~ '^list') 'and no list was nested into the hooks'
+  assert equal (hook env_change.PWD | length) 1 'env_change lists neither'
 }
 
 def "test add replaces a single valued hook" []: nothing -> nothing {
