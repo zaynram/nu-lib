@@ -88,6 +88,9 @@ export use prelude *
 # - `conf` (login shells): the vendor scope's NU_LIB_DIRS, NU_PLUGIN_DIRS and PATH;
 # - `mods` (interactive login shells): `mods_home`/`mods_refs` and the `use`/`hide` tracking hook;
 # - `completion/local` (interactive login shells): the external completers' variables and PATH entry;
+# - `proj` (interactive login shells): the registry scan of `$env.WORK` (skipped when WORK is unset; a scan within
+#   the last day is reused) and the `std/dirs` ring;
+# - `track` (interactive login shells): the `track::sync` and `track::focus` hooks (added once);
 # - `windows` (WSL: `WSL_DISTRO_NAME` is set or the kernel release names Microsoft): splits the Windows entries of
 #   PATH into WINPATH.
 # Every block is idempotent, so loading the barrel again changes nothing.
@@ -99,6 +102,8 @@ export-env {
   if $nu.is-interactive and $nu.is-login {
     source-env ($root | path join mods mod.nu)
     source-env ($root | path join completion local mod.nu)
+    source-env ($root | path join proj mod.nu)
+    source-env ($root | path join track mod.nu)
   }
   if $env.WSL_DISTRO_NAME? != null or $nu.os-info.kernel_version =~ '(?i)microsoft' {
     source-env ($root | path join windows mod.nu)

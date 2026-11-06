@@ -80,7 +80,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `todo` | `td` CLI, Todoist credentials, network. Parsing/formatting helpers are pure. |
 | `completion/local` | `fish`, `carapace`; mutates `$env.config`; its export-env sets `CARAPACE_*` and the carapace `PATH` entry. `fish-complete parse-output` is pure. `completion/external` is a deprecated shim for it. |
 | `style` (mild) | Reads `$env.config.color_config`; falls back to Nushell's default colors. |
-| root `mod.nu` | Aggregates config-dependent modules; parses with only the repository on the lib path; runs the conf/mods/completion/windows env blocks through guarded `source-env`. |
+| root `mod.nu` | Aggregates config-dependent modules; parses with only the repository on the lib path; runs the conf, mods, completion/local, proj, track and windows env blocks through guarded `source-env`. |
 
 ## Splitting mixed modules
 
