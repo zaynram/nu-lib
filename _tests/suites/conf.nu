@@ -164,7 +164,16 @@ def "test machine config strategy combines lists" []: nothing -> nothing {
 def "test vars returns the user scope variables" []: nothing -> nothing {
   let v: record = conf vars
   assert equal ($v | columns) [NU_LIB_DIRS PATH] 'user scope variables'
-  assert equal ($v.NU_LIB_DIRS | first) $ROOT 'scope directories come first'
+  assert ($ROOT in $v.NU_LIB_DIRS) 'the scope directories are included'
+}
+
+def "test vars keeps the positions of entries already present" []: nothing -> nothing {
+  $env.NU_LIB_DIRS = [/sbconf/existing $ROOT]
+  let v: record = conf vars
+  assert equal ($v.NU_LIB_DIRS | last 2) [/sbconf/existing $ROOT] 'present entries keep their order'
+  assert equal ($v.NU_LIB_DIRS | where $it == $ROOT | length) 1 'nothing is duplicated'
+  let again: record = with-env {NU_LIB_DIRS: $v.NU_LIB_DIRS PATH: $v.PATH} { conf vars }
+  assert equal $again $v 'applying the result again changes nothing'
 }
 
 def "test vars vendor adds plugin dirs" []: nothing -> nothing {
@@ -184,7 +193,7 @@ def "test vars includes piped input and with without loading" []: nothing -> not
   let v: record = {SBCONF_PIPED: 1 NU_LIB_DIRS: [/sbconf/first]} | conf vars --with {SBCONF_WITH: 2}
   assert equal [$v.SBCONF_PIPED $v.SBCONF_WITH] [1 2] 'piped and --with variables are returned'
   assert equal ($v.NU_LIB_DIRS | first) /sbconf/first 'piped list entries come first'
-  assert equal ($v.NU_LIB_DIRS | get 1) $ROOT 'then the scope directories'
+  assert ($ROOT in $v.NU_LIB_DIRS) 'the scope directories are included'
 }
 
 def "test vars with replaces scope values" []: nothing -> nothing {

@@ -27,8 +27,7 @@ def profile-env [mode: string = user]: nothing -> record {
       NU_LIB_DIRS: [$mc.modules]
       PATH: [$mc.binaries $mc.scripts]
     })
-  } | items {|key dirs| {$key: ($dirs | append ($env | get --optional --ignore-case $key | default []) | uniq)} }
-  | into record
+  }
 }
 
 alias xglob = glob --depth=3 --exclude=[
@@ -98,9 +97,10 @@ def submit [target: oneof<nothing, string> --return]: oneof<nothing, path> -> on
 
 # Show or load a scope's environment variables (`NU_LIB_DIRS`, `PATH`, and `NU_PLUGIN_DIRS` for the vendor scope).
 #
-# Each list variable is the piped record's entries, then the scope's directories, then the entries the
-# environment already has (without duplicates), so loading never drops existing directories. Other piped
-# variables are kept, and `--with` values replace anything else.
+# Each list variable is the entries the environment already has, preceded by those of the piped record's entries
+# and the scope's directories (in that order) that it lacks. Existing entries keep their positions, so loading
+# never drops or reorders a directory and loading twice changes nothing. Other piped variables are kept, and
+# `--with` values replace anything else.
 @category env
 export def --env vars [
   --vendor (-v) # Use the vendor scope
@@ -111,7 +111,11 @@ export def --env vars [
   let input: record = $in | default {}
   let scope: record = if $vendor { profile-env vendor } else { profile-env user }
   let combined: record = $scope
-    | items {|key dirs| {$key: ($input | get --optional $key | default [] | append $dirs | uniq)} }
+    | items {|key dirs|
+      let existing: list = $env | get --optional --ignore-case $key | default []
+      let added: list = $input | get --optional $key | default [] | append $dirs | uniq | where $it not-in $existing
+      {$key: ($added | append $existing)}
+    }
     | into record
   let e: record = $input | merge $combined | merge $with
   if $load { $e | load-env }
