@@ -25,7 +25,9 @@ def "test needs fish" []: nothing -> nothing {
 - Tests run in the order they are defined.
 - `# ignore …` as the description (or `@ignore`) reports a test as `skip` with reason `ignored` without running it.
 - `skip "<reason>"` aborts a test as `skip`. Use it for runtime conditions (missing program, wrong OS, no
-  credentials) so that an unavailable dependency never reads as passed or failed.
+  credentials) so that an unavailable dependency never reads as passed or failed. A `skip` raised in `before all`
+  or `before each` skips the affected tests. Importing it shadows the builtin `skip` in the suite (and in modules
+  parsed after it): use `slice 1..` or `drop nth 0` to drop list items in suites.
 - Statuses: `ok`, `fail` (the test raised), `skip`, and `error` (infrastructure: a hook failed, the suite did not
   load, or the child interpreter died before reporting).
 
@@ -75,6 +77,9 @@ suite gets the same results from an interactive shell (where variables like `EDI
 `mods_home` are exported) and from CI. `--no-scrub` opts out. Where an `env` program exists (Linux, macOS, WSL) the child's environment is
 built from scratch with `env -i`; elsewhere the runner falls back to `hide-env`, which Nushell silently ignores
 once a `do --env` has run anywhere up the call stack, so scrubbing is best-effort there.
+
+Children also get an empty stdin and, where `setsid` exists, no controlling terminal, so a test that waits for
+input (`input`, a prompt, a TUI) fails instead of hanging the run (`input` reads the terminal, not stdin).
 
 The runner writes each test's literal command name into the child program. Nushell has no string-eval, and a
 `$name` in command position evaluates to the string instead of calling the command, which would make every

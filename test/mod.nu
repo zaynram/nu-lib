@@ -205,7 +205,7 @@ export def main [
   --strict (-s) # Raise an error when any test fails or errors (for CI and hooks)
   --verbose (-v) # Print the error under every failing test
   --debug (-D) # Print the effective configuration and generated child programs
-]: nothing -> table<suite: string, name: string, status: string, duration: duration, error: string, file: path> {
+]: nothing -> table<suite: string, name: string, status: string, duration: duration, error: oneof<nothing, string>, file: path> {
   let flags: record = flag-layer --lib-dirs=$lib_dirs --isolation=$isolation --depth=$depth --jobs=$jobs --no-scrub=$no_scrub --sandbox=$sandbox --no-sandbox=$no_sandbox
   let suites: list<path> = find-suites $paths $flags
     | where $match == '' or (($it | path parse).stem =~ $match)
@@ -544,7 +544,7 @@ def program [suite: path hooks: record names: list<string>]: nothing -> string {
     let q: string = $n | to nuon
     $"do {
   let __start = date now
-  let __res = if not $__suite.ok { {status: error error: $\"before all failed: \($__suite.error\)\"} } else {
+  let __res = if not $__suite.ok { __nutest_hook_row 'before all' $__suite.error } else {
     try {
       let ctx = do --env { ($before_each) }
       let __test = try { $ctx | ($n); null } catch {|e| $e }
@@ -554,7 +554,7 @@ def program [suite: path hooks: record names: list<string>]: nothing -> string {
       } else if $__after != null {
         {status: error error: $\"after each failed: \(__nutest_text $__after\)\"}
       } else { {status: ok error: null} }
-    } catch {|e| {status: error error: $\"before each failed: \(__nutest_text $e\)\"} }
+    } catch {|e| __nutest_hook_row 'before each' $e }
   }
   __nutest_emit \($__res | insert name ($q) | insert duration \(\(date now\) - $__start\)\)
 }"
@@ -567,7 +567,10 @@ def program [suite: path hooks: record names: list<string>]: nothing -> string {
     '  [$d.msg ...($d.labels? | default [] | get --optional text | default []) $d.help? ...($d.inner? | default [] | get --optional msg | default [])]'
     '  | compact --empty | uniq | str join (char newline)'
     '}'
-    $"let __suite = try { {ok: true ctx: \(do --env { ($before_all) }\)} } catch {|e| {ok: false error: \(__nutest_text $e\)} }"
+    'def __nutest_hook_row [hook: string e]: nothing -> record {'
+    '  if ($e.msg | str starts-with "SKIP: ") { {status: skip error: ($e.msg | str substring 6..)} } else { {status: error error: $"($hook) failed: (__nutest_text $e)"} }'
+    '}'
+    $"let __suite = try { {ok: true ctx: \(do --env { ($before_all) }\)} } catch {|e| {ok: false error: $e} }"
     ...$tests
     $after_all
   ] | str join (char newline)
@@ -592,7 +595,12 @@ def spawn [
     $"--include-path=($cfg.lib-dirs | str join (char esep))"
     $"--commands=($program)"
   ]
-  if not $cfg.scrub { return (with-env $vars { ^$nu.current-exe ...$args | complete }) }
+  # Children get an empty stdin and, where `setsid` exists, no controlling terminal: a test that waits for input
+  # (`input`, a prompt, a TUI) fails instead of hanging the run. `input` reads the terminal, not stdin, so an
+  # empty stdin alone is not enough.
+  let detach: list<string> = which --all setsid | where type == external | get --optional 0.path | each {|p| [$p --wait] } | default []
+  let launch: list<string> = [...$detach $nu.current-exe ...$args]
+  if not $cfg.scrub { return (with-env $vars { '' | run-external ...$launch | complete }) }
   let keep: list<string> = $KEEP | append $cfg.passthrough
   let kept: record = $env | columns | where {|k| $k in $keep or $k =~ '^LC_' } | each {|k| {$k: ($env | get $k)} } | into record
   let env_bin: list = which --all env | where type == external
@@ -600,13 +608,14 @@ def spawn [
     # `env -i` builds the child's environment from scratch. `hide-env` cannot be relied on: once a `do --env` has
     # run anywhere up the call stack (common in tests and hooks), it silently stops hiding anything.
     let assignments: list<string> = $kept | merge $vars | items {|k v| $"($k)=($v | env-text)" }
-    return (^($env_bin.0.path) -i ...$assignments $nu.current-exe ...$args | complete)
+    let command: list<string> = [...$detach $env_bin.0.path '-i' ...$assignments $nu.current-exe ...$args]
+    return ('' | run-external ...$command | complete)
   }
   # No `env` program (native Windows): hide what we can; see the caveat above.
   let hidden: list<string> = $env | columns | where {|k|
     $kept not-has $k and $k not-in [PWD FILE_PWD CURRENT_FILE config]
   }
-  do { hide-env ...$hidden; with-env $vars { ^$nu.current-exe ...$args | complete } }
+  do { hide-env ...$hidden; with-env $vars { '' | run-external ...$launch | complete } }
 }
 
 # An environment value as the text an external program receives (lists joined like PATH).

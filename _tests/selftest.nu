@@ -130,6 +130,8 @@ def "before each" [] { }
     assert equal ($rows | row 'test skipped').error 'no tool here'
     assert equal ($rows | row 'test ignored').error 'ignored'
     assert equal ($rows | get suite | uniq) [s]
+    # The declared output type admits passing rows (null error): the result can be bound with a type.
+    assert equal (ok $dir 'let r: table = test; $r | length') 5
   }}
 
   {name: 'run: --jobs gives the same results as sequential' run: {||
@@ -179,6 +181,19 @@ def "test u" [] { }'
     # after all fails once per child, but is reported once.
     assert equal ($rows | where suite == aa and name == '(after all)' | select status error) [{status: error error: boom}]
     assert equal ((runner $dir 'test --match aa').stderr | split row '(after all)' | length) 2 'rendered once'
+  }}
+
+  {name: 'hooks: a skip raised in before all/before each skips the tests' run: {||
+    let dir = project {
+      'tests/suites/sa.nu': 'use test skip
+def "before all" [] { skip "no tool" }
+def "test t" [] { }'
+      'tests/suites/se.nu': 'use test skip
+def "before each" [] { skip "no creds" }
+def "test t" [] { }'
+    }
+    let rows = ok $dir 'test'
+    assert equal ($rows | select suite status error) [[suite status error]; [sa skip 'no tool'] [se skip 'no creds']]
   }}
 
   {name: 'crash: a child that exits reports its unfinished tests as errors' run: {||
@@ -355,6 +370,17 @@ def "test grandchild resolves the same modules" [] { assert equal (test exec "us
     let res = runner $bad 'test --strict'
     assert not equal $res.exit_code 0
     assert str contains $res.stderr '1 test(s) failed'
+  }}
+
+  {name: 'stdin: children cannot reach the terminal, so input-waiting tests end' run: {||
+    let dir = project {'tests/suites/i.nu': 'use std/assert
+def "test reading stdin gets nothing" [] { assert equal (try { input --numchar 1 } catch { "" } | default "") "" }'}
+    if (which script timeout | length) < 2 { print '      (skipped: needs `script` and `timeout`)'; return }
+    # Run the runner on a pseudo-terminal: a child that could reach the terminal would block in `input`.
+    let cmd = $"timeout 15 '($nu.current-exe)' --no-config-file --include-path='($ROOT)' --commands 'use test; test | get status | to nuon'"
+    let res = do { cd $dir; ^script -qec $cmd /dev/null | complete }
+    assert equal $res.exit_code 0 $'the run finishes instead of timing out: ($res.stdout)'
+    assert str contains $res.stdout '[ok]' 'the test ran and passed'
   }}
 
   {name: 'skip: works in tests that receive a context' run: {||
