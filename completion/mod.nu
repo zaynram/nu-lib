@@ -12,8 +12,8 @@ const REPR: record = {
   duration: min
 }
 
-# A bare string that would misparse as an argument: quoted with `to nuon`.
-const UNSAFE: string = '[\s"\x27`()\[{}|;$]|^-.|^(true|false|null)$'
+# A bare string that would misparse as an argument: quoted with `to nuon`. A leading `#` would start a comment.
+const UNSAFE: string = '[\s"\x27`()\[{}|;$]|^-.|^#|^(true|false|null)$'
 # The same test over a whole element, for the vectorised pass.
 const UNSAFE_ELEMENT: string = $"\(?s\)^\(.*?\(?:($UNSAFE)\).*\)$"
 
@@ -29,6 +29,7 @@ const OPTIONS: record = {
 
 # Wrap an iterable of custom completions into a record with completion options.
 # - elements are formatted to strings by type after `compact --empty`; strings are nuon-quoted only when a bare argument would misparse
+# - any table input is a completion table: it must have a `value` column, the only one formatted (others pass through)
 # - `$options` merge over the defaults; set an option to `null` to fall back to the Nushell default
 @category core
 @example 'transform a list into a completions record' {
@@ -50,7 +51,7 @@ export def "into completions" [
   --to-string (-t): closure
   # Custom element formatter, replacing the per-type default
   --repr (-r): record = {}
-  # Representation overrides: `number` (a `format number` cell-path), `filesize`, `date` and `duration` (format strings)
+  # Representation overrides: `number` (a `format number` cell-path), `filesize`, `datetime` and `duration` (format strings)
 ]: [
   list<any> -> record<options: record, completions: list<string>>
   table<value: any, description: string> -> record<options: record, completions: table<value: string, description: string>>
@@ -100,17 +101,18 @@ def quote-strings [format: closure]: list<string> -> list<string> {
   } else { $value | str replace --regex $UNSAFE_ELEMENT '"$1"' }
 }
 
-# Convert a commandline buffer into a list of token spans.
+# Convert a commandline buffer into a list of token texts.
+# Trailing whitespace appends an empty token (the word being started), unless `--raw` is given.
 export def "into spans" [
   --long (-l)
-  # Return the full `structure` table instead of only the token texts
+  # Return the full `structure` table (text, kind, span) instead of only the token texts
   --unalias (-u)
-  # Replace the first span with its alias expansion's first word, if found
+  # Replace the first token with its alias expansion's first word, if found
   --raw (-r)
-  # Disable insertion of empty quotes for trailing whitespace
-]: string -> list<string> {
+  # Do not append the empty token for trailing whitespace
+]: string -> oneof<list<string>, table<text: string, kind: string, span: record<start: int, end: int>>> {
   let buffer: string;
-  structure $in | if $unalias {
+  structure $in | if $unalias and ($in | is-not-empty) {
     update $.0.text {|name: string|
       scope aliases
       | where name == $name
