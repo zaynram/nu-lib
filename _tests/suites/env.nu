@@ -19,7 +19,6 @@ const DOTENV = r#'A=1
   SPACED = "x y"
 EQ=1=2
 SINGLE='q'
-UNBALANCED="open
 '#
 
 # ——— env (main) ———————————————————————————————————————————————————————————————
@@ -161,7 +160,7 @@ def "test rm hides a variable" []: nothing -> nothing {
 
 def "test dotenv returns a record of the variables" []: nothing -> nothing {
   let vars: record = with-dotenv $DOTENV {|f| env dotenv $f }
-  assert equal $vars {A: '1' SPACED: 'x y' EQ: '1=2' SINGLE: q UNBALANCED: '"open'} 'parsed variables'
+  assert equal $vars {A: '1' SPACED: 'x y' EQ: '1=2' SINGLE: q} 'parsed variables'
 }
 
 def "test dotenv no transpose returns a table" []: nothing -> nothing {
@@ -186,6 +185,14 @@ def "test dotenv load with no transpose still loads" []: nothing -> nothing {
   assert equal $res.loaded '2' 'and the variables are loaded'
 }
 
+def "test dotenv strips export and keeps the first equals sign" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let file: path = $ctx.code | path join .env
+    "# comment\nexport SBENV_X=1\nSBENV_Y=a=b\nSBENV_Q=\"two words\"\n" | save --force $file
+    assert equal (env dotenv $file) {SBENV_X: '1' SBENV_Y: 'a=b' SBENV_Q: 'two words'} 'export is a prefix, not part of the key'
+  }
+}
+
 def "test dotenv of a file without variables is empty" []: nothing -> nothing {
   assert equal (with-dotenv "# only a comment\n\n" {|f| env dotenv $f }) {} 'an empty record'
 }
@@ -206,8 +213,19 @@ def "test dotenv of an unreadable file raises with the cause" []: nothing -> not
     # a directory exists, but cannot be read as a file
     let err: record = caught {|| env dotenv $ctx.code }
     assert equal $err.details?.code? 'env::dotenv::io' 'reading failed'
-    assert equal $err.msg $"the variables in '($ctx.code)' could not be read" 'the path is named'
+    assert equal $err.msg $"'($ctx.code)' could not be read" 'the path is named'
     assert equal ($err.details?.inner? | length) 1 'the cause is the inner error'
+  }
+}
+
+def "test dotenv of a malformed file raises invalid argument with the cause" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let file: path = $ctx.code | path join bad.env
+    "GOOD=1\nUNBALANCED=\"open\n" | save --force $file
+    let err: record = caught {|| env dotenv $file }
+    assert equal $err.details?.code? 'env::dotenv::invalid_argument' 'a parse failure is an invalid file'
+    assert equal $err.msg $"'($file)' is not a valid .env file" 'the path is named'
+    assert equal ($err.details?.inner? | length) 1 'the parser error is the inner error'
   }
 }
 

@@ -126,29 +126,25 @@ export alias rm = hide-env
 
 # Parse variables from a `.env` file, optionally loading them.
 #
-# Every `KEY=value` line is a variable (the value is everything after the first `=`); blank lines and `#` comment
-# lines are skipped, and one pair of matching quotes around a value is removed. Returns a record of the variables,
-# or a `key`/`value` table with `--no-transpose`.
+# A thin wrapper over the builtin `from dotenv`: `export KEY=value` is a plain `KEY`, blank and `#` comment lines
+# (also trailing comments) are skipped, one pair of matching quotes around a value is removed, and a malformed line
+# (no `=`, an unbalanced quote) is an error. Returns a record of the variables, or a `key`/`value` table with
+# `--no-transpose`; `--load` loads them with `load-env`, which converts PATH and every variable with an
+# `ENV_CONVERSIONS` entry.
 export def --env dotenv [
   dotenv_path: path@_dotenv_files = .env
   --load (-l) # Load the variables into the process environment
   --no-transpose (-n) # Return the variables as a table instead of a record
 ]: nothing -> oneof<table<key: string, value: string>, record> {
   if not ($dotenv_path | path exists) { error raise $"file not found: '($dotenv_path)'" --kind not_found }
-  let vars: table<key: string, value: string> = try {
-    open --raw $dotenv_path
-    | lines
-    | str trim
-    | where $it != '' and $it !~ '^#'
-    | parse '{key}={value}'
-    | update key { str trim }
-    | update value { str trim | str replace --regex `^"(.*)"$|^'(.*)'$` '$1$2' }
-  } catch {|e|
-    $e | error raise $"the variables in '($dotenv_path)' could not be read" --kind io
+  let text: string = try { open --raw $dotenv_path } catch {|e|
+    $e | error raise $"'($dotenv_path)' could not be read" --kind io
   }
-  let record: record = $vars | transpose --ignore-titles --header-row --as-record | default --empty {}
+  let record: record = try { $text | from dotenv } catch {|e|
+    $e | error raise $"'($dotenv_path)' is not a valid .env file" --kind invalid_argument
+  }
   if $load { load-env $record }
-  if $no_transpose { $vars } else { $record }
+  if $no_transpose { $record | transpose key value } else { $record }
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————
