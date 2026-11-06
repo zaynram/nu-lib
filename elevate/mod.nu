@@ -79,7 +79,8 @@ export def --wrapped with-auth [
       do $login
       execute
     } else {
-      error make --unspanned $err.details
+      # not an auth failure: `attempt`'s own error (the exit code, with the output as help) is re-raised as it is
+      $err.raw
     }
   } | if not $check { get $.stdout } else { }
 }
