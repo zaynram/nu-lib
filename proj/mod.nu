@@ -120,7 +120,7 @@ export def scan [
   --kinds (-k): list<string>@_kinds = [src dev txt ext]
   # Only operate on a subset of kinds
   --force (-f)
-  # Bypass the TTL
+  # Scan even when the snapshot is fresh (its stamp matches the kind directories and is younger than the TTL)
   --prune (-p)
   # Only remove missing directories from the registry (no additions)
   --reset (-r)
@@ -137,11 +137,15 @@ export def scan [
   }
   let work: path = workspace
   let current: oneof<nothing, record> = snapshot
-  if not ($reset or $force) and $current != null and (date now) - $current.last_scan.start < $TTL {
-    return $current.last_scan
-  }
+  if not ($reset or $force) and $current != null and not (is-stale $current) { return $current.last_scan }
   let scanned: list<string> = $KIND | columns | where $it in $kinds
-  if $reset and ($KIND | columns | all $it in $kinds) { reset-table proj }
+  let full_reset: bool = $reset and ($KIND | columns | all $it in $kinds)
+  if $full_reset {
+    # The hydration mark survives: a job resetting the registry must still keep other shells from starting one.
+    let mark: oneof<nothing, datetime> = get-meta hydrating
+    reset-table proj
+    if $mark != null { set-meta hydrating $mark | ignore }
+  }
   let start: datetime = date now
   # The registered projects that stay: every kind's rows whose directory still exists; none for a kind being reset.
   let kept: record = $KIND | columns | each {|k|
@@ -167,7 +171,7 @@ export def scan [
     end: $end
     elapsed: ($end - $start | format duration ms) # format for readability
   }
-  {stamp: (stamp $work) last_scan: $last_scan kinds: $kinds pruned_at: $current.pruned_at?}
+  {stamp: (stamp $work) last_scan: $last_scan kinds: $kinds pruned_at: (if $full_reset { null } else { $current.pruned_at? })}
   | record where value != null
   | write-snapshot
   $last_scan
@@ -196,21 +200,27 @@ export def kind [
     nothing if not $all => {
       error raise 'a kind must be provided without `--all`' --kind invalid_argument
     }
-    nothing => (
+    nothing => {
+      let work: path = workspace
+      let snap: oneof<nothing, record> = snapshot-for-reading
       $KIND | transpose name description
-      | insert $.root {|row| workspace | path join $row.name }
-      | insert $.projects {|row| rows-of $row.name }
-    )
+      | insert $.root {|row| $work | path join $row.name }
+      | insert $.projects {|row| $snap | rows-of-snapshot $row.name }
+    }
   }
 }
 
 # Display metadata related to projects and module commands.
 #
 # The counts per kind and in total, the last scan, the snapshot's `stamp` (with its `age`), whether a background
-# scan is running (`hydrating`) and, after a prune, `pruned_at`; `{}` when there is no snapshot.
+# scan is running (`hydrating`) and, after a prune, `pruned_at`. While the first scan of a workspace is still
+# running there is only `hydrating`; without a workspace the record is empty.
 export def meta [key?: string@_meta_keys]: nothing -> oneof<nothing, string, int, bool, datetime, duration, record, table> {
   let snap: oneof<nothing, record> = snapshot-for-reading
-  if $snap == null { return (if $key == null { {} } else { null }) }
+  if $snap == null {
+    let bare: record = if (has-workspace) { {hydrating: (is-hydrating)} } else { {} }
+    return (if $key == null { $bare } else { $bare | get --optional $key })
+  }
   let counts: record = $KIND | columns | each {|k| {$"($k)_count": ($snap | rows-of-snapshot $k | length)} } | into record
   let all: record = $counts
     | insert total_count ($counts | values | math sum)
@@ -230,8 +240,7 @@ export def list [
 ]: nothing -> list<ProjectInfo> {
   let snap: oneof<nothing, record> = snapshot-for-reading
   $KIND | columns
-  | each {|k| $snap | rows-of-snapshot $k | each {|p| $p | insert kind $k } }
-  | flatten
+  | each --flatten {|k| $snap | rows-of-snapshot $k | each {|p| $p | insert kind $k } }
   | if $env.project_testing!? != null { append (fixture-rows) } else { }
   | if $kind == null { } else { where kind == $kind }
   | if $long { } else { reject $.kind }
@@ -348,12 +357,14 @@ def fingerprint [work: path]: nothing -> record {
 }
 
 # Whether a snapshot is older than the TTL or was taken from a different workspace layout.
-def is-stale [snap: record]: nothing -> bool { # nu-lint-ignore: unused_helper_functions
+def is-stale [snap: record]: nothing -> bool {
   (date now) - $snap.stamp.at > $TTL or $snap.stamp.fingerprint != (fingerprint $env.work!)
 }
 
-# Whether a hydration job is running in this shell.
-def is-hydrating []: nothing -> bool { job list | any description? == $JOB }
+# Whether a hydration job is running: this shell's, or another shell's (a fresh `hydrating` mark).
+def is-hydrating []: nothing -> bool {
+  (job list | any description? == $JOB) or (get-meta hydrating | if $in == null { false } else { (date now) - $in < $HYDRATING })
+}
 
 # Refresh a missing or stale snapshot in a background job, unless another shell is already at it. The job is
 # disposable (`--auto-kill`: the snapshot write is atomic, so a killed job leaves the previous snapshot in place) and
@@ -364,8 +375,11 @@ def hydrate []: nothing -> nothing { # nu-lint-ignore: unused_helper_functions
   let mark: oneof<nothing, datetime> = get-meta hydrating
   if $mark != null and (date now) - $mark < $HYDRATING { return }
   set-meta hydrating (date now) | ignore
+  # Past the TTL every registered project is inspected again (a remote changes inside an unchanged directory); a
+  # changed layout only needs the new directories inspected and the missing ones dropped.
+  let expired: bool = $snap == null or (date now) - $snap.stamp.at > $TTL
   job spawn --auto-kill --description $JOB {||
-    try { scan --force | ignore } catch {|e| log warning $"proj: the background scan failed: ($e.msg)" }
+    try { scan --force --reset=$expired | ignore } catch {|e| log warning $"proj: the background scan failed: ($e.msg)" }
     drop-meta hydrating | ignore
   } | ignore
 }
@@ -378,9 +392,9 @@ def apply-aliases []: record -> record {
   if $map == {} { return $kinds }
   $kinds | record each {|kind rows|
     let named: list<record> = $rows | each {|r| $r | insert alias ($map | alias-for $r.path | default $r.name) }
-    let kept: list<record> = $named | where $it.alias == $it.name | each {|r| $r | reject alias }
+    let kept: list<record> = $named | where alias == $it.name | each {|r| $r | reject alias }
     let moved: list<record> = $named
-      | where $it.alias != $it.name and $it.alias not-in ($kept | each {|r| $r.name })
+      | where alias != $it.name and alias not-in ($kept | each {|r| $r.name })
       | each {|r| $r | update name $r.alias | reject alias }
     {$kind: ($kept | append $moved)}
   }
@@ -432,7 +446,7 @@ def inspect [root: path name: string]: nothing -> record {
   | {name: $name path: $root ...$in}
 }
 
-# Drop the registered projects whose directory is gone and restamp the snapshot; returns how many were dropped.
+# Drop the registered projects whose directory is gone; returns how many were dropped.
 def prune-missing-dirs []: nothing -> int {
   let snap: record = snapshot
     | default {
@@ -443,7 +457,8 @@ def prune-missing-dirs []: nothing -> int {
     }
   let kinds: record = $snap.kinds | record each {|k rows| {$k: ($rows | where ($it.path | path exists))} }
   let removed: int = ($snap.kinds | count) - ($kinds | count)
-  $snap | update kinds $kinds | update stamp (stamp (workspace)) | upsert pruned_at (date now) | write-snapshot
+  # The stamp stays: it names the directory state the rows were computed from, and nothing was inspected here.
+  $snap | update kinds $kinds | upsert pruned_at (date now) | write-snapshot
   $removed
 }
 

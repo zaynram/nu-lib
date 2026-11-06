@@ -513,7 +513,7 @@ def in-interactive [fx: record, code: string, --pre: string = '', --vars: record
 }
 
 # Wait (up to 10 s) for the hydration job of the running shell to finish.
-const AWAIT: string = 'mut n = 0; while (job list | is-not-empty) and $n < 100 { sleep 100ms; $n += 1 }'
+const AWAIT: string = 'for _ in 1..100 { if (job list | is-empty) { break }; sleep 100ms }'
 
 def "test snapshot is the only key the registry holds" []: nothing -> nothing {
   case {|fx|
@@ -575,5 +575,39 @@ def "test hydration a failing job keeps the previous snapshot and warns once" []
       assert equal $r.value.names [tools] 'the snapshot is the old one'
       assert equal $r.value.keys [snapshot] 'the mark is cleared'
       assert equal ($r.stderr | lines | where $it =~ 'proj: the background scan failed' | length) 1 'one warning'
+  }
+}
+
+def "test prune keeps the stamp and a plain scan then sees the new directory" []: nothing -> nothing {
+  case {|fx|
+      let code = 'proj scan --force | ignore; let before = (proj meta).stamp.fingerprint.src; mkdir ($env.WORK | path join src delta); proj scan --prune | ignore; let kept = (proj meta).stamp.fingerprint.src == $before; proj scan | ignore; {kept: $kept, names: (proj list --kind src | get name | sort)}'
+      let r = in-proj $fx $code
+      assert $r.kept 'prune inspects nothing, so it leaves the fingerprint alone'
+      assert ('delta' in $r.names) 'a plain scan honours the fingerprint, not only the TTL'
+  }
+}
+
+def "test hydration past the ttl inspects registered projects again" []: nothing -> nothing {
+  case {|fx|
+      in-proj $fx 'proj scan --force' | ignore
+      ^git -C ($fx.work | path join dev/tools) remote add origin 'git@github.com:zaynram/tools.git'
+      in-proj $fx 'use std-rfc/kv *; kv get --universal --table=proj snapshot | update stamp.at ((date now) - 2day) | kv set --universal --table=proj snapshot | ignore' | ignore
+      let r = in-interactive $fx $"($AWAIT); proj list --kind dev | where name == tools | get 0.repo"
+      assert equal $r.value 'zaynram/tools' 'the TTL refresh re-inspects the repository'
+  }
+}
+
+def "test meta reports hydration while the first scan runs" []: nothing -> nothing {
+  case {|fx|
+      # a fresh mark stands for another shell's job; this shell spawns none and has no snapshot to read
+      let r = in-interactive $fx 'proj meta' --pre 'use std-rfc/kv *; kv set --universal --table=proj hydrating (date now) | ignore'
+      assert equal $r.value {hydrating: true} 'only the hydration state is known'
+  }
+}
+
+def "test reset drops pruned_at and keeps the hydration mark" []: nothing -> nothing {
+  case {|fx|
+      let code = 'use std-rfc/kv *; proj scan --force | ignore; proj scan --prune | ignore; kv set --universal --table=proj hydrating (date now) | ignore; proj scan --reset | ignore; {pruned: (proj meta pruned_at), mark: (kv get --universal --table=proj hydrating | describe)}'
+      assert equal (in-proj $fx $code) {pruned: null mark: datetime} 'metadata gone, the mark kept'
   }
 }
