@@ -23,8 +23,6 @@
 # stdout is the only output. Exports are joined by declaration id, which
 # is why each submodule needs a child of its own: a submodule's declarations
 # are visible to `scope` only once it is imported itself.
-# The collector's nested-child pattern is necessary and intentional due to the
-# limitations of `nu` v0.114.2.
 
 const ROOT: path = path self .. | path expand --strict
 const CHILD_SCRIPT = r#'
@@ -71,13 +69,16 @@ let carried = $module.commands.decl_id | append $module.aliases.decl_id
 '#
 
 # Resolve one collect target into the child's `use` argument and the
-# `scope modules` predicate pinning down the imported module. Bare names
-# resolve through the child's lib dirs; paths are expanded here so the
-# predicate can match on the module's file identity, with a bare `mod.nu`
-# target resolved to its parent directory (importing the file directly
-# would name the module `mod`).
+# `scope modules` predicate pinning down the imported module. A target is a
+# path when it contains a path separator, ends in `.nu`, or exists on disk
+# relative to the current directory (so `.` and `..` are paths); anything
+# else is a module name resolved through the child's lib dirs. Paths are
+# expanded here so the predicate can match on the module's file identity,
+# with a bare `mod.nu` target resolved to its parent directory (importing
+# the file directly would name the module `mod`).
 def resolve [target: string]: nothing -> record<use: string, where: string> {
-  if not (($target =~ '[/\\]') or ($target ends-with .nu)) {
+  let is_path: bool = $target =~ '[/\\]' or ($target ends-with .nu) or ($target | path exists)
+  if not $is_path {
     return {use: $target, where: $"name == ($target | to nuon)"}
   }
   let full: path = try { $target | path expand --strict } catch {
@@ -95,8 +96,10 @@ def resolve [target: string]: nothing -> record<use: string, where: string> {
   {use: $entry, where: $"file == ($file | to nuon)"}
 }
 
-# Library directories the child resolves bare module names against: the
-# caller's NU_LIB_DIRS plus the nupm modules directory.
+# Library directories the child resolves bare module names against, first
+# match wins: this repository's root, the caller's `$env.NU_LIB_DIRS`, the
+# parse-time `$NU_LIB_DIRS` constant, then the nupm modules directory
+# (`$env.NUPM_HOME/modules`, default `<data-dir>/../nupm/modules`).
 def include-dirs []: nothing -> list<string> {
   [
     $ROOT
@@ -136,7 +139,7 @@ def collect-tree [ctx: record]: nothing -> list<record> {
   | append (
     $raw.submodules | each {|sub|
       collect-tree {
-        uses: ($ctx.uses | append $"use ($raw.module.name) ($sub)")
+        uses: ($ctx.uses | append $"use ($raw.module.name | to nuon) ($sub | to nuon)")
         where: $ctx.where
         path: ($ctx.path | append $sub)
         root: $root
@@ -208,17 +211,19 @@ def normalize []: record -> record {
 
 # Extract the documentation model for one or more Nushell modules.
 #
-# Each target is either a module name (resolved against the caller's
-# NU_LIB_DIRS and the nupm modules directory) or a filesystem path to a
-# module directory, its mod.nu, or a single-file module. The result is one
-# row per target plus one per nested submodule (named by its parent chain,
-# e.g. `warrior time`): the module's own metadata plus normalized tables of
+# Each target is either a module name (resolved against this repository's
+# root, the caller's NU_LIB_DIRS and the nupm modules directory) or a
+# filesystem path to a module directory, its mod.nu, or a single-file
+# module; a target containing a path separator, ending in `.nu`, or existing
+# on disk (including `.` and `..`) is a path. The result is one row per
+# target plus one per nested submodule (named by its parent chain, e.g.
+# `nested sub`): the module's own metadata plus normalized tables of
 # its exported commands, aliases, and constants, each sorted for diff-stable
 # output. Command names are the ones in scope after importing that row's
 # module (`main` shown as the module name). Persist the diffable IR snapshot
 # by piping through `to nuon`.
-@example "collect an installed module and list its command names" {
-  collect tasks | first | get commands.name
+@example "collect a library module and list its command names" {
+  collect completion | first | get commands.name
 }
 @example "persist a module directory's model as a nuon snapshot" {
   collect ./docgen | to nuon --indent 2 | save docs/api.nuon
