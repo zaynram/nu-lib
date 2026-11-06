@@ -333,6 +333,39 @@ def "test a previously configured completer becomes the fallback" []: nothing ->
   }
 }
 
+def "test calling set-completer again keeps the first fallback" []: nothing -> nothing {
+  with-stubs {|ctx|
+    with-env {CARAPACE_STUB_OUT: '[]'} {
+      $env.config.completions.external.completer = {|buffer| [previous] }
+      local set-completer
+      local set-completer
+      assert equal (do $env.config.completions.external.completer 'ls x') [previous] 'not chained into itself (X9)'
+    }
+  }
+}
+
+def "test calling set-completer again does not chain the provider" []: nothing -> nothing {
+  with-stubs {|ctx|
+    let log: path = $ctx.code | path join carapace.log
+    stub $ctx.code carapace $"echo call >> '($log)'; printf '[]'"
+    local set-completer
+    local set-completer
+    assert equal (do $env.config.completions.external.completer 'ls x') [] 'no fallback'
+    assert equal (open $log | lines | length) 1 'the provider runs once'
+  }
+}
+
+def "test set-completer with a default replaces its own fallback" []: nothing -> nothing {
+  with-stubs {|ctx|
+    with-env {CARAPACE_STUB_OUT: '[]'} {
+      $env.config.completions.external.completer = {|buffer| [previous] }
+      local set-completer
+      local set-completer --default {|buffer| [given] }
+      assert equal (do $env.config.completions.external.completer 'ls x') [given] '--default wins'
+    }
+  }
+}
+
 def "test an empty buffer completes to nothing" []: nothing -> nothing {
   local set-completer
   assert equal (do $env.config.completions.external.completer '') [] 'no tokens, no provider'

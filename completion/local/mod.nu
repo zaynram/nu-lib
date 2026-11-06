@@ -134,25 +134,11 @@ module carapace-complete {
 
 export use carapace-complete
 
-# ——— definitions ——————————————————————————————————————————————————————————————
+# ——— helpers ——————————————————————————————————————————————————————————————————
 
-# Configure completions using `carapace` and `fish` as providers.
-# The command under the cursor (its first word resolved through aliases) picks the provider: commands listed in
-# `$env.fish_commands` (default `[nu git td asdf]` when unset; `[]` disables fish) go to `fish`, everything else
-# to `carapace`. Fallback providers can be passed with `--default` or by setting a custom completer before
-# invoking this function: the fallback runs with the buffer when the provider returns nothing.
-# The completer takes `buffer` and an optional `place`: Nushell hands it both by name, so `place.command` (the
-# command after a pipe, `;` or inside a closure) is completed; called with a buffer alone, the whole buffer is.
-@category core
-export def --env set-completer [
-  --default (-d): closure
-  # Fallback closure to run with `$buffer` as a positional when completions are empty
-]: nothing -> nothing {
-  # Initialize defaults if the value is `null` when setting the completer;
-  # this is intentional so that an empty list is treated as "don't use fish completions"
-  if $env.fish_commands? == null { $env.fish_commands = $FISH }
-  let default: oneof<nothing, closure> = $default | default { $env.config.completions.external.completer? }
-  $env.config.completions.external.completer = {|buffer: string, place?: record|
+# The external completer `set-completer` installs, with `default` as its fallback.
+def completer [default: oneof<nothing, closure>]: nothing -> closure {
+  {|buffer: string, place?: record|
     let spans: list<string> = if $place == null { $buffer } else { $place.command | str join (char sp) }
       | into spans --unalias
     $spans | match $spans.0? {
@@ -163,6 +149,33 @@ export def --env set-completer [
       do --ignore-errors $default $buffer | default []
     } else { }
   }
+}
+
+# ——— definitions ——————————————————————————————————————————————————————————————
+
+# Configure completions using `carapace` and `fish` as providers.
+# The command under the cursor (its first word resolved through aliases) picks the provider: commands listed in
+# `$env.fish_commands` (default `[nu git td asdf]` when unset; `[]` disables fish) go to `fish`, everything else
+# to `carapace`. Fallback providers can be passed with `--default` or by setting a custom completer before
+# invoking this function: the fallback runs with the buffer when the provider returns nothing.
+# A completer this command installed is never taken as the fallback: calling it again without `--default` keeps
+# the installed completer (and its fallback) as it is.
+# The completer takes `buffer` and an optional `place`: Nushell hands it both by name, so `place.command` (the
+# command after a pipe, `;` or inside a closure) is completed; called with a buffer alone, the whole buffer is.
+@category core
+export def --env set-completer [
+  --default (-d): closure
+  # Fallback closure to run with `$buffer` as a positional when completions are empty
+]: nothing -> nothing {
+  # Initialize defaults if the value is `null` when setting the completer;
+  # this is intentional so that an empty list is treated as "don't use fish completions"
+  if $env.fish_commands? == null { $env.fish_commands = $FISH }
+  let current: oneof<nothing, closure> = $env.config.completions.external.completer?
+  # closures compare equal when they come from the same literal: this recognizes any completer `completer` built
+  let installed: bool = $current != null and $current == (completer null)
+  if $installed and $default == null { return }
+  let fallback: oneof<nothing, closure> = if $default != null { $default } else { $current }
+  $env.config.completions.external.completer = completer $fallback
 }
 
 # Complete a command using the configured external custom completer (installing it for this call if unset).
