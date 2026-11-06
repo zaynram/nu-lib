@@ -572,6 +572,18 @@ def "test dynamic rule msg and help aliases" []: nothing -> nothing {
   assert equal ({a: 1} | validate rules $rules | get hint) ['only reason'] 'the hint defaults to the reason'
 }
 
+def "test dynamic closures of a long table run one row at a time" []: nothing -> nothing {
+  # `$.t.n` is judged in every row of `$.t`, in parallel for a table this long unless the rule has `dynamic`: the
+  # closures below would then race on the file and write their rows out of order.
+  with-sandbox {|ctx|
+    let log = $ctx.code | path join order.log
+    let rules = [{path: $.t type: table} {path: $.t.n type: int dynamic: {log: {|v at| sleep 1ms; $"($v)\n" | save --append $log }}}]
+    let doc = {t: (0..99 | each {|i| {n: $i} })}
+    assert equal ($doc | validate rules $rules) $doc 'the closures pass'
+    assert equal (open --raw $log | lines) (0..99 | each { into string }) 'every row, in row order'
+  }
+}
+
 def "test long tables report rows in order" []: nothing -> nothing {
   # long enough to be judged in parallel
   let rows = 0..199 | each {|i| if $i mod 7 == 0 { {n: $i} } else { {n: ($i | into string)} } }

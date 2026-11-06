@@ -26,7 +26,7 @@ const TABLE_TYPE: string = '^(table|list<record[<>])'
 # A type alternative `--strict` scans for undeclared keys: records and the table types (`is-container-type`).
 const CONTAINER_TYPE: string = '^(record|table|list<record[<>])'
 const RETURNS: list<string> = [one input nothing table]
-# Tables with more rows than this are judged with `par-each`.
+# Tables with more rows than this are judged with `par-each` (rules without `dynamic` closures only).
 const PARALLEL_ROWS: int = 64
 
 # A preset's `syntax: true` highlights every context field as nu code; `syntax: false` highlights `{at}` only and
@@ -178,8 +178,9 @@ def evaluate-single-rule [
         result: (if $reached == null { [] } else { $reached.value | verdicts $at $rule })
       }
     }
-    # `par-each` costs about a millisecond to start; it only pays off for long tables
-    if ($rows | length) > $PARALLEL_ROWS {
+    # `par-each` costs about a millisecond to start; it only pays off for long tables. A rule with `dynamic`
+    # closures is judged row by row regardless: they are the caller's code, which may write to shared state.
+    if ($rows | length) > $PARALLEL_ROWS and $rule.dynamic? == null {
       $rows | enumerate | par-each --keep-order $judge
     } else {
       $rows | enumerate | each $judge
@@ -247,6 +248,8 @@ def foreign-keys [names: list<string> at: cell-path]: any -> list<record> {
 #   any failure it reports
 #   - The closure is passed the value as pipeline input and first positional, and its cell-path as the second
 #   - Lists and tables are iterated: the closure sees one element (one row) at a time, with the element's path
+#   - The closures run one row at a time, in row order, even on a long table (whose other rules are judged in
+#     parallel): a closure may write to shared state (`kv`, a file) without racing another row
 #   - It passes by returning nothing (or any non-record value)
 #   - It fails by raising (the error's `msg` is the `reason`, its `help` the `hint`) or by returning a record with
 #     `reason` (or `msg`) and optionally `hint` (or `help`); every other field of a returned record is kept as
