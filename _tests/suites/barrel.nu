@@ -98,7 +98,7 @@ def "test local variants have no stray main" []: nothing -> nothing {
 
 def "test local barrel has every local variant under its module name" []: nothing -> nothing {
   with-sandbox {|ctx|
-    let names: list<string> = plain $ctx "scope commands | where name starts-with 'local' | get name" --prelude $'use ($ROOT) local'
+    let names: list<string> = plain $ctx "scope commands | where name starts-with 'local' | get name" --prelude $'use ($ROOT)/local.nu'
     let modules: list<string> = glob ($ROOT | path join * local mod.nu) | each { path dirname --num-levels 2 | path basename }
     assert equal ($modules | sort) [alarm completion mods] 'the local variants today'
     let absent: list<string> = $modules | where {|m| $names | all {|n| $n != $"local ($m)" and not ($n starts-with $"local ($m) ") } }
@@ -110,14 +110,14 @@ def "test local barrel has every local variant under its module name" []: nothin
       'local mods' 'local mods define' 'local mods edit' 'local mods list' 'local mods refresh'
     ]
     assert equal ($expected | where $it not-in $names) [] 'their commands'
-    let star: list<string> = plain $ctx "scope commands | where name starts-with 'local' | get name"
-    assert equal ($star | sort) ($names | sort) 'use <root> * exposes the same local commands'
+    let star: list<string> = plain $ctx "scope commands | where name starts-with 'local ' | get name"
+    assert equal $star [] 'use <root> * exposes none of them'
   }
 }
 
 def "test local barrel mains delegate" []: nothing -> nothing {
   with-sandbox {|ctx|
-    let r: record = plain $ctx '{mods: (local mods | columns) alarm: (local alarm | describe)}' --prelude $'use ($ROOT) local'
+    let r: record = plain $ctx '{mods: (local mods | columns) alarm: (local alarm | describe)}' --prelude $'use ($ROOT)/local.nu'
     assert equal $r.mods [name module_id] 'local mods returns the tracked modules'
     assert ($r.alarm =~ '^(list|table|nothing)') $'local alarm lists the alarms: ($r.alarm)'
   }
@@ -255,26 +255,29 @@ def "test loading the barrel twice changes nothing" []: nothing -> nothing {
 
 # ——— prelude.nu and init-local ————————————————————————————————————————————————
 
-# The line every generated file carries (the prelude path exactly as `init-local` writes it; `to nuon` is not a
-# parse-time command, so this is a def, not a const).
-def prelude-line []: nothing -> string { $"use ($ROOT | path join prelude.nu | to nuon) *" }
+# The line every generated file carries (the root exactly as `init-local` writes it; `to nuon` is not a parse-time
+# command, so this is a def, not a const).
+def prelude-line []: nothing -> string { $"use ($ROOT | to nuon) *" }
 
-def "test prelude.nu exposes the surface without the local prefixes" []: nothing -> nothing {
+def "test the barrel has the local variants bare and local.nu has them prefixed" []: nothing -> nothing {
   with-sandbox {|ctx|
     let probe: string = 'scope commands | where type == custom | get name | sort'
-    let all: list<string> = plain $ctx $probe
-    let surface: list<string> = plain $ctx $probe --prelude (prelude-line)
-    assert equal ($surface | where $it starts-with 'local ') [] 'no `local …` names'
-    assert equal $surface ($all | where $it not-starts-with 'local ') 'otherwise exactly the barrel surface'
+    let surface: list<string> = plain $ctx $probe
+    assert equal ($surface | where $it starts-with 'local ') [] 'no `local …` names from `use <root> *`'
+    assert ('alarm set' in $surface and 'mods edit' in $surface and 'set-completer' in $surface) 'the variants are bare'
     assert ('init-local' in $surface) 'including init-local'
-    let loaded: record = plain $ctx '{libs: ($env.NU_LIB_DIRS | length) consts: ($NU_LIB_DIRS | length)}' --prelude (prelude-line)
-    assert ($loaded.libs > 3 and $loaded.consts > 0) 'its environment set-up ran and the constants are exported'
+    let baseline: list<string> = plain $ctx $probe --prelude ''
+    let prefixed: list<string> = plain $ctx $probe --prelude $'use ($ROOT)/local.nu'
+    assert ('local alarm set' in $prefixed and 'local mods edit' in $prefixed and 'local completion set-completer' in $prefixed) 'local.nu has the prefixed forms'
+    assert equal ($prefixed | where $it !~ '^local ' and $it not-in $baseline) [] 'and nothing else beyond the standard library'
+    let loaded: record = plain $ctx '{libs: ($env.NU_LIB_DIRS | length) consts: ($NU_LIB_DIRS | length)}'
+    assert ($loaded.libs > 3 and $loaded.consts > 0) 'the barrel ran its environment set-up and exports the constants'
   }
 }
 
 def "test init-local writes the autoload file once and keeps edits" []: nothing -> nothing {
   with-sandbox {|ctx|
-    let expected: path = $ctx.config | path join nushell autoload local.nu
+    let expected: path = $ctx.config | path join nushell autoload nu-lib.nu
     let first: record = plain $ctx 'init-local'
     assert equal $first {path: $expected action: written} 'written into the first user autoload directory'
     assert equal (open --raw $expected | lines | slice 1..) [(prelude-line)] 'one `use` line after a one-line header'
@@ -298,7 +301,7 @@ def "test init-local path flag" []: nothing -> nothing {
 
 def "test the generated file gives an interactive login shell the bare local variants" []: nothing -> nothing {
   with-sandbox {|ctx|
-    let target: path = $ctx.code | path join local.nu
+    let target: path = $ctx.code | path join nu-lib.nu
     plain $ctx $"init-local --path ($target | to nuon)" | ignore
     let probe: string = '{
       alarm: (scope commands | where name == "alarm set" | is-not-empty)

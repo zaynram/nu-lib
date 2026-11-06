@@ -26,8 +26,9 @@ version checks. Check `nu --version` before assuming a language behavior; verify
   Machine-specific values come from configuration (see `_docs/module-partition.md`), not from code.
 - Mixed modules are split: `<module>/local/mod.nu` re-exports the abstract part and adds the configuration-dependent
   commands (`alarm`, `completion`, `mods`). `completion/external` is a deprecated shim for `completion/local`. The
-  root `local` barrel gathers them (`local alarm …`); `prelude.nu` is the surface with them as bare names and no
-  prefixes, and `init-local` writes the autoload file that loads it (see `_docs/module-partition.md`).
+  root barrel exposes them as bare names; `local.nu` (`use <root>/local.nu`) gives the `local …`-prefixed forms and
+  is kept out of `use <root> *` so completions stay clean; `init-local` writes the autoload file that loads the
+  barrel (see `_docs/module-partition.md`).
 
 ## Module partition
 
