@@ -188,10 +188,17 @@ def "test prune nothing missing removes nothing" []: nothing -> nothing {
   }
 }
 
+# The error `code` raises in the child, as `{msg code help}` (`in-proj` fails when it raises nothing).
+def caught-in-proj [fx: record, code: string]: nothing -> record {
+  in-proj $fx $"try { ($code); error make --unspanned {msg: 'sbproj: nothing was raised'} } catch {|e| {msg: $e.msg code: $e.details?.code? help: $e.details?.help?} }"
+}
+
 def "test prune missing metadata raises a helpful error" []: nothing -> nothing {
   case {|fx|
-      let msg = in-proj $fx 'use std-rfc/kv *; kv drop --universal --table=proj total_count | ignore; try { proj scan --prune; "no error" } catch {|e| $e.msg }'
-      assert equal $msg 'no metadata found'
+      let err = caught-in-proj $fx 'use std-rfc/kv *; kv drop --universal --table=proj total_count | ignore; proj scan --prune'
+      assert equal $err.msg 'no metadata found' 'the message'
+      assert equal $err.code 'proj::prune-missing-dirs::not_found' 'the code'
+      assert equal $err.help 'run a scan first' 'the remedy is the advice'
   }
 }
 
@@ -219,8 +226,9 @@ def "test main kind narrows the query" []: nothing -> nothing {
 
 def "test main no match raises an error naming the query" []: nothing -> nothing {
   case {|fx|
-      let msg = in-proj $fx 'try { proj zzz; "no error" } catch {|e| $e.msg }'
-      assert equal $msg "no project matches 'zzz'"
+      let err = caught-in-proj $fx 'proj zzz'
+      assert equal $err.msg "no project matches 'zzz'" 'the message'
+      assert equal $err.code 'proj::not_found' 'the code (main has no command segment)'
   }
 }
 
@@ -262,7 +270,7 @@ def "test scan without work names the variable" []: nothing -> nothing {
   with-sandbox {|ctx|
     let err = in-bare $ctx 'try { proj scan; null } catch {|e| {msg: $e.msg code: $e.details?.code? help: $e.details?.help?} }'
     assert equal $err.msg 'WORK is not set' 'the message names WORK'
-    assert equal $err.code 'proj::workspace::unset' 'a stable error code'
+    assert equal $err.code 'proj::workspace::missing_dependency' 'the derived code: the missing configuration'
     assert ($err.help has '$env.WORK') 'the advice says what to set'
   }
 }
@@ -309,7 +317,10 @@ def "test scan kinds reset drops only that kind" []: nothing -> nothing {
 
 def "test scan rejects an unknown kind" []: nothing -> nothing {
   case {|fx|
-      assert equal (in-proj $fx 'try { proj scan --force --kinds [src zz]; null } catch {|e| $e.msg }') "unknown kind: 'zz'" 'named in the error'
+      let err = caught-in-proj $fx 'proj scan --force --kinds [src zz]'
+      assert equal $err.msg "unknown kind: 'zz'" 'named in the error'
+      assert equal $err.code 'proj::scan::invalid_argument' 'the code'
+      assert ($err.help =~ 'src, txt, dev, ext') $'the advice lists the kinds: ($err.help)'
   }
 }
 
@@ -393,8 +404,12 @@ def "test kind all lists every kind" []: nothing -> nothing {
 
 def "test kind errors" []: nothing -> nothing {
   case {|fx|
-      assert equal (in-proj $fx 'try { proj kind zz; null } catch {|e| $e.msg }') "unknown kind: 'zz'" 'unknown kind'
-      assert equal (in-proj $fx 'try { proj kind; null } catch {|e| $e.msg }') 'a kind must be provided without `--all`' 'no kind'
+      let unknown = caught-in-proj $fx 'proj kind zz'
+      assert equal $unknown.msg "unknown kind: 'zz'" 'unknown kind'
+      assert equal $unknown.code 'proj::kind::invalid_argument' 'the code'
+      let none = caught-in-proj $fx 'proj kind'
+      assert equal $none.msg 'a kind must be provided without `--all`' 'no kind'
+      assert equal $none.code 'proj::kind::invalid_argument' 'the same code'
   }
 }
 
@@ -426,7 +441,10 @@ def "test fixture registers and removes test projects" []: nothing -> nothing {
 
 def "test fixture after without before raises" []: nothing -> nothing {
   case {|fx|
-      assert equal (in-proj $fx 'use proj [test]; try { test after; null } catch {|e| $e.msg }') "project test fixture is inactive for kind: 'test'" 'inactive fixture'
+      let err = caught-in-proj $fx 'use proj [test]; test after'
+      assert equal $err.msg "project test fixture is inactive for kind: 'test'" 'inactive fixture'
+      # the code names the raising def; the `test` submodule it lives in is not a segment
+      assert equal $err.code 'proj::after::conflict' 'the code'
   }
 }
 

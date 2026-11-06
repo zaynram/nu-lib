@@ -75,7 +75,7 @@ export module test {
   export def --env after [kind: string = 'test']: nothing -> nothing {
     let t: string = kind-to-table-name $kind
     if $env not-has project_testing or $env.project_testing!? != {kind: $kind table: $t} {
-      error make --unspanned $"project test fixture is inactive for kind: '($kind)'"
+      error raise $"project test fixture is inactive for kind: '($kind)'" --kind conflict --advice 'run `test before` with the same kind first'
     } else {
       # Hidden first: after a `def --env` call such as `kv drop`, `hide-env` no longer reaches the caller.
       hide-env project_testing
@@ -113,7 +113,9 @@ export def scan [
     | if $in != null and (date now) - $in.start < $TTL { return $in }
   }
   let unknown: list<string> = $kinds | where {|k| $KIND not-has $k }
-  if $unknown != [] { error make --unspanned $"unknown kind: '($unknown | first)'" }
+  if $unknown != [] {
+    error raise $"unknown kind: '($unknown | first)'" --kind invalid_argument --advice $"kinds: ($KIND | columns | str join ', ')"
+  }
   let work: path = workspace
   let scanned: list<string> = $KIND | columns | where $it in $kinds
   if $reset { reset-meta ...$scanned }
@@ -141,14 +143,16 @@ export def kind [
   # Return descriptions and registered projects for all kinds
 ]: nothing -> oneof<KindSummary, list<KindSummary>, error> {
   match ($kind | describe) {
-    string if $KIND not-has $kind => { error make --unspanned $"unknown kind: '($kind)'" }
+    string if $KIND not-has $kind => {
+      error raise $"unknown kind: '($kind)'" --kind invalid_argument --advice $"kinds: ($KIND | columns | str join ', ')"
+    }
     string => {
       name: $kind
       root: (workspace | path join $kind)
       description: ($KIND | get $kind)
       projects: (list-kind --insert=true $kind)
     }
-    nothing if not $all => { error make --unspanned 'a kind must be provided without `--all`' }
+    nothing if not $all => { error raise 'a kind must be provided without `--all`' --kind invalid_argument }
     nothing => (
       $KIND | transpose name description
       | insert $.root {|row| workspace | path join $row.name }
@@ -207,7 +211,8 @@ export def --env main [
   list --kind=$kind --long
   | match ($query | describe) { nothing => () string => { where name =~ $query } }
   | match ($in | length) {
-    0 => { error make --unspanned $"no project matches '($query)'" }
+    # the arm receives the match input (the table), which `error raise` does not take: hence `null |`
+    0 => { null | error raise $"no project matches '($query)'" --kind not_found }
     1 => (first)
     _ => (input list --fuzzy --display={|it| display-label $it })
   } | if $in == null { return } else {
@@ -337,7 +342,7 @@ def record-scan-metadata [
 
 def prune-missing-dirs []: nothing -> nothing {
   let total: int = get-meta total_count
-    | default { error make --unspanned {msg: 'no metadata found' help: 'run a scan first'} }
+    | default { error raise 'no metadata found' --kind not_found --advice 'run a scan first' }
   $KIND | columns | each {|k|
     let table: string = kind-to-table-name $k
     # Rows without a value are placeholders that concurrent `kv` writers can leave behind, not projects.
@@ -381,7 +386,7 @@ def has-workspace []: nothing -> bool { $env.work!? | is-not-empty }
 # The workspace root, `$env.WORK`; raises an error naming the variable when it is unset or empty.
 def workspace []: nothing -> path {
   if not (has-workspace) {
-    error raise --code=proj::workspace::unset 'WORK is not set' --advice 'set $env.WORK to the workspace root (the directory that holds src, txt, dev and ext)'
+    error raise 'WORK is not set' --kind missing_dependency --advice 'set $env.WORK to the workspace root (the directory that holds src, txt, dev and ext)'
   }
   $env.work!
 }
