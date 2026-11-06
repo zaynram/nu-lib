@@ -9,7 +9,7 @@ method that finds new ones; refresh it when the nightly moves.
 | Feature | Where the library uses it | In-binary docs |
 |---|---|---|
 | `record each` / `record where` | record mapping and filtering everywhere (CLAUDE.md "Data shaping"); 7×/3× faster than `items … \| into record` | `help record each` |
-| `from dotenv` (and converting `load-env`) | `env dotenv` is a thin wrapper; `env from-bash --load` relies on `load-env` applying `ENV_CONVERSIONS` | `help from dotenv`, `help load-env` |
+| `from dotenv` (and converting `load-env`) | `env parse` (formerly `env dotenv`) is a thin wrapper; `env from-bash --load` relies on `load-env` applying `ENV_CONVERSIONS` | `help from dotenv`, `help load-env` |
 | `config use-colors` | every ANSI colour goes through `style` (`colors`/`paint`), which asks it | `help config use-colors` |
 | `view span`, `view files` | `error raise` derives codes from the raise site without reading disk | `help view span` |
 | `run <script>` keyword | `conf machine-config` runs a `.nu` override in a child with `run … \| to nuon` (typed result; `run` needs a parse-time constant path, so it cannot run a user path in-process) | `help run` |

@@ -6,8 +6,12 @@
 use error
 use completion "into completions"
 
-# `env from-bash`.
+# `env from-bash` and `env parse`.
 export use from-bash.nu
+export use parse.nu
+
+# Parse variables from a `.env` file (deprecated: `env parse` reads it, and more).
+export alias dotenv = parse
 
 def _keys []: nothing -> oneof<list, record> {
   $env | transpose value description
@@ -126,35 +130,5 @@ export def has [
 # Remove variables from the current scope.
 export alias rm = hide-env
 
-# Parse variables from a `.env` file, optionally loading them.
-#
-# A thin wrapper over the builtin `from dotenv`: `export KEY=value` is a plain `KEY`, blank and `#` comment lines
-# (also trailing comments) are skipped, one pair of matching quotes around a value is removed, and a malformed line
-# (no `=`, an unbalanced quote) is an error. In unquoted and double-quoted values `$NAME` and `${NAME}` expand to
-# an earlier key of the file or else to `$env` (names ignore case); an undefined name expands to nothing (`p$ss` is
-# `p`; `${NAME:-word}` gives `word`). Single quotes keep a value literal. Unquoted, a backslash does not escape `$`
-# (`A=\$X` is a backslash and the expansion of `X`); in double quotes `\$` keeps the dollar literal (`A="\$X"` is
-# `$X`). Returns a record of the
-# variables, or a `key`/`value` table with `--no-transpose`; `--load` loads them with `load-env`, which converts
-# PATH and every variable with an `ENV_CONVERSIONS` entry.
-export def --env dotenv [
-  dotenv_path: path@_dotenv_files = .env
-  --load (-l) # Load the variables into the process environment
-  --no-transpose (-n) # Return the variables as a table instead of a record
-]: nothing -> oneof<table<key: string, value: string>, record> {
-  if not ($dotenv_path | path exists) {
-    error raise $"file not found: '($dotenv_path)'" --kind not_found
-  }
-  let text: string = try { open --raw $dotenv_path } catch {|e|
-    $e | error raise $"'($dotenv_path)' could not be read" --kind io
-  }
-  let record: record = try { $text | from dotenv } catch {|e|
-    $e | error raise $"'($dotenv_path)' is not a valid .env file" --kind invalid_argument
-  }
-  if $load { load-env $record }
-  if $no_transpose { $record | transpose key value } else { $record }
-}
-
 # ——— completions ——————————————————————————————————————————————————————————————
 
-def _dotenv_files []: nothing -> list<path> { '.env' | commandline complete --type=path }

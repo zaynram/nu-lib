@@ -6,6 +6,9 @@
 # record crosses back, as nuon: return strings and lists of strings. Stdout is the result, so report on stderr
 # (`print --stderr`). A failing script fails `machine-config` (`conf::machine::load::external_failure`, with this stderr).
 #
+# Declarative values (XDG directories, `WORK`) can also come from `~/.config/environment.d/*.conf`, read without
+# bash: `env parse ($nu.home-dir | path join .config environment.d)` (systemd's order and expansion rules).
+#
 # These are the owner's values for a laptop that runs Nushell both in WSL (Linux) and natively on Windows:
 # - Linux, user scope: the XDG directories come from `~/.profile`, read through `env from-bash` with a minimal
 #   PATH (the system directories and those of `bash` and `env`), so `binaries` gets the PATH entries the profile

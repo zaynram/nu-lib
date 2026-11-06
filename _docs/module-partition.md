@@ -47,7 +47,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `error` | `error raise` with coded errors. |
 | `log` | Thin wrappers over `std/log`. |
 | `var` | Named values in `std-rfc/kv` (state follows `$nu.data-dir`). |
-| `env` | `.env` parsing, env-var helpers. `env from-bash` runs `bash` (and `env`) to read a bash script's variables; bash is not counted as a dependency, since a bash script implies it. |
+| `env` | Env-var helpers; `env parse` reads `.env`/`environment.d` files with the builtin `from dotenv` (a line checker names what a dotenv file cannot hold) and sends `.sh`/`.profile`-style files through `env from-bash`, which runs `bash` (and `env`) to read a script's variables; bash is not counted as a dependency, since a bash script implies it. |
 | `path` | Path rewriting helpers. `path select` is interactive (needs a TTY). |
 | `completion` | Builds completion records (`into completions`, `into spans`). |
 | `hook` | Reads and edits `$env.config.hooks`; pure over the config record. |

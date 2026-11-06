@@ -51,7 +51,7 @@ def "test barrel exposes the module namespaces" []: nothing -> nothing {
     let names: list<string> = plain $ctx '(scope commands | get name) ++ (scope aliases | get name)'
     let expected: list<string> = [
       'pman upgrade' 'pman history' 'link bin' 'reload' 'edit' 'path rejoin' 'path truncate' 'session list' 'session enter'
-      'proj scan' 'track focus' 'time' 'todo' 'hook add' 'conf vars' 'conf machine-config' 'env' 'env dotenv' 'env from-bash' 'error raise'
+      'proj scan' 'track focus' 'time' 'todo' 'hook add' 'conf vars' 'conf machine-config' 'env' 'env parse' 'env dotenv' 'env from-bash' 'error raise'
       'alarm' 'alarm set' 'alarm unset' 'alarm list' 'alarm show'
       'mods' 'mods define' 'mods edit' 'mods list' 'mods refresh'
       'elevate' 'elevate sh' 'elevate with-auth'

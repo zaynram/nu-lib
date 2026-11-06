@@ -211,16 +211,19 @@ def "test dotenv defaults to the current directory" []: nothing -> nothing {
 
 def "test dotenv of a missing file raises" []: nothing -> nothing {
   let err: record = caught {|| env dotenv /nonexistent/sbenv/.env }
-  assert equal $err.msg "file not found: '/nonexistent/sbenv/.env'" 'an unresolvable path is an error'
-  assert equal $err.details?.code? 'env::dotenv::not_found' 'the derived code'
+  assert equal $err.msg "not found: '/nonexistent/sbenv/.env'" 'an unresolvable path is an error'
+  assert equal $err.details?.code? 'env::parse::not_found' 'the derived code'
 }
 
 def "test dotenv of an unreadable file raises with the cause" []: nothing -> nothing {
+  if (is-admin) { skip 'root can read a file without permissions' }
   with-sandbox {|ctx|
-    # a directory exists, but cannot be read as a file
-    let err: record = caught {|| env dotenv $ctx.code }
-    assert equal $err.details?.code? 'env::dotenv::io' 'reading failed'
-    assert equal $err.msg $"'($ctx.code)' could not be read" 'the path is named'
+    let file: path = $ctx.code | path join locked.env
+    "A=1\n" | save --force $file
+    ^chmod 000 $file
+    let err: record = caught {|| env dotenv $file }
+    assert equal $err.details?.code? 'env::parse::read-text::io' 'reading failed'
+    assert equal $err.msg $"'($file)' could not be read" 'the path is named'
     assert equal ($err.details?.inner? | length) 1 'the cause is the inner error'
   }
 }
@@ -230,7 +233,7 @@ def "test dotenv of a malformed file raises invalid argument with the cause" []:
     let file: path = $ctx.code | path join bad.env
     "GOOD=1\nUNBALANCED=\"open\n" | save --force $file
     let err: record = caught {|| env dotenv $file }
-    assert equal $err.details?.code? 'env::dotenv::invalid_argument' 'a parse failure is an invalid file'
+    assert equal $err.details?.code? 'env::parse::read-file::invalid_argument' 'a parse failure is an invalid file'
     assert equal $err.msg $"'($file)' is not a valid .env file" 'the path is named'
     assert equal ($err.details?.inner? | length) 1 'the parser error is the inner error'
   }
@@ -553,4 +556,84 @@ def "test from bash execute takes only preserve" []: nothing -> nothing {
 def "test from bash without bash raises" []: nothing -> nothing {
   let err: record = with-sandbox {|ctx| with-env {PATH: [$ctx.code]} { caught {|| 'A=1' | env from-bash } } }
   assert equal $err.details?.code? 'env::from-bash::missing_dependency' 'bash is looked up on PATH'
+}
+
+# ——— parse ————————————————————————————————————————————————————————————————————
+
+# A directory of files under the sandbox; returns its path.
+def env-dir [ctx: record files: record]: nothing -> path {
+  let dir: path = $ctx.code | path join envd
+  mkdir $dir
+  $files | items {|name text| $text | save --force ($dir | path join $name) } | ignore
+  $dir
+}
+
+def "test parse reads a directory in lexical order with later files winning" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {'05-z.conf': "A=0\n" '10-a.conf': "A=1\n" '20-b.env': "B=$A/x\n" 'README.md': "not an env file\n"}
+    assert equal (env parse $dir) {A: '1' B: '1/x'} 'conf and env files in order; README ignored; B sees A'
+  }
+}
+
+def "test parse dispatches bash scripts by extension, basename, shebang and lines" []: nothing -> nothing {
+  need-bash
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {'c.sh': "export C=$(echo hi)\n" '.profile': "export P=1\n" 'script': "#!/bin/bash\nexport S=2\n" 'mixed': "if true; then export M=3; fi\n"}
+    let files = [c.sh .profile script mixed] | each {|f| $dir | path join $f }
+    assert equal (env parse ...$files) {C: hi P: '1' S: '2' M: '3'} 'every bash route'
+  }
+}
+
+def "test parse classifies an unnamed assignment file as dotenv" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {vars: "D=1\n"}
+    assert equal (env parse ($dir | path join vars)) {D: '1'} 'all assignments: no shell involved'
+  }
+}
+
+def "test parse names the first line a dotenv file cannot hold" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {'bad.env': "A=1\nif [ -d /x ]; then\nfi\n" 'shell.env': "X=$(hostname)\n"}
+    let e1 = try { env parse ($dir | path join bad.env); {} } catch {|e| $e }
+    assert str contains $e1.msg "line 2 is not KEY=VALUE: if [ -d /x ]; then" 'the offending line'
+    assert equal $e1.details?.code? 'env::parse::read-file::invalid_argument' 'the code'
+    assert str contains ($e1.details?.help? | default '') 'from-bash' 'the remedy'
+    let e2 = try { env parse ($dir | path join shell.env); {} } catch {|e| $e }
+    assert str contains $e2.msg 'line 1 needs a shell: X=$(hostname)' 'a value only a shell gives meaning to'
+  }
+}
+
+def "test parse rejects a file name it has no reader for" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {'x.toml': "k = 'v'\n"}
+    let e = try { env parse ($dir | path join x.toml); {} } catch {|e| $e }
+    assert equal $e.details?.code? 'env::parse::read-file::invalid_argument' 'the code'
+    assert str contains $e.msg 'no reader' 'the message'
+    let missing = try { env parse ($dir | path join none.env); {} } catch {|e| $e }
+    assert equal $missing.details?.code? 'env::parse::not_found' 'a missing path'
+  }
+}
+
+def "test parse merges several paths in order and later files see earlier ones" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {'a.env': "A=1\n" 'b.env': "A=2\nB=$A\n" 'c.env': "C=$B-$A\n"}
+    let files = [a.env b.env c.env] | each {|f| $dir | path join $f }
+    assert equal (env parse ...$files) {A: '2' B: '2' C: '2-2'} 'later wins; expansion sees the accumulated values'
+  }
+}
+
+def "test parse load and no transpose" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {'l.env': "SBENV_P=9\n"}
+    assert equal (env parse --no-transpose ($dir | path join l.env)) [[key value]; [SBENV_P '9']] 'a table'
+    env parse --load ($dir | path join l.env) | ignore
+    assert equal $env.SBENV_P? '9' 'loaded'
+  }
+}
+
+def "test dotenv is the deprecated alias of parse" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {'.env': "A=1\n"}
+    assert equal (env dotenv ($dir | path join .env)) {A: '1'} 'the alias reads the file'
+  }
 }
