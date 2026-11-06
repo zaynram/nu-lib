@@ -479,12 +479,14 @@ def with-server [ctx: record action: closure]: nothing -> record {
 # sandbox. With `--pty`, the grandchild runs in a pseudo-terminal and the list holds the prompts to answer
 # (`expect send` pairs, see the fixture). Returns the command's `{value}` or `{error code help rendered}`, plus
 # `output` (stdout and stderr) and `exit_code`.
-def run-bump [ctx: record flags: string --vars: record = {} --pty: list<string>]: nothing -> record {
+def run-bump [ctx: record flags: string --vars: record = {} --pty: list<string> --colors]: nothing -> record {
   let exe: path = $ctx.code | path join nubin nu
   if not ($exe | path exists) { mkdir ($exe | path dirname); cp $nu.current-exe $exe }
   let out: path = $ctx.code | path join result.nuon
   rm --force $out
-  let program: string = $BUMP | fill-in {'@FLAGS@': $flags '@OUT@': ($out | to nuon)}
+  # `--colors` turns colours on inside the child (it has no terminal, so they are off by default).
+  let program: string = ($BUMP | fill-in {'@FLAGS@': $flags '@OUT@': ($out | to nuon)})
+    | if $colors { $"$env.config.use_ansi_coloring = true\n($in)" } else { }
   let args: list<string> = [--no-config-file $'--include-path=($ROOT)' --commands $program]
   let env_vars: record = {
     HOME: $ctx.home
@@ -504,7 +506,7 @@ def run-bump [ctx: record flags: string --vars: record = {} --pty: list<string>]
     }
   }
   let result: record = if ($out | path exists) { open $out } else { {} }
-  $result | merge {output: ($res.stdout + $res.stderr | ansi strip) exit_code: $res.exit_code}
+  $result | merge {output: ($res.stdout + $res.stderr | ansi strip) raw: ($res.stdout + $res.stderr) exit_code: $res.exit_code}
 }
 
 # The first argument of every run of the installed stub `nu`.
@@ -595,6 +597,18 @@ def "test bump nu outside the home directory needs elevation" []: nothing -> not
     }
     assert equal $r.value.code pman::nightly::install-dir::unsupported $'the error: ($r.value.output)'
     assert equal $r.requests [] 'before fetching anything'
+  }
+}
+
+def "test bump nu colours its log lines only when colours are on" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = with-server $ctx {|url|
+      release $ctx $url $NEWER
+      {off: (run-bump $ctx $'(flags $ctx $url) --check') on: (run-bump $ctx $'(flags $ctx $url) --check' --colors)}
+    }
+    assert str contains $r.value.off.raw 'fetching the latest release' 'the log line is written either way'
+    assert ($r.value.off.raw !~ '\e\[') 'no escape sequences off a terminal'
+    assert ($r.value.on.raw =~ '\e\[') 'escape sequences when use_ansi_coloring is true'
   }
 }
 
@@ -782,7 +796,7 @@ def "test bump nu reload execs the installed nu" []: nothing -> nothing {
       run-bump $ctx $'(flags $ctx $url) --yes --reload'
     }
     assert equal $r.value.exit_code 0 $'the exec succeeds: ($r.value.output)'
-    assert equal ($r.value | columns) [output exit_code] 'the process was replaced before it could save a result'
+    assert equal ($r.value | columns) [output raw exit_code] 'the process was replaced before it could save a result'
     assert equal (nu-runs $ctx | last) 'run:' 'the installed nu ran, without arguments'
   }
 }
