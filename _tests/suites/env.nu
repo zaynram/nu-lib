@@ -333,6 +333,22 @@ def "test from bash load leaves the directory alone" []: nothing -> nothing {
   assert equal [$env.PWD $env.SBFB_CD] [$pwd '1'] 'but PWD is not loaded'
 }
 
+def "test from bash cd follows the script into its final directory" []: nothing -> nothing {
+  need-bash
+  let pwd: path = $env.PWD
+  let target: path = mktemp --directory --tmpdir sbfb-cd-XXXXXX
+  let out: record = $"cd ($target)\nexport SBFB_CD=2" | env from-bash --cd
+  assert equal ($env.PWD | path expand) ($target | path expand) "--cd changes to the script's final directory"
+  assert equal $env.SBFB_CD? null 'without --load nothing else is loaded'
+  cd $pwd
+  "cd /\nexport SBFB_CD=3" | env from-bash --cd --load | ignore
+  assert equal [$env.PWD $env.SBFB_CD] [/ '3'] '--cd and --load combine'
+  cd $pwd
+  "export SBFB_CD=4" | env from-bash --cd | ignore
+  assert equal $env.PWD $pwd 'a script that does not cd leaves the directory alone'
+  rm --recursive --force $target
+}
+
 def "test from bash execute compares each function with the state before it" []: nothing -> nothing {
   # bash-env 0.10.1 compared each function with every earlier snapshot: SBFB_GONE (and KEEP once f1 removed it)
   # came back as null for every later function, and `export -n` inside a function went unreported.

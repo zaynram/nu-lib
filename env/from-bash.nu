@@ -134,7 +134,8 @@ def failed [failure: record<phase: string, status: string> stderr: string]: noth
 # `preserve` returns `{env shellvars}` unchanged, plus `fn: {<function>: {env shellvars}}` with `--execute`, whose
 # functions run in order after the script, each compared with the state just before it. `--load` loads the
 # script's `env` changes (null for a removed variable), except PWD, OLDPWD, FILE_PWD and CURRENT_FILE; `load-env`
-# turns PATH and every variable with an `ENV_CONVERSIONS` entry into its Nushell value.
+# turns PATH and every variable with an `ENV_CONVERSIONS` entry into its Nushell value. A `cd` in the script shows
+# up as the returned PWD/OLDPWD; `--cd` makes the caller follow it (change to the script's final directory).
 @example "read the variables a script exports" { 'export N=10' | env from-bash } --result {N: '10'}
 @example "unexported variables are shell variables" { 'ABC=123' | env from-bash --return shellvars } --result {ABC: '123'}
 @example "load the environment of a profile" { open --raw ~/.profile | env from-bash --load | ignore }
@@ -147,6 +148,7 @@ export def --env main [
   --execute: list<string> = [] # Functions to run after the script; returns their changes too (implies `--return preserve`)
   --return (-r): string@$RETURN # What to return: `merge` (default), `env`, `shellvars` or `preserve` (see above)
   --load (-l) # Load the script's environment changes into the caller
+  --cd # Change to the directory the script ended in (its PWD), when it changed it
   --keep-empty (-k) # Keep removed (null) and empty variables in a `merge`, `env` or `shellvars` result
   --serialize (-s) # Return the result as NUON text
 ]: [
@@ -195,6 +197,7 @@ export def --env main [
     | each {|pair| compare ($pair | first) ($pair | last) }
   let main: record = $comparisons | first
   if $load { $main.env | reject --optional ...$UNLOADABLE | load-env }
+  if $cd and ($main.env.PWD? | default '') != '' { cd $main.env.PWD }
   let mode: string = if $execute != [] { 'preserve' } else { $return | default merge }
   let result: record = match $mode {
     preserve if $execute == [] => $main
