@@ -5,10 +5,13 @@ use var
 use ../mod.nu *
 
 # Every test writes the universal store: each starts with this guard, which skips instead of touching a real data
-# directory (`--no-sandbox`) and empties the sandboxed store. (A skip raised from a `before each` hook would be
-# reported as an error.)
+# directory (`--no-sandbox`) and empties the sandboxed store. The runner's sandbox points `XDG_DATA_HOME` into a
+# throwaway directory under the temp dir, and the data dir follows it; a data dir anywhere else is the real one.
+# (A skip raised from a `before each` hook would be reported as an error.)
 def guard-store []: nothing -> nothing {
-  if not ($nu.data-dir | str starts-with ($nu.temp-dir | path join nutest-sandbox-)) {
+  let data_home: string = $env.XDG_DATA_HOME? | default ''
+  let in_temp: bool = $data_home != '' and ($data_home | str starts-with ($nu.temp-dir | path join ''))
+  if not ($in_temp and ($nu.data-dir | str starts-with $data_home)) {
     skip 'needs the runner sandbox: the universal kv store would be the real one'
   }
   # start empty, also when the tests share one child (`--isolation suite`)
