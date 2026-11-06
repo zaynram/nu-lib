@@ -242,6 +242,10 @@ def foreign-keys [names: list<string> at: cell-path]: any -> list<record> {
 #   table, and its failures name the row (`$.rows.1.name`).
 # - Rules for a container come before the rules for its children
 #   - This means that the children of an absent or failed container are not judged.
+#   - A path through a value that cannot hold keys (a scalar, or a list of scalars) is not judged either, even when
+#     `required`, if no rule declares that container: `$.r.q` passes on `{r: 5}`. Declare the container
+#     (`{path: $.r type: record}`) to have the mismatch reported. An absent undeclared container is different: a
+#     `required` rule under it fails as missing.
 # - `--strict` scans the root and every `record`/`table` rule that has child rules; an undeclared key in a table
 #   row is reported under the row's index (`$.rows.0.typo`).
 @category test

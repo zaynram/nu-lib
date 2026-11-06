@@ -462,9 +462,13 @@ def "test a path through a scalar does not crash" []: nothing -> nothing {
   assert ((caught { {r: 5} | validate rules $rules --return=one --strict }) == null) 'also when bailing'
 }
 
-# ignore: pending decision V13 (a key under an undeclared, mistyped container is not judged, even when required)
 def "test a key under an undeclared mistyped container is not judged" []: nothing -> nothing {
-  assert equal ({r: 5} | validate rules [{path: $.r.q type: int required: true}]) {r: 5} 'no failure without a rule for the container'
+  let rules = [{path: $.r.q type: int required: true}]
+  assert equal ({r: 5} | validate rules $rules) {r: 5} 'no failure without a rule for the container'
+  assert equal ({r: [1 2]} | validate rules $rules --strict) {r: [1 2]} 'nor under a list of scalars, even strict'
+  assert equal ({} | validate rules $rules | get path) [$.r.q] 'an absent container still reports the key missing'
+  let declared = {r: 5} | validate rules ($rules | prepend {path: $.r type: record}) | select path rule
+  assert equal $declared [{path: $.r rule: typecheck}] 'declaring the container reports the mismatch instead'
 }
 
 def "test strict skips a mistyped record under a table" []: nothing -> nothing {
