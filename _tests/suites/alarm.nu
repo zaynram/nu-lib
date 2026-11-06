@@ -227,5 +227,6 @@ def "test local dialog calls match the tui commands" []: nothing -> nothing {
     | into record
   assert ('status' in $params.'tui label') 'tui label --status'
   assert ('hook' in $params.'tui button') 'tui button takes a hook closure'
+  assert ('dialog' in $params.'tui run') 'tui run --dialog'
   assert ('size' in $params.'tui run') 'tui run --size'
 }

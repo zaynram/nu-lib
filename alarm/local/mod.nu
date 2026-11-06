@@ -1,6 +1,6 @@
-# Named alarms (see `alarm`) whose expiry opens a `tui` dialog with the alarm's text and a dismiss button.
+# Named alarms (see `alarm`) whose expiry opens a small `tui` popup with the alarm's text and a dismiss button.
 #
-# Configuration-dependent: the dialog needs the `tui` plugin and an interactive terminal. Without them an
+# Configuration-dependent: the dialog needs the `tui` commands and an interactive terminal. Without them an
 # expired alarm prints its text instead, and still runs its callback and forgets itself.
 
 # ——— imports ——————————————————————————————————————————————————————————————————
@@ -41,12 +41,12 @@ export def main [
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
-# Show the alarm's text in a `tui` dialog until it is dismissed; print it when the dialog cannot open.
+# Show the alarm's text in a small (60x5) `tui` popup until it is dismissed; print it when the dialog cannot open.
 # nu-lint-ignore: unused_helper_functions
 def dialog [text: string]: nothing -> nothing {
   if (which tui | is-empty) { print $text; return }
   try {
-    tui label --status $text | tui button 'dismiss' {|| {action: quit} } | tui run --size=[60 1]
+    tui label --status $text | tui button 'dismiss' {|| {action: quit} } | tui run --dialog --size [60 5]
   } catch {
     print $text
   }
