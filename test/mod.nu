@@ -180,7 +180,7 @@ export def main [
         | if $debug { debug echo 'suites-root' } else { }
         | match ($in | path type) {
           file => (append [])
-          dir => (glob --no-dir --no-symlink --depth=3 $'($in)/*/*.nu')
+          dir => (glob --no-dir --no-symlink --depth=3 $'($in)/**/*.nu')
         } | where ($it | path basename) =~ $match
       } catch {
         error make --unspanned {
