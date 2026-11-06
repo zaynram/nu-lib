@@ -112,7 +112,9 @@ def "test set silent returns nothing" []: nothing -> nothing {
 
 def "test set without pairs" []: nothing -> nothing {
   guard-store
-  assert equal (caught { var set }).msg 'no key-value pairs were provided' 'no input and no key'
+  let e = caught { var set }
+  assert equal $e.msg 'no key-value pairs were provided' 'no input and no key'
+  assert equal $e.code 'var::set::invalid_argument' 'the derived code'
   assert equal (caught { [] | var set }).msg 'no key-value pairs were provided' 'an empty table'
   assert equal (var set --silent) null 'silently nothing'
 }
@@ -136,7 +138,9 @@ def "test pop without a key removes the last pair" []: nothing -> nothing {
 
 def "test pop on an empty store is an error" []: nothing -> nothing {
   guard-store
-  assert equal (caught { var pop }).msg 'there are no stored key-value pairs' 'nothing to pop'
+  let e = caught { var pop }
+  assert equal $e.msg 'there are no stored key-value pairs' 'nothing to pop'
+  assert equal $e.code 'var::pop::not_found' 'the derived code'
 }
 
 def "test pop of a missing key is null" []: nothing -> nothing {

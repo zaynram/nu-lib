@@ -2,6 +2,7 @@
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
+use error
 use std-rfc/kv *
 
 # ——— aliases ——————————————————————————————————————————————————————————————————
@@ -20,7 +21,7 @@ export def pop [
   # The name of the variable to remove (if omitted, the `| last` pair will be dropped)
 ]: nothing -> oneof<nothing, any> {
   match ($key | default { kv list --universal | last | get $.key? }) {
-    null => { error make --unspanned 'there are no stored key-value pairs' }
+    null => { error raise 'there are no stored key-value pairs' --kind not_found }
     $k => { kv drop --universal $k }
   }
 }
@@ -37,18 +38,18 @@ export def set [
   --silent (-s)
   # Disable returning the full variable set as a record
 ]: oneof<nothing, record, table<key: string, value: any>> -> oneof<nothing, record> {
-  match ($in | describe | split words | first) {
+  let pairs: table = $in | match ($in | describe | split words | first) {
     nothing => []
     # an empty table describes as `list<any>`
     table | list => { }
     record => { transpose key value }
   } | if $key != null { append {key: $key value: $value} } else { }
-  | if $in != [] {
-    each {|row| $row.value | kv set --universal $row.key } | ignore
-    if not $silent { kv list --universal | transpose --ignore-titles --header-row --as-record }
-  } else {
-    if not $silent { error make --unspanned 'no key-value pairs were provided' }
+  if $pairs == [] {
+    if not $silent { error raise 'no key-value pairs were provided' --kind invalid_argument }
+    return
   }
+  $pairs | each {|row| $row.value | kv set --universal $row.key } | ignore
+  if not $silent { kv list --universal | transpose --ignore-titles --header-row --as-record }
 }
 
 # Interact with variables in the universal `kv` store.
