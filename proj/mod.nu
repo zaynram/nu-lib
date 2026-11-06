@@ -7,6 +7,7 @@
 use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
 use hook with
 use error
+use style
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -391,12 +392,10 @@ def workspace []: nothing -> path {
   $env.work!
 }
 
+# The picker label of a project, `kind/name` in the kind's colour. Not cached: a styled label stored in kv would be
+# wrong whenever the colour setting differs from the one it was first computed under (and a kv read costs more).
 def display-label [it: record<name: string, kind: string>]: nothing -> string {
-  let base: string = $it | format pattern $'{kind}(char psep){name}'
-  let key: string = $base + '-label'
-  get-meta $key | default {||
-    set-meta --return=value $key $'(ansi ($COLOR | get $it.kind))($base)(ansi rst)'
-  }
+  $it | format pattern $'{kind}(char psep){name}' | style paint ($COLOR | get $it.kind)
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————
