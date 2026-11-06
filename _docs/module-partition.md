@@ -66,6 +66,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `pman` | Package managers, cargo; `bump-nu` downloads the latest Nushell nightly (network: GitHub's API and release assets), extracts it with `tar`, smoke-tests the new `nu` (it must report its version and load this library as a login shell, so `conf`'s loader runs) before writing the nu binary, keeps the replaced files as `.previous` for `--rollback`, and edits the plugin registry. Destructive. |
 | `link` | `sudo`, `ln`, `unlink`; Windows `cmd /c mklink`. Privileged. |
 | `edit` | `$EDITOR` / `buffer_editor`, `zellij`. |
+| `session` | `zellij` (sessions, actions, `run`, `attach`); `ZELLIJ`/`ZELLIJ_SESSION_NAME` identify the current session, `ZELLIJ_AUTO_SESSION` names the default for `enter`, layouts come from `ZELLIJ_CONFIG_DIR` or `$XDG_CONFIG_HOME/zellij`. |
 | `elevate` | `sudo`. Privileged. |
 | `reload` | `reset` (only with a TTY on stdin), re-`exec` of the shell binary. |
 | `windows` | WSL interop (`/mnt/c`, `powershell.exe`, `where.exe` — resolved on PATH/WINPATH, else System32 — and `wslpath`). |
@@ -99,10 +100,11 @@ unguarded).
 
 ## Outside code
 
-Nothing outside the repository is imported at parse time, and no third-party code is vendored. Two components
+Nothing outside the repository is imported at parse time, and no third-party code is vendored. Three components
 started as outside code and were adopted as first-class module members instead: `pman bump-nu` (from the owner's
-`nightly-toolkit` rewrite) and `env from-bash` (a jq-free reimplementation of the owner's `bash-env` fork; its
-header credits tesujimath/bash-env-nushell, MIT). If outside code the library must execute ever appears again,
+`nightly-toolkit` rewrite), `env from-bash` (a jq-free reimplementation of the owner's `bash-env` fork; its
+header credits tesujimath/bash-env-nushell, MIT) and `session` (the owner's `nupm+/session` Zellij module, minus
+its `edit`, which the `edit` module covers). If outside code the library must execute ever appears again,
 vendor it under the module that uses it, import it relatively, and record its provenance here.
 
 ## Rules of thumb for new code
