@@ -30,6 +30,7 @@ def fill-in [values: record]: string -> string {
 # Write an executable stub that appends `<name> <args>` to `log` and echoes it (or fails, with `--fail`), then runs
 # the shell lines of `--also`.
 def stub [dir: path name: path log: path --fail --also: string = '']: nothing -> nothing {
+  need-posix
   mkdir $dir
   let body: string = if $fail {
     $'echo "($name) failed: $*" >&2(char newline)exit 3'
@@ -322,9 +323,11 @@ def "test reload plugins filters by name" []: nothing -> nothing {
 const NEWER: string = '0.999.0-nightly.1'
 const OLDER: string = '0.998.0-nightly.1'
 
-# The `nu` of the fixture archives (see the section comment); `stub-nu` fills in @LOG@, @NU@ and @VERSION@.
+# The `nu` of the fixture archives (see the section comment); `stub-nu` fills in @LOG@, @NU@ and @VERSION@. The
+# program of a `--login` run (its sixth argument) is kept in `@LOG@.login`.
 const STUB_NU: string = r##'#!/bin/sh
 printf 'run:%s\n' "$1${2:+ $2}" >> '@LOG@'
+case " $* " in *" --login "*) printf '%s' "$6" > '@LOG@.login' ;; esac
 case " $* " in
   *" --version "*|*" version | get version "*) echo '@VERSION@'; exit 0 ;;
   *" --commands "*) exec '@NU@' "$@" ;;
@@ -356,6 +359,7 @@ exit 0
 # Write a stub `nu` (`STUB_NU` unless another template is given) of `version` to `file`, logging to
 # `$ctx.code/nu.log`.
 def stub-nu [ctx: record file: path version: string --template: string = $STUB_NU]: nothing -> nothing {
+  need-posix
   mkdir ($file | path dirname)
   $template | fill-in {'@LOG@': ($ctx.code | path join nu.log) '@NU@': $nu.current-exe '@VERSION@': $version} | save --force $file
   ^chmod +x $file
@@ -384,6 +388,7 @@ def flags [ctx: record url: string]: nothing -> string {
 
 # Write an executable stub plugin built for nushell `version`, of its own version `--plugin-version` (see the fixture).
 def stub-plugin [file: path version: string --plugin-version: string = '0.1.0']: nothing -> nothing {
+  need-posix
   mkdir ($file | path dirname)
   open --raw ($FIXTURES | path join pman nu_plugin_stub.sh)
   | fill-in {'@VERSION@': $version '@PLUGIN_VERSION@': $plugin_version}
@@ -430,6 +435,7 @@ def release [
   --login-failing-nu # The archives' `nu` fails as a login shell (where `conf`'s loader runs)
   --without-nu # The archives hold no `nu`
 ]: nothing -> nothing {
+  need-posix # the stubs, and `tar`
   let www: path = $ctx.code | path join www
   mkdir $www
   let template: string = if $broken_nu { $BROKEN_NU } else if $version_only_nu { $VERSION_ONLY_NU } else if $login_failing_nu { $LOGIN_FAILING_NU } else { $STUB_NU }
@@ -775,16 +781,18 @@ def "test bump nu installs after a matching SHA256SUMS" []: nothing -> nothing {
   }
 }
 
-def "test bump nu warns when SHA256SUMS does not list the archive" []: nothing -> nothing {
+def "test bump nu refuses an archive that SHA256SUMS does not list" []: nothing -> nothing {
   with-sandbox {|ctx|
     let r: record = with-server $ctx {|url|
       release $ctx $url $NEWER --digest none --sums unlisted
       run-bump $ctx $'(flags $ctx $url) --yes'
     }
-    assert ($ctx | bin-dir | path join nu | path exists) $'installed: ($r.value.output)'
+    assert equal $r.value.code? pman::nightly::download::io $'the error: ($r.value.output)'
+    assert ($r.value.error =~ "^SHA256SUMS does not list 'nu-") $'it names the checksum file and the archive: ($r.value.error)'
+    assert ($r.value.help =~ 'incomplete') $'the advice says why: ($r.value.help)'
     assert ('SHA256SUMS' in ($r | paths)) 'the checksums are fetched'
-    assert ($r.value.output =~ "verification skipped: SHA256SUMS does not list 'nu-") $'a warning says why: ($r.value.output)'
-    assert not ($r.value.output =~ 'verified the sha256') 'nothing was verified'
+    assert not ($ctx | bin-dir | path exists) 'nothing is installed'
+    assert equal (ls --all ($ctx.root | path join tmp)) [] 'the download is cleaned up'
   }
 }
 
@@ -847,6 +855,23 @@ def "test bump nu smoke tests the new nu before installing" []: nothing -> nothi
     assert equal (nu-runs $ctx | first 2) ['run:--no-config-file --commands' 'run:--no-config-file --login'] $'the version, then the library load as a login shell: ($r.value.output)'
     let out: string = $r.value.output
     assert (($out | str index-of 'smoke-testing') < ($out | str index-of 'installed ')) 'before anything is installed'
+  }
+}
+
+def "test the smoke test imports the barrel and every module directory" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    with-server $ctx {|url|
+      release $ctx $url $NEWER
+      run-bump $ctx $'(flags $ctx $url) --yes'
+    } | ignore
+    let program: string = open --raw ($ctx.code | path join nu.log.login)
+    let imported: list<string> = $program | split row '; ' | where $it starts-with 'use '
+      | each { str replace --regex '^use (.+?)( \*)?$' '$1' | from nuon | path basename }
+    let expected: list<string> = glob ($ROOT | path join '*' mod.nu) | path dirname | path basename
+    assert equal ($imported | first) ($ROOT | path basename) $'the barrel first: ($program)'
+    # `drop nth 0`, not `skip 1`: `skip` is the runner's command in a suite.
+    assert equal ($imported | drop nth 0 | sort) ($expected | sort) 'then every module directory under the root'
+    assert ([util var mount _tests] | all {|m| $m in $expected }) 'those the barrel does not expose included'
   }
 }
 
