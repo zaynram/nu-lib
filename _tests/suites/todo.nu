@@ -241,6 +241,22 @@ def "test edit maps its flags to td options" []: record -> nothing {
   assert equal $row.content renamed 'returns the updated row'
 }
 
+def "test edit with an empty label set removes the labels" []: record -> nothing {
+  let t = $in
+  respond $t task-update (task t1 one)
+  respond $t project-list $PROJECTS
+  todo edit t1 --labels [] | ignore
+  assert equal (calls $t | first) [task update t1 --json --no-labels] '`[]` maps to --no-labels (D8)'
+}
+
+def "test edit without labels leaves them alone" []: record -> nothing {
+  let t = $in
+  respond $t task-update (task t1 one)
+  respond $t project-list $PROJECTS
+  todo edit t1 --content one | ignore
+  assert equal (calls $t | first) [task update t1 --json --content one] 'neither --labels nor --no-labels'
+}
+
 # ——— projects, labels, passthrough ————————————————————————————————————————————
 
 def "test projects and labels select their columns" []: record -> nothing {

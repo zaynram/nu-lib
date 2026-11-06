@@ -91,7 +91,7 @@ export def edit [
   ref: string@_tasks # Task id, `id:<id>`, or exact content
   --content: string # New content
   --description (-d): string # New description
-  --labels (-l): list<string>@_labels # Replacement label set
+  --labels (-l): list<string>@_labels # Replacement label set; `[]` removes every label (`td --no-labels`)
   --due: oneof<datetime, string> # New due date; a string passes through as the Todoist due string
   --no-due # Remove the due date
   --priority: int # 1 (p1, urgent) to 4 (p4)
@@ -100,6 +100,7 @@ export def edit [
     content: $content
     description: $description
     labels: ($labels | join-labels)
+    no-labels: ($labels == [])
     due: ($due | format-due)
     priority: ($priority | format-priority)
     no-due: $no_due
@@ -211,8 +212,9 @@ def "into options" [
   | reduce --fold=($fold | compact --empty) {|row| append [$row.name $row.value] | compact }
 }
 
+# Labels as `td`'s comma-separated value; null for none (no flag).
 def join-labels []: oneof<nothing, list<string>> -> oneof<nothing, string> {
-  if ($in | describe) == list<string> { str join , }
+  if ($in | is-not-empty) { str join , }
 }
 
 def format-due []: oneof<nothing, datetime, string> -> oneof<nothing, string> {
