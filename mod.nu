@@ -94,6 +94,52 @@ export module local {
   export use completion
 }
 
+# ——— bootstrap ————————————————————————————————————————————————————————————————
+
+const ROOT: path = path self .
+const AUTOLOAD_FILE: string = 'local.nu'
+
+# Write the autoload file that exposes every `<module>/local` variant unprefixed in interactive shells.
+#
+# The file loads the barrel as the overlay `__lib__`, activates the `local` barrel on top of it and hides `__lib__`
+# again, which leaves the full variants as bare names (`alarm set`, `completion set-completer`, `mods edit`, …).
+# Hiding an overlay reverts the environment it set up, so the file must run after the barrel is already loaded
+# (autoload files run in name order: `local.nu` sorts after a file such as `abc.nu` that does `use <root> *`).
+# With `--barrel` the file loads the barrel itself first and stands alone. Writing is idempotent: an existing file
+# with the same content is left alone, and one with different content is kept unless `--force` is given.
+@category env
+export def init-local [
+  --barrel (-b) # Load the whole barrel (`use <root> *`) in the file first, so it needs no other configuration
+  --path (-p): path # The file to write (default: `local.nu` in the first user autoload directory)
+  --force (-f) # Overwrite the file when its content differs
+]: nothing -> record<path: path, action: string> {
+  let file: path = $path | default { $nu.user-autoload-dirs | first | path join $AUTOLOAD_FILE } | path expand
+  let text: string = [
+    '# Written by `init-local` (nu-lib): the `<module>/local` variants as bare commands, via overlays.'
+    (if $barrel {
+      '# Loads the barrel itself; regenerate without --barrel if another autoload file already loads it.'
+    } else {
+      '# Needs the barrel loaded by an earlier autoload file (`use <root> *`); regenerate with --barrel otherwise.'
+    })
+    (if $barrel { $"use ($ROOT | to nuon) *" })
+    $"overlay use ($ROOT | to nuon) as __lib__"
+    'overlay use local'
+    'overlay hide __lib__'
+  ] | compact | str join (char newline) | $in + (char newline)
+  let current: oneof<nothing, string> = if ($file | path type) == file { open --raw $file }
+  let action: string = match $current {
+    null => 'written'
+    $same if $same == $text => 'unchanged'
+    _ if $force => 'overwritten'
+    _ => 'kept'
+  }
+  if $action in [written overwritten] {
+    mkdir ($file | path dirname)
+    $text | save --force $file
+  }
+  {path: $file action: $action}
+}
+
 # ——— activation ———————————————————————————————————————————————————————————————
 
 export use prelude *
@@ -112,7 +158,7 @@ export use prelude *
 #   PATH into WINPATH.
 # Every block is idempotent, so loading the barrel again changes nothing.
 export-env {
-  const root: path = path self .
+  const root: path = $ROOT
   let missing: list<path> = $NU_LIB_DIRS | where $it not-in ($env.NU_LIB_DIRS? | default [])
   if $missing != [] { $env.NU_LIB_DIRS = ($env.NU_LIB_DIRS? | default []) ++ $missing }
   if $nu.is-login { source-env ($root | path join conf mod.nu) }

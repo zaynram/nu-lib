@@ -88,6 +88,12 @@ variants under the original names. `use <module>/local` prefixes commands with `
 selection, or through the barrel. Re-export a parent's `main` explicitly (a re-exported `main` takes its module's
 name, `mod`). Modules that are configuration-dependent as a whole (`conf`, `proj`, `todo`, …) are not split.
 
+To use the local variants as bare names in an interactive shell, `init-local` writes an autoload file that loads
+the barrel as a hidden overlay (`__lib__`), activates `local` on top and hides `__lib__` again; `--barrel` makes
+the file load the barrel itself so one file bootstraps the whole surface on a fresh machine. Hiding an overlay
+reverts the environment it set up, which is why the plain form must run after another autoload file has loaded
+the barrel.
+
 The root barrel's `local` module gathers every local variant under its module's name: `use <library root> local`
 gives `local alarm …`, `local completion …` and `local mods …`, and `use <library root> *` exposes `local …` as
 well. A new split module gets an entry there. The variants are re-exported with `export use` of a module named after

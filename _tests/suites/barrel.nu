@@ -252,3 +252,62 @@ def "test loading the barrel twice changes nothing" []: nothing -> nothing {
     assert equal $twice.projects [sbproj] 'the workspace is registered once'
   }
 }
+
+# ——— init-local ———————————————————————————————————————————————————————————————
+
+# The lines every generated file carries (the root path exactly as `init-local` writes it; `to nuon` is not a
+# parse-time command, so this is a def, not a const).
+def overlay-lines []: nothing -> list<string> {
+  [$"overlay use ($ROOT | to nuon) as __lib__" 'overlay use local' 'overlay hide __lib__']
+}
+
+def "test init-local writes the autoload file once and keeps edits" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let expected: path = $ctx.config | path join nushell autoload local.nu
+    let first: record = plain $ctx 'init-local'
+    assert equal $first {path: $expected action: written} 'written into the first user autoload directory'
+    assert equal (open --raw $expected | lines | slice 2..) (overlay-lines) 'the three overlay lines after a two-line header'
+    assert equal (plain $ctx 'init-local').action unchanged 'the same content is left alone'
+    "# edited by hand\n" | save --append $expected
+    assert equal (plain $ctx 'init-local').action kept 'different content is kept'
+    assert str contains (open --raw $expected) 'edited by hand' 'and really untouched'
+    assert equal (plain $ctx 'init-local --force').action overwritten '--force replaces it'
+    assert equal (open --raw $expected | lines | slice 2..) (overlay-lines) 'with the generated content'
+  }
+}
+
+def "test init-local barrel and path flags" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let target: path = $ctx.code | path join elsewhere boot.nu
+    let r: record = plain $ctx $"init-local --barrel --path ($target | to nuon)"
+    assert equal $r {path: $target action: written} 'writes where --path says, creating the directory'
+    let lines: list<string> = open --raw $target | lines
+    assert equal ($lines | slice 2..) [$"use ($ROOT | to nuon) *" ...(overlay-lines)] '--barrel adds the barrel import first'
+    assert ($lines.1? =~ 'Loads the barrel itself') 'the header says the file stands alone'
+    assert equal (plain $ctx $"init-local --path ($target | to nuon)").action kept 'a file generated with other flags counts as different'
+  }
+}
+
+def "test the generated file leaves the local variants unprefixed with the barrel environment intact" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let target: path = $ctx.code | path join local.nu
+    plain $ctx $"init-local --barrel --path ($target | to nuon)" | ignore
+    let probe: string = '{
+      overlays: (overlay list | where active | get name)
+      alarm: (scope commands | where name == "alarm set" | is-not-empty)
+      mods: (scope commands | where name == "mods edit" | is-not-empty)
+      completion: (scope commands | where name == "completion set-completer" | is-not-empty)
+      prefixed: (scope commands | where name == "local alarm set" | is-not-empty)
+      pman: (scope commands | where name == "pman upgrade" | is-not-empty)
+      libs: ($env.NU_LIB_DIRS | length)
+      carapace: ($env.CARAPACE_BRIDGES? | is-not-empty)
+    }'
+    let r: record = login $ctx $probe --prelude $"source ($target | to nuon)"
+    assert equal $r.overlays [zero local] 'the barrel overlay is hidden, local is active'
+    assert ($r.alarm and $r.mods and $r.completion) 'the local variants are bare names'
+    assert $r.prefixed 'the prefixed names from `use <root> *` stay too (harmless duplicates)'
+    assert $r.pman 'with --barrel the whole barrel surface is available too'
+    assert ($r.libs > 3) 'the environment the barrel set up survives the hide'
+    assert $r.carapace 'including the completers'
+  }
+}
