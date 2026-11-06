@@ -101,20 +101,11 @@ The vocabulary is fixed (`$error.KINDS`); choose the kind by what the caller can
 
 ## Pipeline input at the raise site
 
-`error raise` takes pipeline input (an error record becomes the new error's `inner`). A raise that is the *first
-command of a block that receives pipeline input* therefore gets that input: a list or string is rejected with
-"Input type not supported", and a record silently becomes `inner`. Bind the input first and raise after:
-
-```nushell
-def "env has" [name: string]: record -> bool {
-  let input = $in
-  if $name == '' { error raise 'a variable name is required' --kind invalid_argument }
-  …
-}
-```
-
-The same holds inside `catch {|e| … }` closures, whose `$in` is the caught error: a raise there chains it as
-`inner`, which is usually what you want.
+`error raise` takes pipeline input, but uses it only when it is an error record (a record with `msg`, such as a
+caught error): that becomes the new error's single `inner`. Any other input is ignored, so a raise may be the first
+command of a block that receives pipeline input (`each`, `if` bodies, match arms) without binding `$in` first.
+Inside `catch {|e| … }` the closure's `$in` is the caught error, so a raise there chains it as `inner`, which is
+usually what you want.
 
 ## Message style
 

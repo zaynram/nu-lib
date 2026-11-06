@@ -7,6 +7,7 @@
 #
 # With `--labels`, `error raise` returns a closure instead of raising, intentionally:
 # - Calling `error make` from a nested scope causes error duplication as it propagates upwards.
+# nu-lint-ignore-file: missing_in_type (`raise` deliberately accepts any pipeline input)
 
 # ——— constants —————————————————————————————————————————————————————————————————
 
@@ -121,8 +122,10 @@ def kinds []: nothing -> list<string> { $KINDS }
 # locates the file. `--code` replaces the derived code; `--code ''` raises without one.
 #
 # Raises the error unspanned when `--labels` is empty; returns a closure that raises it (`| do $in`) otherwise.
-# Pipeline input (an error record, e.g. a caught error) becomes the error's single `inner` error; empty `--code` and
+# An error record piped in (e.g. a caught error: a record with `msg`) becomes the error's single `inner` error; any
+# other pipeline input is ignored, so a raise may sit first in a block that receives input. Empty `--code` and
 # `--advice` values are left out. An unknown kind raises `error::raise::invalid_argument`.
+# (`raise` takes any input: an error record is chained as `inner`, anything else is ignored, see above)
 @category core
 export def raise [
   message: string # Error message to include in the rendered output (lowercase start, no trailing period)
@@ -130,8 +133,9 @@ export def raise [
   --advice (-a): string # Suggestions or advice on how to avoid or remedy the error
   --labels: table<text: string, span: record> = [] # Labels to include in the error output
   --code: string # The full code, instead of the derived one
-]: oneof<nothing, error, record> -> oneof<error, closure> {
-  let cause: any = $in
+]: any -> oneof<error, closure> {
+  let input: any = $in
+  let cause: any = if ($input | describe) starts-with record and ($input has msg) { $input }
   if $kind not-in $KINDS {
     error make {
       msg: $"unknown error kind '($kind)'"

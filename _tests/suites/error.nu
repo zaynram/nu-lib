@@ -118,6 +118,14 @@ def "test raise wraps a record input as the inner error" []: nothing -> nothing 
   assert equal ($e.inner | get msg) ['the cause'] 'one inner error'
 }
 
+def "test raise ignores pipeline input that is not an error" []: nothing -> nothing {
+  for input in [[1 2] 'text' {name: no-msg-here} 42] {
+    let e: record = caught {|| $input | error raise 'the message' }
+    assert equal $e.inner [] $'no inner for input ($input | describe)'
+    assert equal $e.msg 'the message' 'and the raise itself works'
+  }
+}
+
 def "test raise wraps a caught error as the inner error" []: nothing -> nothing {
   let cause = try { error make --unspanned {msg: 'the config file could not be read' help: 'the help of the cause'} } catch {|e| $e }
   let e = caught { $cause | error raise 'it broke' }
