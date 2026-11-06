@@ -43,6 +43,25 @@ or a new external dependency.
   `# nu-lint-ignore-file: <rule>` / `# nu-lint-ignore: <rule>`.
 - Comments and docs must describe actual behavior. When behavior changes, update the doc comment in the same change.
 
+## Data shaping and performance
+
+- No `mut`. Build values from immutable `let` bindings and pipelines; closures cannot capture `mut` variables
+  anyway, so this keeps every loop movable into `each`/`par-each`.
+- Don't build lists or records inside `reduce --fold`: every step copies the accumulator, so it is quadratic (orders
+  of magnitude slower at a few thousand items). Use `reduce` only to fold to a scalar, and prefer a builtin
+  (`math sum`, `str join`) when one exists.
+- Lists: `each --flatten` when each iteration yields a list (same cost as `each | flatten`, reads better).
+- Records:
+  - `items {|k v| …}` for per-entry work: iterating a record, or mapping/filtering it into a new record by returning
+    `[key value]` pairs (null to drop, then `compact`) and finishing with `into record`. It is the fastest option.
+  - `transpose k v` when the entries need table verbs (`where`, `sort-by`, `group-by`, multi-step `update`), then
+    `transpose --header-row --as-record` back. Clearer for multi-step reshaping, roughly 2–7× slower than `items`.
+  - `into record` takes a list of `[key value]` pairs; given a table it returns the table's *last row*.
+  - `rotate` is a matrix rotation for tables: on a record it puts values before keys (`rotate key value` labels
+    them backwards) and `--ccw` reverses the order. Use `transpose` for records.
+- Measure before arguing about speed: `timeit { … }` for one run, `use std/bench; bench {…} {…} -n 10` for mean
+  and spread across alternatives. `_docs/data-shaping.md` records measurements.
+
 ## Testing
 
 - The `test` module is the runner (`_docs/testing.md`). The repository's `nutest.nuon` lists the suite `paths` and
