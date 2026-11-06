@@ -342,6 +342,17 @@ exit 1
 # A `nu` that fails every run.
 const BROKEN_NU: string = "#!/bin/sh\necho 'sbstub: broken' >&2\nexit 1\n"
 
+# A `nu` that reports its version and hands other `--commands` runs to the real `nu`, but fails as a login shell:
+# the barrel's login-gated loader (`conf`) does not come up on it.
+const LOGIN_FAILING_NU: string = r##'#!/bin/sh
+case " $* " in
+  *" --version "*|*" version | get version "*) echo '@VERSION@'; exit 0 ;;
+  *" --login "*) echo 'sbstub: the conf loader fails' >&2; exit 1 ;;
+  *" --commands "*) exec '@NU@' "$@" ;;
+esac
+exit 0
+'##
+
 # Write a stub `nu` (`STUB_NU` unless another template is given) of `version` to `file`, logging to
 # `$ctx.code/nu.log`.
 def stub-nu [ctx: record file: path version: string --template: string = $STUB_NU]: nothing -> nothing {
@@ -403,7 +414,7 @@ def plugin-versions [ctx: record]: nothing -> record {
 # Write a release fixture into `$ctx.code/www`: `releases.json` lists an older release first, then the release of
 # `version` with one `.tar.gz` per target (a stub `nu`, the stub `plugins` of `--plugin-version`, LICENSE and
 # README.txt) and an `.msi`. `--digest`/`--sums` (`ok`, `bad`, `none`) set the archives' `digest` and a `SHA256SUMS`
-# asset; `--sums missing` lists the asset without serving it.
+# asset; `--sums missing` lists the asset without serving it, `--sums unlisted` serves one that names other files only.
 def release [
   ctx: record
   url: string
@@ -416,11 +427,12 @@ def release [
   --sums: string = none
   --broken-nu # The archives' `nu` fails every run
   --version-only-nu # The archives' `nu` reports its version but fails every other run
+  --login-failing-nu # The archives' `nu` fails as a login shell (where `conf`'s loader runs)
   --without-nu # The archives hold no `nu`
 ]: nothing -> nothing {
   let www: path = $ctx.code | path join www
   mkdir $www
-  let template: string = if $broken_nu { $BROKEN_NU } else if $version_only_nu { $VERSION_ONLY_NU } else { $STUB_NU }
+  let template: string = if $broken_nu { $BROKEN_NU } else if $version_only_nu { $VERSION_ONLY_NU } else if $login_failing_nu { $LOGIN_FAILING_NU } else { $STUB_NU }
   let reported: string = $nu_version | default --empty $version
   let targets: list<string> = $targets | default --empty [(nightly host-target $nu.os-info)]
   let archives: table = $targets | each {|target|
@@ -443,7 +455,9 @@ def release [
   } | append {name: $'nu-($version)-x86_64-pc-windows-msvc.msi' browser_download_url: $'($url)/never.msi'}
   let sums: list = if $sums == none { [] } else {
     if $sums != missing {
-      $archives | each {|a| $'(if $sums == ok { $a.sha } else { $zeros })  ($a.name)' } | str join "\n" | save --force ($www | path join SHA256SUMS)
+      # `unlisted` names another file, so the archive has no line.
+      $archives | each {|a| $'(if $sums == ok { $a.sha } else { $zeros })  (if $sums == unlisted { "sbother.tar.gz" } else { $a.name })' }
+      | str join "\n" | save --force ($www | path join SHA256SUMS)
     }
     [{name: SHA256SUMS browser_download_url: $'($url)/SHA256SUMS'}]
   }
@@ -454,16 +468,22 @@ def release [
   ] | to json | save --force ($www | path join releases.json)
 }
 
+# The `python3` the fixture scripts run on, resolved on the full PATH: the grandchildren run with PATH set to
+# `/usr/bin:/bin`, which need not hold one. Skips the test when there is none.
+def need-python3 []: nothing -> path {
+  which python3 | get $.0?.path? | default { skip 'python3 is not installed' }
+}
+
 # Serve `$ctx.code/www` on a localhost port while `action` runs (it receives the base URL). Returns the action's
 # value and the requests the server saw, `{path auth}`. Skips without python3.
 def with-server [ctx: record action: closure]: nothing -> record {
-  if (which python3 | is-empty) { skip 'python3 is not installed' }
+  let python: path = need-python3
   let www: path = $ctx.code | path join www
   let port: path = $ctx.code | path join port
   let log: path = $ctx.code | path join requests.log
   mkdir $www
   rm --force $port
-  let job: int = job spawn { ^python3 -I ($FIXTURES | path join pman serve.py) $www $port $log }
+  let job: int = job spawn { ^$python -I ($FIXTURES | path join pman serve.py) $www $port $log }
   for _ in 1..250 { if ($port | path exists) { break }; sleep 20ms }
   let result: record = try {
     if not ($port | path exists) { error make --unspanned {msg: 'the fixture server did not start'} }
@@ -488,6 +508,8 @@ def run-bump [ctx: record flags: string --vars: record = {} --pty: list<string> 
   let program: string = ($BUMP | fill-in {'@FLAGS@': $flags '@OUT@': ($out | to nuon)})
     | if $colors { $"$env.config.use_ansi_coloring = true\n($in)" } else { }
   let args: list<string> = [--no-config-file $'--include-path=($ROOT)' --commands $program]
+  # Resolved before PATH is narrowed to `/usr/bin:/bin` below, where python3 need not be.
+  let python: oneof<path, nothing> = if $pty != null { need-python3 }
   let env_vars: record = {
     HOME: $ctx.home
     XDG_CONFIG_HOME: $ctx.config
@@ -502,7 +524,7 @@ def run-bump [ctx: record flags: string --vars: record = {} --pty: list<string> 
     if $pty == null {
       ^$exe ...$args | complete
     } else {
-      ^python3 -I ($FIXTURES | path join pman pty.py) 60 ...$pty -- $exe ...$args | complete
+      ^$python -I ($FIXTURES | path join pman pty.py) 60 ...$pty -- $exe ...$args | complete
     }
   }
   let result: record = if ($out | path exists) { open $out } else { {} }
@@ -753,6 +775,19 @@ def "test bump nu installs after a matching SHA256SUMS" []: nothing -> nothing {
   }
 }
 
+def "test bump nu warns when SHA256SUMS does not list the archive" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = with-server $ctx {|url|
+      release $ctx $url $NEWER --digest none --sums unlisted
+      run-bump $ctx $'(flags $ctx $url) --yes'
+    }
+    assert ($ctx | bin-dir | path join nu | path exists) $'installed: ($r.value.output)'
+    assert ('SHA256SUMS' in ($r | paths)) 'the checksums are fetched'
+    assert ($r.value.output =~ "verification skipped: SHA256SUMS does not list 'nu-") $'a warning says why: ($r.value.output)'
+    assert not ($r.value.output =~ 'verified the sha256') 'nothing was verified'
+  }
+}
+
 def "test bump nu skips verification when no checksum is published" []: nothing -> nothing {
   with-sandbox {|ctx|
     let r: record = with-server $ctx {|url|
@@ -809,7 +844,7 @@ def "test bump nu smoke tests the new nu before installing" []: nothing -> nothi
       release $ctx $url $NEWER
       run-bump $ctx $'(flags $ctx $url) --yes'
     }
-    assert equal (nu-runs $ctx | first 2) ['run:--no-config-file --commands' 'run:--no-config-file --include-path'] $'the version and the library load: ($r.value.output)'
+    assert equal (nu-runs $ctx | first 2) ['run:--no-config-file --commands' 'run:--no-config-file --login'] $'the version, then the library load as a login shell: ($r.value.output)'
     let out: string = $r.value.output
     assert (($out | str index-of 'smoke-testing') < ($out | str index-of 'installed ')) 'before anything is installed'
   }
@@ -854,6 +889,20 @@ def "test bump nu refuses a nu that cannot load the library" []: nothing -> noth
     assert ($r.value.error =~ $'^nu ($NEWER) cannot load this library') $'the message: ($r.value.error)'
     assert ($r.value.help =~ 'sbstub: cannot load') $'its stderr is the advice: ($r.value.help)'
     assert ($r.value.help =~ '--no-smoke') 'which names the way around'
+    assert not ($ctx | bin-dir | path exists) 'nothing is installed'
+  }
+}
+
+def "test bump nu refuses a nu whose login shell fails" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = with-server $ctx {|url|
+      # Loads the library in a plain `--commands` run; only the login shell, where `conf`'s loader runs, fails.
+      release $ctx $url $NEWER --login-failing-nu
+      run-bump $ctx $'(flags $ctx $url) --yes'
+    }
+    assert equal $r.value.code pman::nightly::smoke-test::external_failure $'the error: ($r.value.output)'
+    assert ($r.value.error =~ $'^nu ($NEWER) cannot load this library') $'the message: ($r.value.error)'
+    assert ($r.value.help =~ 'sbstub: the conf loader fails') $'its stderr is the advice: ($r.value.help)'
     assert not ($ctx | bin-dir | path exists) 'nothing is installed'
   }
 }

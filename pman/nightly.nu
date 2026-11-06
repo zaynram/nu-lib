@@ -168,7 +168,9 @@ def published-sha256 [build: record sums?: record]: nothing -> oneof<string, not
   }
 }
 
-# Download a build into `dir` and check it against its published sha256 (skipped when none is published).
+# Download a build into `dir` and check it against its published sha256. Without one the archive is installed
+# unverified: silently when the release publishes no checksum, with a warning when its `SHA256SUMS` does not list
+# the archive.
 def download [
   build: record
   sums: oneof<record, nothing> # The release's `SHA256SUMS` asset, if any
@@ -186,6 +188,8 @@ def download [
       error raise $"'($build.name)' does not match its published sha256" --kind io --advice $'expected ($expected), got ($actual)'
     }
     log info $'verified the sha256 of ($build.name)'
+  } else if $sums != null {
+    log warning $"verification skipped: ($sums.name) does not list '($build.name)'"
   }
   $archive
 }
@@ -209,8 +213,10 @@ def extract [archive: path dir: path]: nothing -> list<path> {
 }
 
 # Run the extracted `nu` before anything is installed: it must report the build's version, and it must load this
-# library in a plain shell (`--no-config-file`, the library root on the include path), so that its modules parse
-# and their env loaders run. A failure names the archive, which the caller leaves in the temp dir.
+# library as a login shell without config files (`--no-config-file --login`, the library root on the include
+# path): every module parses, and the barrel's login-gated loader (`conf`, which reads the machine override file)
+# runs; the loaders gated on an interactive shell (`mods`, `proj`, `track`, `completion/local`) do not. A failure
+# names the archive, which the caller leaves in the temp dir.
 # nu-lint-ignore: external_script_as_argument
 def smoke-test [
   binary: path # The extracted `nu`
@@ -229,7 +235,7 @@ def smoke-test [
     error raise $"the new nu reports version '($reported)', not '($version)'; its archive is kept at '($archive)'" --kind external_failure
   }
   let loaded: record = try {
-    ^$binary --no-config-file --include-path $ROOT --commands $"use ($ROOT | to nuon) *; null" | complete
+    ^$binary --no-config-file --login --include-path $ROOT --commands $"use ($ROOT | to nuon) *; null" | complete
   } catch {|e| {exit_code: 1 stdout: '' stderr: $e.msg} }
   if $loaded.exit_code != 0 {
     let advice: string = [
@@ -397,9 +403,11 @@ def finish [
 # wrote over the nightly is detected even while the nightly is still running. When the build is the current version
 # it says so and stops before downloading; `--check` stops there in any case. Otherwise it downloads the archive,
 # verifies its published sha256 (the asset's `digest`, else the release's `SHA256SUMS`; skipped when the release
-# publishes neither), extracts `nu` and the `nu_plugin_*` binaries and smoke-tests the new `nu` from the temp dir:
-# it must report the build's version and load this library in a plain shell (`--no-config-file`, the library root
-# on the include path). A build that fails is refused before anything changes; its archive is kept in the temp dir,
+# publishes neither, and with a warning when `SHA256SUMS` does not list the archive), extracts `nu` and the
+# `nu_plugin_*` binaries and smoke-tests the new `nu` from the temp dir: it must report the build's version and load
+# this library as a login shell without config files (`--no-config-file --login`, the library root on the include
+# path), which runs `conf`'s loader against the machine override file but not the interactive-only loaders. A build
+# that fails is refused before anything changes; its archive is kept in the temp dir,
 # which the error names. `--no-smoke` skips the test, for a nu that cannot load this library (a module to fix).
 # Then it asks for confirmation (`--yes` skips it; without a terminal it is required, and checked before anything
 # is fetched) and copies the files into the install directory. Each file is written next to its destination and
