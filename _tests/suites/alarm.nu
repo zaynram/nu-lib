@@ -1,10 +1,15 @@
 # `alarm` and `alarm/local` against the session store: `test _tests/suites/alarm.nu`.
 #
-# Alarms live in the in-memory `kv` store and in background jobs of the test child, so every test starts clean.
+# Alarms live in the in-memory `kv` store and in background jobs of the test child; `after each` unsets them.
 # Expiry is exercised with one-second alarms; what an expired alarm prints is read from a sandboxed child.
 use alarm
 use alarm/local
 use ../mod.nu *
+
+# Alarms outlive a test under `--isolation suite`: forget them all.
+def "after each" []: nothing -> nothing {
+  for name in (alarm list | get key) { alarm unset $name }
+}
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
