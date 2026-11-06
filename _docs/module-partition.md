@@ -31,7 +31,7 @@ that shell out. The tables below record the classification at command granularit
 | External program | `timew`, `td` (Todoist CLI), `git`, `fish`, `carapace`, `zellij`, `sudo`, `sshfs`, `systemctl`, `oh-my-posh`, package managers |
 | OS / host | WSL interop (`/mnt/c`, `powershell.exe`), hostname-specific branches, Linux `reset`/`umount` |
 | Environment variable | `WORK`, `NUPM_HOME`, `mods_home`, `EDITOR`, `ZELLIJ`, `TIMEWARRIORDB`, `IPEX_LLM_OLLAMA_HOME` |
-| Owner's paths / modules | `/work/ext/bash-env`, nupm modules such as `nightly-toolkit` |
+| Vendored outside code | `bash-env/`, `nightly-toolkit/` (see *Vendored dependencies*) |
 | Nushell config | `$env.config.hooks`, `$env.config.color_config`, `buffer_editor` |
 | Persistent state | `std-rfc/kv` tables (universal SQLite under `$nu.data-dir`), msgpack caches, files under `WORK` |
 
@@ -52,17 +52,20 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `completion` | Builds completion records (`into completions`, `into spans`). |
 | `hook` | Reads and edits `$env.config.hooks`; pure over the config record. |
 | `docgen` | Collects module docs by running the current `nu` binary on the target module. |
-| `alarm` | In-memory timers via jobs. *Except* the non-silent expiry path, which launches the `tui` binary. |
-| `util` | `contains`, `timestamp` are abstract. `util/workspace bump` is abstract logic but optionally calls formatters; `deactivate` expects an overlay named `__workspace__`. |
+| `alarm` | In-memory timers via jobs; expiry notifies through `set --notify` (default: print the text). |
+| `mods` | Module registry (kv), listing, `define` (`--directory` or `mods_home`). `mods/local` adds `edit`. |
+| `util` | `contains`, `timestamp`; `util workspace bump` is abstract logic that optionally calls formatters (`tombi`, `dprint`); `deactivate` expects an overlay named `__workspace__`. |
 | `command` | `post-complete` on a `complete` record is abstract; `attempt` and closure input necessarily run externals. |
 
 ## Configuration-dependent modules
 
 | Module | Depends on |
 |---|---|
-| `conf` | `conf/machine.nu` host branches (hostname, `/work/ext/bash-env`, `.profile`, `$env.work`), editor (`edit`), `oh-my-posh` (`prompt`). Its `export-env` rewrites `NU_LIB_DIRS`/`NU_PLUGIN_DIRS`. |
-| `mods` | Mostly kv/in-memory logic, but `edit` and definitions resolve through `conf` machine config and `mods_home`; `define` writes into `mods_home`. |
-| `pman` | Package managers, cargo, `nightly-toolkit` (nupm). Destructive. |
+| `conf` | `conf/machine.nu` host branches (hostname; `~/.profile` via the vendored `bash-env`, which needs `bash` and `jq`; `WORK`), editor (`edit`), `oh-my-posh` (`prompt`). Its `export-env` adds missing directories to `NU_LIB_DIRS`/`NU_PLUGIN_DIRS`/`PATH`. Not split: the whole module is machine configuration. |
+| `mods/local` | `edit` and its completions resolve through `conf machine-config`. |
+| `pman` | Package managers, cargo, the vendored `nightly-toolkit` (network, installs nu). Destructive. |
+| `bash-env` (vendored) | `bash`, `jq`. |
+| `nightly-toolkit` (vendored) | Network (GitHub); writes the nu binary. |
 | `link` | `sudo`, `ln`, `unlink`; Windows `cmd /c mklink`. Privileged. |
 | `edit` | `$EDITOR` / `buffer_editor`, `zellij`. |
 | `elevate` | `sudo`. Privileged. |
@@ -70,15 +73,38 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `windows` | WSL interop (`/mnt/c`, `powershell.exe`, `where.exe` — resolved on PATH/WINPATH, else System32 — and `wslpath`). |
 | `mount` | `sshfs`, `fusermount3`, `mount`/`umount` (bind mounts need root), `mountpoint` or `findmnt`. Privileged. |
 | `ipex-llm-ollama` | `systemctl` service, `bash`, vendor scripts (`start-ollama.sh`, `ls-sycl-device`), `IPEX_LLM_OLLAMA_HOME` (default `~/.local/share/ipex-llm-ollama`). |
-| `proj` | `$env.WORK` directory tree, `git`, kv registry; scans on import. `--boot` needs `zellij`. |
-| `track` | `timew`, `git`, optional `td`; installs global hooks on import. |
+| `proj` | `$env.WORK` directory tree, `git`, kv registry; scans on import when `WORK` is set (`scan`/`kind` need it). `--boot` needs `zellij`. |
+| `track` | `timew`, `git`, optional `td`; installs the `track::sync`/`track::focus` hooks on import (deduplicated); focus per shell in `$env.TRACK`, only `disabled` in universal kv. |
+| `alarm/local` | `tui` commands and an interactive terminal for the expiry dialog; prints the text without them. |
 | `time` | `timew` (hermetic with a temp `TIMEWARRIORDB`). |
 | `todo` | `td` CLI, Todoist credentials, network. Parsing/formatting helpers are pure. |
 | `completion/local` | `fish`, `carapace`; mutates `$env.config`; its export-env sets `CARAPACE_*` and the carapace `PATH` entry. `fish-complete parse-output` is pure. `completion/external` is a deprecated shim for it. |
-| `style` (mild) | Reads `$env.config.color_config`; works with Nushell's defaults. |
-| root `mod.nu` | Aggregates config-dependent modules; needs out-of-repo lib dirs to parse. |
+| `style` (mild) | Reads `$env.config.color_config`; falls back to Nushell's default colors. |
+| root `mod.nu` | Aggregates config-dependent modules; parses with only the repository on the lib path; runs the conf/mods/completion/windows env blocks through guarded `source-env`. |
+
+## Splitting mixed modules
+
+A module that mixes abstract logic with configuration-dependent logic keeps the abstract part in `<module>/mod.nu`
+and puts the dependent part in `<module>/local/mod.nu`, which re-exports the abstract commands and adds (or
+overrides) the dependent ones. `alarm`, `completion` and `mods` are split this way; the barrel exposes the local
+variants under the original names. `use <module>/local` prefixes commands with `local`, so import it with `*`, a
+selection, or through the barrel. Re-export a parent's `main` explicitly (a re-exported `main` takes its module's
+name, `mod`). Modules that are configuration-dependent as a whole (`conf`, `proj`, `todo`, …) are not split.
+
+## Vendored dependencies
+
+Outside code the library executes is vendored into the repository and imported relatively; only configuration
+stays host-specific.
+
+| Directory | Upstream | Version | Copied |
+|---|---|---|---|
+| `bash-env/` | `/work/ext/bash-env` = github.com/zaynram/bash-env-nushell (fork of tesujimath/bash-env-nushell) | commit 6d0a7e7 plus its uncommitted local changes; `bin/bash-env-json` is upstream v0.10.1; MIT | 2026-11-06 |
+| `nightly-toolkit/` | `~/.local/share/nupm/modules/nightly-toolkit` (untracked there) | file dated 2026-10-18; only `get-latest-nightly-build` exported | 2026-11-06 |
 
 ## Rules of thumb for new code
+
+- Vendor outside code the library runs (modules, scripts) and import it relatively; only configuration stays
+  host-specific.
 
 - Put pure logic in an abstract module (or a private helper) and keep the external call at the edge, so the logic
   can be tested without the dependency.

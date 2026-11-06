@@ -19,9 +19,12 @@ version checks. Check `nu --version` before assuming a language behavior; verify
 - In a git worktree, pass the *worktree* root with `-I`. The owner's shell config puts the main checkout on
   `NU_LIB_DIRS`, so without `-I` a worktree's modules silently resolve their imports from the main checkout.
 - `export use <module>` (as in the root barrel) does **not** run the re-exported module's `export-env` block; only a
-  direct `use` does. Environment set-up must therefore be triggered explicitly (e.g. `export-env { use <module> }`).
-- Some modules depend on things outside the repository (see `_docs/module-partition.md`), e.g. `pman` needs the
-  nupm module `nightly-toolkit`, and `conf/machine.nu` sources an absolute path on the owner's host.
+  direct `use` does. Environment set-up must therefore be triggered explicitly: the barrel runs only the env blocks
+  with `export-env { source-env (path self . | path join <module> mod.nu) }` under guards.
+- Every module parses with only the repository on the include path: outside machinery is vendored (`bash-env/`,
+  `nightly-toolkit/`) and imported relatively. See `_docs/module-partition.md` for provenance.
+- Mixed modules are split: `<module>/local/mod.nu` re-exports the abstract part and adds the configuration-dependent
+  commands (`alarm`, `completion`, `mods`). `completion/external` is a deprecated shim for `completion/local`.
 
 ## Module partition
 
@@ -96,7 +99,7 @@ Many modules have side effects at import time (`export-env`) or persist state:
 
 - `std-rfc/kv` with `--universal` writes SQLite under `$nu.data-dir`; point `XDG_DATA_HOME` at a temp dir **and
   create `$XDG_DATA_HOME/nushell` first** (kv does not create it), or set `NU_UNIVERSAL_KV_PATH`.
-- `proj` scans `$env.WORK` on import. Point `WORK` at a temp dir.
+- `proj` scans `$env.WORK` on import (skipped when `WORK` is unset). Point `WORK` at a temp dir.
 - The owner's interactive environment exports variables that change module behavior (`mods_home`, `ZELLIJ`,
   `NUPM_HOME`, `EDITOR`, `WORK`). For hermetic runs, start children from a scrubbed environment.
 - Never exercise privileged or destructive paths for real (`elevate`, `mount`, `link`, `pman` install/upgrade,
