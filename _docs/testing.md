@@ -72,7 +72,9 @@ module state under test, and `before all`/`after all` run around each test in te
 Children start from a **scrubbed environment**: only an allowlist (PATH, HOME, USER, TERM, LANG/LC_*, TMPDIR,
 XDG_RUNTIME_DIR and their Windows equivalents) survives, plus configured `passthrough` names and `env` values. A
 suite gets the same results from an interactive shell (where variables like `EDITOR`, `ZELLIJ`, `WORK` or
-`mods_home` are exported) and from CI. `--no-scrub` opts out.
+`mods_home` are exported) and from CI. `--no-scrub` opts out. Where an `env` program exists (Linux, macOS, WSL) the child's environment is
+built from scratch with `env -i`; elsewhere the runner falls back to `hide-env`, which Nushell silently ignores
+once a `do --env` has run anywhere up the call stack, so scrubbing is best-effort there.
 
 The runner writes each test's literal command name into the child program. Nushell has no string-eval, and a
 `$name` in command position evaluates to the string instead of calling the command, which would make every
