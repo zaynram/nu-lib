@@ -31,7 +31,7 @@ that shell out. The tables below record the classification at command granularit
 | External program | `timew`, `td` (Todoist CLI), `git`, `fish`, `carapace`, `zellij`, `sudo`, `sshfs`, `systemctl`, `oh-my-posh`, package managers |
 | OS / host | WSL interop (`/mnt/c`, `powershell.exe`), hostname-specific branches, Linux `reset`/`umount` |
 | Environment variable | `WORK`, `NUPM_HOME`, `mods_home`, `EDITOR`, `ZELLIJ`, `TIMEWARRIORDB`, `IPEX_LLM_OLLAMA_HOME` |
-| Vendored outside code | `bash-env/`, `nightly-toolkit/` (see *Vendored dependencies*) |
+| Vendored outside code | `bash-env/` (see *Vendored dependencies*) |
 | Nushell config | `$env.config.hooks`, `$env.config.color_config`, `buffer_editor` |
 | Persistent state | `std-rfc/kv` tables (universal SQLite under `$nu.data-dir`), msgpack caches, files under `WORK` |
 
@@ -63,9 +63,8 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 |---|---|
 | `conf` | `conf/machine.nu` host branches (hostname; `~/.profile` via the vendored `bash-env`, which needs `bash` and `jq`; `WORK`), editor (`edit`), `oh-my-posh` (`prompt`). Its `export-env` adds missing directories to `NU_LIB_DIRS`/`NU_PLUGIN_DIRS`/`PATH`. Not split: the whole module is machine configuration. |
 | `mods/local` | `edit` and its completions resolve through `conf machine-config`. |
-| `pman` | Package managers, cargo, the vendored `nightly-toolkit` (network, installs nu). Destructive. |
+| `pman` | Package managers, cargo; `bump-nu` downloads the latest Nushell nightly (network: GitHub's API and release assets), extracts it with `tar`, writes the nu binary and edits the plugin registry. Destructive. |
 | `bash-env` (vendored) | `bash`, `jq`. |
-| `nightly-toolkit` (vendored) | Network (GitHub); writes the nu binary. |
 | `link` | `sudo`, `ln`, `unlink`; Windows `cmd /c mklink`. Privileged. |
 | `edit` | `$EDITOR` / `buffer_editor`, `zellij`. |
 | `elevate` | `sudo`. Privileged. |
@@ -106,7 +105,6 @@ stays host-specific.
 | Directory | Upstream | Version | Copied |
 |---|---|---|---|
 | `bash-env/` | `/work/ext/bash-env` = github.com/zaynram/bash-env-nushell (fork of tesujimath/bash-env-nushell) | commit 6d0a7e7 plus its uncommitted local changes; `bin/bash-env-json` is upstream v0.10.1; MIT | 2026-11-06 |
-| `nightly-toolkit/` | `~/.local/share/nupm/modules/nightly-toolkit` (untracked there) | file dated 2026-10-18; only `get-latest-nightly-build` exported | 2026-11-06 |
 
 ## Rules of thumb for new code
 
