@@ -179,18 +179,3 @@ def "test a silent sshfs failure suggests checking sshd" []: nothing -> nothing 
     assert str contains $err.help? 'sshd' 'a hint about the remote host'
   }
 }
-
-def "test termux needs its remote in the environment" []: nothing -> nothing {
-  let e: record = try { mount termux; {} } catch {|e| $e }
-  assert equal $e.details?.code? 'mount::termux::missing_dependency' 'no remote configured'
-}
-
-def "test termux mounts the configured phone" []: nothing -> nothing {
-  with-stubs --sshfs 'exit 0' {|t|
-    let remote: record = {user: u0_a1 ipv4: 10.0.0.2 auth: ($t.ctx.code | path join id) port: 8022}
-    with-env {TERMUX_REMOTE: $remote} { mount termux $t.dir | ignore }
-    let call: string = calls $t.log | where $it starts-with sshfs | first
-    assert str contains $call $"-p 8022 ($t.dir)" 'the given mount point and the remote port'
-    assert str contains $call 'u0_a1@10.0.0.2:' 'the remote from the environment'
-  }
-}

@@ -69,7 +69,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `elevate` | `sudo`. Privileged. |
 | `reload` | `reset` (only with a TTY on stdin), re-`exec` of the shell binary. |
 | `windows` | WSL interop (`/mnt/c`, `powershell.exe`, `where.exe` — resolved on PATH/WINPATH, else System32 — and `wslpath`). |
-| `mount` | `sshfs`, `fusermount3`, `mount`/`umount` (bind mounts need root), `mountpoint` or `findmnt`. Privileged. |
+| `mount` | `sshfs`, `fusermount3`, `mount`/`umount` (bind mounts need root), `mountpoint` or `findmnt`. Privileged. Device records (a phone's user/address/key/port) stay in the user's config: `_docs/examples/mount-termux.nu`. |
 | `ipex-llm-ollama` | `systemctl` service, `bash`, vendor scripts (`start-ollama.sh`, `ls-sycl-device`), `IPEX_LLM_OLLAMA_HOME` (default `~/.local/share/ipex-llm-ollama`). |
 | `proj` | `$env.WORK` directory tree, `git`, kv registry; scans on import when `WORK` is set (`scan`/`kind` need it). `--boot` needs `zellij`. |
 | `track` | `timew`, `git`, optional `td`; installs the `track::sync`/`track::focus` hooks on import (deduplicated); focus per shell in `$env.TRACK`, only `disabled` in universal kv. |
