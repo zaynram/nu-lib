@@ -25,7 +25,8 @@ const COLOR: record = {
 }
 
 const RE: record = {
-  remote: '^(?:[a-z+]+://)?(?:[^@/]+@)?(?<host>[^/:.]+)(?:\.[^/:]+)?[:/](?<repo>[^/]+/[^/]+?)(?:\.git)?/?$'
+  # [scheme://][user@]host[.domain][:port](:|/)owner/name[.git][/]; `host` is the first DNS label
+  remote: '^(?:[a-z+]+://)?(?:[^@/]+@)?(?<host>[^/:.]+)(?:\.[^/:]+)?(?::\d+)?[:/](?<repo>[^/]+/[^/]+?)(?:\.git)?/?$'
 }
 
 const TTL: duration = 24hr
@@ -57,6 +58,7 @@ type KindSummary = record<name: string, root: directory, description: string, pr
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
+# Fixture for suites of modules that read the registry: `use proj [test]`, then `test before`/`test after`.
 export module test {
   export-env { if $env has project_testing { hide-env project_testing } }
 
@@ -65,7 +67,7 @@ export module test {
   export def --env before [kind: string = 'test']: list<ProjectInfo> -> nothing {
     let t: string = kind-to-table-name $kind
     $env.project_testing = {kind: $kind table: $t}
-    $in | par-each {|proj| kv set --universal --table=$t $proj.name } | ignore
+    for proj in $in { kv set --universal --table=$t $proj.name $proj | ignore }
   }
 
   # Cleanup fixture for projects registered with `test before`.
@@ -75,8 +77,9 @@ export module test {
     if $env not-has project_testing or $env.project_testing!? != {kind: $kind table: $t} {
       error make --unspanned $"project test fixture is inactive for kind: '($kind)'"
     } else {
-      kv list --universal --table=$t | get $.key | par-each {|k| kv drop --universal --table=$t $k } | ignore
+      # Hidden first: after a `def --env` call such as `kv drop`, `hide-env` no longer reaches the caller.
       hide-env project_testing
+      for k in (kv list --universal --table=$t | get $.key) { kv drop --universal --table=$t $k | ignore }
     }
   }
 }
@@ -115,14 +118,14 @@ export def scan [
   let scanned: list<string> = $KIND | columns | where $it in $kinds
   if $reset { reset-meta ...$scanned }
   let start: datetime = date now
-  $scanned | par-each {|k|
+  # Sequential: concurrent `kv` writers contend for SQLite's lock (and can leave placeholder rows behind).
+  $scanned | each {|k|
     let table: string = kind-to-table-name $k
     let exclude: list<string> = $env.project_exclude!?
       | default {}
       | get --ignore-case --optional $k
       | default []
       | append '**/.*'
-    # Run synchronously so we're not deleting new additions
     if $reset { reset-table $table }
     # Collect only the immediate children, excluding tooling files
     glob --no-file --no-symlink ($work | path join $k *) --exclude=$exclude
@@ -173,9 +176,7 @@ export def list [
 ]: nothing -> list<ProjectInfo> {
   get-meta flat_list | default {||
     set-meta --return=value flat_list (
-      $KIND | columns | par-each {|k|
-        list-kind --insert=true $k
-      } | flatten
+      $KIND | columns | each {|k| list-kind --insert=true $k } | flatten
     )
   } | if $env.project_testing!? != null {
     append (list-kind --insert=true $env.project_testing.kind)
@@ -196,13 +197,13 @@ export def --env main [
   --kind (-k): string@_kinds
   # Scope the query to a specific kind of project
   --scan (-s)
-  # Run the repository scan before querying project data
+  # Scan for new projects first (`scan --force`: the import-time scan already honours the TTL)
   --boot (-b)
   # Enter a `zellij` session for the project (creating if not existing)
   --exec (-x): closure
   # Run a closure from the project root (with the `zellij::pwd::auto-switch` hook disabled, if registered)
 ]: nothing -> oneof<nothing, any> {
-  if $scan { scan }
+  if $scan { scan --force | ignore }
   list --kind=$kind --long
   | match ($query | describe) { nothing => () string => { where name =~ $query } }
   | match ($in | length) {
@@ -274,39 +275,45 @@ def alias-for [root: path]: record -> oneof<nothing, string> {
   get --ignore-case --optional $root ($root | path basename) | compact | first
 }
 
+# Register the kind's directories that are not registered yet (all of them with `--reset`).
+# Only the repository inspection (`git`) runs in parallel; the `kv` reads and writes do not.
 def intake-kind [kind: string table: string --reset]: list<path> -> record<found: int, added: int> {
+  let roots: list<path> = $in
   let map: record = $env.project_aliases!? | default {}
-  $in | par-each {|root|
-    let base: string = $root | path basename
-    let name: string = $map | alias-for $root | default $base
-    if not $reset and (kv get --universal --table=$table $name) != null {
-      # Skip projects already registered to avoid duplicate entries
-      return false
-    }
-    if ($root | path join '.git' | path exists) {
-      # Projects with source-control - collect repository information
-      ^git -C $root config remote.origin.url
-      | ignore --stderr
-      | if ($in | is-not-empty) {
-        # If it exists, parse repository name, owner, and type (remote domain)
-        parse --regex $RE.remote | first
-        # Ensure unmatched URLs fallthrough to no-remote arm
-      } | default (
-        # Else, populate from available data
-        ^git -C $root config user.name
-        | ignore --stderr
-        | match $in { '' => ({}) $u => {repo: $'($u)/($base)'} }
-      ) | insert $.vcs git
-    } | default {}
-    # Default here to ensure columns exist
-    | default null $.repo? $.vcs? $.host?
-    # Rebuild the record with static values and reordered columns
-    | {name: $name path: $root ...$in}
-    # Register the repository in the kind-scoped `kv` store.
-    | kv set --universal --table=$table $name
-    return true
-  } | {found: ($in | length) added: ($in | where $it | length)}
+  let known: list<string> = if $reset { [] } else { kv list --universal --table=$table | get $.key? | default [] }
+  let rows: list<record> = $roots
+    | each {|root| {root: $root name: ($map | alias-for $root | default ($root | path basename))} }
+    # Skip projects already registered to avoid duplicate entries
+    | where name not-in $known
+    | par-each {|it| inspect $it.root $it.name }
+  # Register the repositories in the kind-scoped `kv` store.
+  for row in $rows { kv set --universal --table=$table $row.name $row | ignore }
+  {found: ($roots | length) added: ($rows | length)}
   | set-meta --return=input $'($kind)_count' $in.found
+}
+
+# The registry record of a project directory: git remote information when it is a repository.
+def inspect [root: path name: string]: nothing -> record {
+  let base: string = $root | path basename
+  if ($root | path join '.git' | path exists) {
+    # Projects with source-control - collect repository information
+    ^git -C $root config remote.origin.url
+    | ignore --stderr
+    | if ($in | is-not-empty) {
+      # If it exists, parse repository name, owner, and type (remote domain)
+      parse --regex $RE.remote | first
+      # Ensure unmatched URLs fallthrough to no-remote arm
+    } | default (
+      # Else, populate from available data
+      ^git -C $root config user.name
+      | ignore --stderr
+      | match $in { '' => ({}) $u => {repo: $'($u)/($base)'} }
+    ) | insert $.vcs git
+  } | default {}
+  # Default here to ensure columns exist
+  | default null $.repo? $.vcs? $.host?
+  # Rebuild the record with static values and reordered columns
+  | {name: $name path: $root ...$in}
 }
 
 # Apply aliases, then store the totals of the scanned kinds as `last_scan`; `total_count` covers every kind.
@@ -318,7 +325,8 @@ def record-scan-metadata [
   }
   deduplicate
   let end: datetime = date now
-  $KIND | columns | each {|k| get-meta $'($k)_count' | default 0 } | math sum | set-meta total_count
+  let counts: list<string> = $KIND | columns | each { $'($in)_count' }
+  list-meta | where key in $counts | reduce --fold 0 {|it acc| $acc + $it.value } | set-meta total_count
   set-meta --return=value last_scan {
     ...$totals
     start: $start
@@ -330,7 +338,7 @@ def record-scan-metadata [
 def prune-missing-dirs []: nothing -> nothing {
   let total: int = get-meta total_count
     | default { error make --unspanned {msg: 'no metadata found' help: 'run a scan first'} }
-  $KIND | columns | par-each {|k|
+  $KIND | columns | each {|k|
     let table: string = kind-to-table-name $k
     # Rows without a value are placeholders that concurrent `kv` writers can leave behind, not projects.
     let queue: list<record> = kv list --universal --table=$table | where value != null
