@@ -565,7 +565,7 @@ def program [suite: path hooks: record names: list<string>]: nothing -> string {
     'def __nutest_text [e]: nothing -> string {'
     '  let d = $e.details? | default {msg: $e.msg labels: [] help: null inner: []}'
     '  [$d.msg ...($d.labels? | default [] | get --optional text | default []) $d.help? ...($d.inner? | default [] | get --optional msg | default [])]'
-    '  | compact --empty | str join (char newline)'
+    '  | compact --empty | uniq | str join (char newline)'
     '}'
     $"let __suite = try { {ok: true ctx: \(do --env { ($before_all) }\)} } catch {|e| {ok: false error: \(__nutest_text $e\)} }"
     ...$tests
@@ -607,6 +607,7 @@ def error-text []: record -> string {
   let d: record = $e.details? | default {msg: $e.msg}
   [$d.msg ...($d.labels? | default [] | get --optional text | default []) $d.help? ...($d.inner? | default [] | get --optional msg | default [])]
   | compact --empty
+  | uniq # a label often repeats the message
   | str join (char newline)
 }
 
