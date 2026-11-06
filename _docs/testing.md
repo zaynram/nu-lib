@@ -57,6 +57,7 @@ test --match '^gr' --test 'hi$'
 test --isolation suite        # one child per suite: faster, less isolated
 test --jobs 4                 # run tests concurrently (test isolation)
 test --strict                 # raise when anything failed (CI, git hooks)
+test --no-sandbox             # use the real HOME/XDG dirs (e.g. for tests that need credentials)
 test | where status != ok     # it's just a table
 ```
 

@@ -178,6 +178,7 @@ def "test u" [] { }'
     assert equal (do $by aa 'test t').status ok
     # after all fails once per child, but is reported once.
     assert equal ($rows | where suite == aa and name == '(after all)' | select status error) [{status: error error: boom}]
+    assert equal ((runner $dir 'test --match aa').stderr | split row '(after all)' | length) 2 'rendered once'
   }}
 
   {name: 'crash: a child that exits reports its unfinished tests as errors' run: {||
@@ -307,6 +308,8 @@ def "test home and data dirs live in a temp sandbox" [] {
     {sandbox: true env: {LOG: $log REAL_HOME: $nu.home-dir}} | to nuon | save ($dir | path join nutest.nuon)
     assert equal (ok $dir 'test' | statuses) {'test home and data dirs live in a temp sandbox': ok}
     assert equal (open $log | path exists) false
+    # The flag turns it off again (the project file sets it).
+    assert equal (ok $dir 'test --no-sandbox' | statuses) {'test home and data dirs live in a temp sandbox': fail}
   }}
 
   {name: 'exec: tests can start configured grandchildren' run: {||

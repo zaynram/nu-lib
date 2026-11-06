@@ -154,9 +154,11 @@ export def config [
   --depth (-d): int # As for `test`
   --jobs (-j): int # As for `test`
   --no-scrub # As for `test`
+  --sandbox # As for `test`
+  --no-sandbox # As for `test`
 ]: nothing -> record {
   if $defaults { return $DEFAULTS }
-  let flags: record = flag-layer --lib-dirs=$lib_dirs --isolation=$isolation --depth=$depth --jobs=$jobs --no-scrub=$no_scrub
+  let flags: record = flag-layer --lib-dirs=$lib_dirs --isolation=$isolation --depth=$depth --jobs=$jobs --no-scrub=$no_scrub --sandbox=$sandbox --no-sandbox=$no_sandbox
   resolve ($location | default $env.PWD) $flags
 }
 
@@ -198,11 +200,13 @@ export def main [
   --depth (-d): int # Maximum directory depth searched below each suite directory
   --jobs (-j): int # Tests run concurrently with `--isolation test`
   --no-scrub # Let children inherit the caller's environment
+  --sandbox # Give every child a throwaway HOME/XDG tree
+  --no-sandbox # Let children use the real HOME/XDG directories
   --strict (-s) # Raise an error when any test fails or errors (for CI and hooks)
   --verbose (-v) # Print the error under every failing test
   --debug (-D) # Print the effective configuration and generated child programs
 ]: nothing -> table<suite: string, name: string, status: string, duration: duration, error: string, file: path> {
-  let flags: record = flag-layer --lib-dirs=$lib_dirs --isolation=$isolation --depth=$depth --jobs=$jobs --no-scrub=$no_scrub
+  let flags: record = flag-layer --lib-dirs=$lib_dirs --isolation=$isolation --depth=$depth --jobs=$jobs --no-scrub=$no_scrub --sandbox=$sandbox --no-sandbox=$no_sandbox
   let suites: list<path> = find-suites $paths $flags
     | where $match == '' or (($it | path parse).stem =~ $match)
   if ($suites | is-empty) {
@@ -309,13 +313,17 @@ def flag-layer [
   --depth: oneof<nothing, int>
   --jobs: oneof<nothing, int>
   --no-scrub
+  --sandbox
+  --no-sandbox
 ]: nothing -> record {
+  if $sandbox and $no_sandbox { error make --unspanned {msg: '--sandbox and --no-sandbox are mutually exclusive'} }
   {
     lib-dirs: ($lib_dirs | each { path expand })
     isolation: $isolation
     depth: $depth
     jobs: $jobs
     scrub: (if $no_scrub { false })
+    sandbox: (if $sandbox { true } else if $no_sandbox { false })
   } | compact-record | normalize-layer $env.PWD flags
 }
 
@@ -495,6 +503,7 @@ def run-suite [suite: path cfg: record opts: record]: nothing -> list {
       | uniq-by name status error
     }
   }
+  for row in ($rows | where name == '(after all)') { render $row $opts.verbose }
   for row in $ignored { render $row $opts.verbose }
   do $annotate [...$rows ...$ignored]
 }
@@ -514,7 +523,8 @@ def run-child [suite: path cfg: record hooks: record names: list<string> opts: r
     {name: $n status: error duration: 0sec error: $"child interpreter exited with code ($res.exit_code) before reporting\n($res.stderr | str trim)"}
   }
   let all: list = [...$rows ...$crashed]
-  for row in $all { render $row $opts.verbose }
+  # `(after all)` rows are rendered by the caller, once per suite.
+  for row in ($all | where name != '(after all)') { render $row $opts.verbose }
   $all
 }
 
