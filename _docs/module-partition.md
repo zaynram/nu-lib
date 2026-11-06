@@ -74,7 +74,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `track` | `timew`, `git`, optional `td`; installs global hooks on import. |
 | `time` | `timew` (hermetic with a temp `TIMEWARRIORDB`). |
 | `todo` | `td` CLI, Todoist credentials, network. Parsing/formatting helpers are pure. |
-| `completion/external` | `fish`, `carapace`; mutates `$env.config`. `fish-complete parse-output` is pure. |
+| `completion/local` | `fish`, `carapace`; mutates `$env.config`; its export-env sets `CARAPACE_*` and the carapace `PATH` entry. `fish-complete parse-output` is pure. `completion/external` is a deprecated shim for it. |
 | `style` (mild) | Reads `$env.config.color_config`; works with Nushell's defaults. |
 | root `mod.nu` | Aggregates config-dependent modules; needs out-of-repo lib dirs to parse. |
 
