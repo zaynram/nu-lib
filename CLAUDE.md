@@ -53,7 +53,21 @@ or a new external dependency.
   `<namespace>::<command>::<kind>` is derived from the raise site (`_docs/errors.md`). Write the message literal at
   the raise site (lowercase start, no trailing period, values in single quotes), pick a kind from the fixed
   vocabulary, and put remedies in `--advice`. `--code` overrides derivation only for a message that cannot be
-  written at the raise site.
+  written at the raise site. Keep the message minimal: the code already names the module and command and the advice
+  carries the remedy, so the message states only what is wrong and the value concerned (`'WORK is not set'`, not
+  `'proj: the WORK workspace variable is not set'`).
+- Long command lines — a raise with more than one flag, or any call that would pass 100 columns — pass their flags as
+  a record spread, one flag per line:
+
+  ```nu
+  error raise 'WORK is not set' ...{
+    kind: missing_dependency
+    advice: 'set $env.WORK to the workspace root'
+  }
+  ```
+
+  A raise with a single short flag stays on one line. (The spread works for every custom command's flags; `topiary`
+  keeps the layout.)
 - Never emit ANSI directly (`ansi green`, `nu-highlight` and `std/log` all ignore the colour setting): wrap text with
   `style paint <codes>` or gate on `style colors`, which honour `config use-colors` (`use_ansi_coloring`, `NO_COLOR`,
   the terminal). A command's explicit `--colors` flag overrides the check (`validate rules --colors=false`,
@@ -86,6 +100,9 @@ or a new external dependency.
     record; it is not a key/value conversion for `[[k v]; …]` tables.
   - `rotate` is a matrix rotation for tables: on a record it puts values before keys (`rotate key value` labels
     them backwards) and `--ccw` reverses the order. Use `transpose` for records.
+- Predicates are row conditions, not closures: `where $it.n > 1`, `take until $it == $x`, `skip while $it < 3`,
+  `any $it.name == $n`, `all $it in $expected` — never `where {|r| $r.n > 1 }`. A longer condition goes in
+  parentheses over several lines; a closure is only for a predicate that needs more than one expression.
 - `each` doubles as "apply if present": piped a scalar or record it runs the closure once and returns the bare result;
   piped `null` it skips the closure. Only use it that way where the value can never be a list (a list is iterated).
 - `each` by default; `par-each` costs ~1 ms per call before any work, so it only pays off when each item does slow
