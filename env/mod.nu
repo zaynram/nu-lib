@@ -1,6 +1,12 @@
 # Environment utility module for script-friendly environment commands.
+#
+# `env from-bash` (in `from-bash.nu`) runs `bash` to read the variables a bash script sets; it is the owner's
+# reimplementation of a fork of tesujimath/bash-env-nushell (MIT).
 
 use completion "into completions"
+
+# `env from-bash`.
+export use from-bash.nu
 
 def _keys []: nothing -> oneof<list, record> {
   $env | transpose value description
