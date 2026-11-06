@@ -30,8 +30,8 @@ def status-of [output: string, --code: int = 0]: nothing -> record {
   }
 }
 
-# Children must start without the suite's own `IPEX_LLM_OLLAMA_HOME` (set by `use ipex-llm-ollama` above): the
-# runner's environment scrub (`hide-env` after a `do --env`) is a no-op inside test children on this nightly.
+# Children must start without the suite's own `IPEX_LLM_OLLAMA_HOME` (set by `use ipex-llm-ollama` above). The
+# runner scrubs with `env -i` where an `env` program exists; this is belt and braces for the `hide-env` fallback.
 const PRELUDE: string = 'hide-env --ignore-errors IPEX_LLM_OLLAMA_HOME; use ipex-llm-ollama'
 
 const ACTIVE: string = '● ipex-llm-ollama.service - IPEX-LLM Ollama
@@ -76,8 +76,13 @@ def "test device runs ls sycl device from the home" []: nothing -> nothing {
     let home: path = $ctx.code | path join ipex
     mkdir $home
     stub $home ls-sycl-device 'echo "devices:$*"' | ignore
-    let r = sandboxed $ctx 'ipex-llm-ollama device --all' --prelude 'use ipex-llm-ollama' --vars {IPEX_LLM_OLLAMA_HOME: $home}
-    assert equal ($r.stdout | str trim) 'devices:--all' 'the home is on PATH, arguments pass through'
+    # The module appends the home to PATH, so a real `ls-sycl-device` earlier on the inherited PATH would win:
+    # the child gets a PATH that holds only the stub's directory and the system directories.
+    let code: string = '{which: (which ls-sycl-device | get 0.path), out: (ipex-llm-ollama device --all | str trim)} | to nuon'
+    let vars: record = {IPEX_LLM_OLLAMA_HOME: $home PATH: ([$home /usr/bin /bin] | str join (char esep))}
+    let r: record = sandboxed $ctx $code --prelude 'use ipex-llm-ollama' --vars $vars --pipe
+    assert equal $r.which ($home | path join ls-sycl-device) 'the stub is the one on PATH'
+    assert equal $r.out 'devices:--all' 'the home is on PATH, arguments pass through'
   } | ignore
 }
 
