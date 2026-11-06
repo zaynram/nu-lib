@@ -19,9 +19,11 @@ version checks. Check `nu --version` before assuming a language behavior; verify
 - In a git worktree, pass the *worktree* root with `-I`. The owner's shell config puts the main checkout on
   `NU_LIB_DIRS`, so without `-I` a worktree's modules silently resolve their imports from the main checkout.
 - `export use <module>` (as in the root barrel) does **not** run the re-exported module's `export-env` block; only a
-  direct `use` does. Environment set-up must therefore be triggered explicitly: `loaders.nu` runs only the env
-  blocks with guarded `source-env (… <module> mod.nu)` calls. `source-env` of a file also executes its top-level
-  `use` statements (running those modules' env blocks), so a file meant for `source-env` must import nothing.
+  direct `use` does. Environment set-up must therefore be triggered explicitly: the barrel's `export-env` runs the
+  env blocks it needs as guarded `use <module>` statements, which re-parse nothing (the module is already imported)
+  and run the block only when the statement executes. Avoid `source-env` for this: it is parse-time (a guarded
+  `source-env` still re-parses its file as a script on every load), and it executes the file's top-level `use`
+  statements, running those modules' env blocks unguarded.
 - Every module parses with only the repository on the include path; nothing outside it is imported at parse time.
   Machine-specific values come from the per-machine override file (`machine.nuon`/`machine.nu` in Nushell's config
   directory, see `_docs/machine-config.md`), never from code: the library holds no host names or machine paths.

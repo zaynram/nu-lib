@@ -7,7 +7,7 @@
 # hidden separately and would clutter completions).
 #
 # `export use` does not run a module's `export-env`, so the environment set-up the surface needs is triggered by
-# the `export-env` at the end, which loads only those blocks (see `loaders.nu`).
+# the `export-env` at the end, which runs only the blocks the surface needs, under guards (see there).
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -109,10 +109,29 @@ export def init-local [
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
-# `export use` does not run the modules' `export-env` blocks; `loaders.nu` holds the guarded calls that do, and
-# nothing else: `source-env` of a file also executes its top-level `use` statements (which *would* run the imported
-# modules' environment blocks unguarded), so the loaders live in a file with no imports of their own.
+# Runs the `export-env` blocks the surface needs, as guarded `use` statements: the barrel has already parsed these
+# modules, so a `use` here re-parses nothing and only runs the module's environment block when its statement
+# executes (`source-env <file>` would re-parse six module files as scripts on every load, guards or not: ~45 ms).
+# First the library's directories missing from NU_LIB_DIRS are appended; then:
+# - `conf` (login shells): the vendor scope's NU_LIB_DIRS, NU_PLUGIN_DIRS and PATH;
+# - `mods` (interactive login shells): `mods_home`/`mods_refs` and the `use`/`hide` tracking hook;
+# - `completion/local` (interactive login shells): the external completers' variables and PATH entry;
+# - `proj` (interactive login shells): the registry scan of `$env.WORK` (skipped when WORK is unset; a scan within
+#   the last day is reused) and the `std/dirs` ring;
+# - `track` (interactive login shells): the `track::sync` and `track::focus` hooks (added once);
+# - `windows` (WSL: `WSL_DISTRO_NAME` is set or the kernel release names Microsoft): splits the Windows entries of
+#   PATH into WINPATH.
+# Every block is idempotent, so loading the barrel again changes nothing.
 export-env {
-  const root: path = path self .
-  source-env ($root | path join loaders.nu)
+  let missing: list<path> = $NU_LIB_DIRS | where $it not-in ($env.NU_LIB_DIRS? | default [])
+  if $missing != [] { $env.NU_LIB_DIRS = ($env.NU_LIB_DIRS? | default []) ++ $missing }
+  # File paths, not bare names: inside this module a bare `mods` is the wrapper above, which has no env block.
+  if $nu.is-login { use conf/mod.nu }
+  if $nu.is-interactive and $nu.is-login {
+    use mods/mod.nu
+    use completion/local/mod.nu
+    use proj/mod.nu
+    use track/mod.nu
+  }
+  if $env.WSL_DISTRO_NAME? != null or $nu.os-info.kernel_version =~ '(?i)microsoft' { use windows/mod.nu }
 }

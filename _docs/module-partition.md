@@ -78,7 +78,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `todo` | `td` CLI, Todoist credentials, network. Parsing/formatting helpers are pure. |
 | `completion/local` | `fish`, `carapace`; mutates `$env.config`; its export-env sets `CARAPACE_*` and the carapace `PATH` entry. `fish-complete parse-output` is pure. `completion/external` is a deprecated shim for it. |
 | `style` (mild) | Reads `$env.config.color_config`; falls back to Nushell's default colors. |
-| root `mod.nu` | Aggregates config-dependent modules; parses with only the repository on the lib path; `loaders.nu` runs the conf/mods/completion/proj/track/windows env blocks through guarded `source-env`. |
+| root `mod.nu` | Aggregates config-dependent modules; parses with only the repository on the lib path; its `export-env` runs the conf/mods/completion/proj/track/windows env blocks as guarded `use` statements. |
 
 ## Splitting mixed modules
 
@@ -92,9 +92,10 @@ name, `mod`). Modules that are configuration-dependent as a whole (`conf`, `proj
 The root barrel exposes the local variants as bare names (`alarm set`, `mods edit`, `set-completer`); no
 `local …`-prefixed form exists anywhere (a prefixed name and its bare twin are one declaration, so they could not
 be hidden separately and would clutter completions). `init-local` writes an autoload file holding `use <root> *`,
-which bootstraps a fresh machine on its own. The environment loaders live in `loaders.nu`, a file with no module
-imports, because `source-env` of a file also executes its `use` statements and would run every imported module's
-`export-env` unguarded.
+which bootstraps a fresh machine on its own. The barrel runs the environment blocks it needs as guarded `use`
+statements inside its own `export-env`: the modules are already parsed, so this costs nothing beyond the block
+itself (`source-env` would re-parse each file as a script on every load and execute its `use` statements
+unguarded).
 
 The root barrel's `local` module gathers every local variant under its module's name: `use <library root> local`
 gives `local alarm …`, `local completion …` and `local mods …`, and `use <library root> *` exposes `local …` as
