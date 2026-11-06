@@ -4,6 +4,11 @@
 use path
 use ../mod.nu *
 
+# The details of the error raised by `action`, or null when it raised nothing.
+def caught [action: closure]: nothing -> oneof<nothing, record> {
+  try { do $action | ignore; null } catch {|e| $e.details }
+}
+
 # ——— path rejoin ——————————————————————————————————————————————————————————————
 
 def "test rejoin collapses separators and appends segments" []: nothing -> nothing {
@@ -32,7 +37,9 @@ def "test rejoin lets an absolute segment win" []: nothing -> nothing {
 }
 
 def "test rejoin with nothing to join raises" []: nothing -> nothing {
-  assert error {|| path rejoin } 'no input and no segments is an error'
+  let e = caught { path rejoin }
+  assert equal $e.msg 'nothing to join' 'no input and no segments is an error'
+  assert equal $e.code 'path::rejoin::invalid_argument' 'the derived code'
 }
 
 # ——— path truncate ————————————————————————————————————————————————————————————
@@ -70,18 +77,24 @@ def "test truncate keeps the input order" []: nothing -> nothing {
 }
 
 def "test truncate to zero segments raises" []: nothing -> nothing {
-  assert error {|| [a/b] | path truncate 0 } 'zero segments would be an empty path'
+  let e = caught { [a/b] | path truncate 0 }
+  assert equal $e.msg 'cannot keep zero segments' 'zero segments would be an empty path'
+  assert equal $e.code 'path::truncate::invalid_argument' 'the derived code'
 }
 
 def "test truncate rejects an unknown from" []: nothing -> nothing {
-  assert error {|| [a/b] | path truncate --from middle } 'only start/end are valid'
+  let e = caught { [a/b] | path truncate --from middle }
+  assert equal $e.msg "unknown --from 'middle'" 'only start/end are valid'
+  assert equal $e.code 'path::truncate::invalid_argument' 'the derived code'
 }
 
 # ——— path select ——————————————————————————————————————————————————————————————
 
 def "test select on empty input raises the message" []: nothing -> nothing {
-  let msg: string = try { [] | path select --message 'nothing here' ; '' } catch {|e| $e.msg }
-  assert ($msg =~ '(?i)nothing here') $'the custom message is raised, got: ($msg)'
+  let e = caught { [] | path select --message 'nothing here' }
+  assert equal $e.msg 'nothing here' 'the custom message is raised'
+  assert equal $e.code 'path::select::invalid_argument' "the code is given, since the message is the caller's"
+  assert equal (caught { [] | path select }).msg 'no files to select from' 'the default message'
 }
 
 def "test select on empty input with optional returns nothing" []: nothing -> nothing {

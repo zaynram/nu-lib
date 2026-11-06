@@ -1,5 +1,6 @@
 # Path helpers extending the builtin `path` commands, with the std and std-rfc path extras.
 
+use error
 use std/util "path add"
 export use std-rfc/path [ with-extension with-parent with-stem ]
 
@@ -26,7 +27,9 @@ export def rejoin [
 ] {
   let input: oneof<nothing, string, list<string>> = $in
   match ($input | describe | str replace --regex '<.*' '') {
-    nothing if ($segments | is-empty) => { error make --unspanned 'path rejoin: nothing to join' }
+    nothing if ($segments | is-empty) => {
+      error raise 'nothing to join' --kind invalid_argument --advice 'pipe a path (or a list of paths), or give segments'
+    }
     list => { $input | each {|p| [$p] | append $segments | join-with $sep } }
     _ => { [$input] | append $segments | compact | join-with $sep }
   }
@@ -47,12 +50,12 @@ export def truncate [
   list<oneof<path, string>> -> list<oneof<path, string>>
 ] {
   let queue: any = $in
-  if $n == 0 { error make --unspanned 'path truncate: cannot keep zero segments' }
+  if $n == 0 { error raise 'cannot keep zero segments' --kind invalid_argument --advice 'a negative count keeps every segment' }
   let trim: closure = if $from =~ ^e {
     {|n: int| last $n }
   } else if $from =~ ^s {
     {|n: int| first $n }
-  } else { error make --unspanned $'unknown value for `--from`: ($from)' }
+  } else { error raise $"unknown --from '($from)'" --kind invalid_argument --advice 'use start or end' }
   let glob: bool = $queue | any { describe | $in == string }
   $queue | each {|item|
     let base: path = if $glob { $item } else { $item.name }
@@ -76,11 +79,13 @@ export def select [
   oneof<list, table> -> oneof<nothing, path>
   nothing -> nothing
 ] {
-  if ($in | is-not-empty) {
+  let items: any = $in
+  if ($items | is-not-empty) {
     let prompt: string = $"open file with ($env.EDITOR? | default editor)"
-    let choice: any = $in | input list --fuzzy $"(ansi dark_gray)($prompt)(ansi rst)"
+    let choice: any = $items | input list --fuzzy $"(ansi dark_gray)($prompt)(ansi rst)"
     match ($choice | describe) { string => $choice _ => { $choice | get --optional $column } }
   } else if not $optional {
-    error make $message
+    # The message is the caller's `--message`, whose span lies at the call site, so the code cannot be derived here.
+    error raise $message --kind invalid_argument --code 'path::select::invalid_argument'
   }
 }
