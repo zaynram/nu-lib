@@ -115,8 +115,10 @@ def "test find with a project lists its open tasks" []: record -> nothing {
 def "test find without a project outside a repository raises" []: record -> nothing {
   let t = $in
   cd $t.dir
-  let msg: string = try { todo find anything; 'no error' } catch {|e| $e.msg }
-  assert equal $msg 'not inside a repository: pass `--project`' 'the hint names the flag'
+  let err: record = try { todo find anything; {} } catch {|e| $e }
+  assert equal $err.msg 'not inside a repository' 'the message'
+  assert equal $err.details?.code? todo::repo-name::not_found 'the code'
+  assert ($err.details?.help? =~ '--project') $'the advice names the flag: ($err.details?.help?)'
 }
 
 def "test find without a project uses the repository name" []: record -> nothing {
@@ -182,23 +184,26 @@ def "test list completed uses td completed list" []: record -> nothing {
 
 def "test list completed refuses open task filters" []: record -> nothing {
   let t = $in
-  let msg: string = try { todo list --completed --label [a] --filter today; 'no error' } catch {|e| $e.msg }
-  assert equal $msg '`--completed` cannot be combined with `--label`, `--filter`' 'names the ignored flags (D6)'
+  let err: record = try { todo list --completed --label [a] --filter today; {} } catch {|e| $e }
+  assert equal $err.msg '`--completed` cannot be combined with `--label`, `--filter`' 'names the ignored flags (D6)'
+  assert equal $err.details?.code? todo::list::invalid_argument 'the code'
   assert equal (calls $t) [] 'td is not called'
 }
 
 def "test list since without completed raises" []: record -> nothing {
   let t = $in
-  let msg: string = try { todo list --since 2026-11-01; 'no error' } catch {|e| $e.msg }
-  assert equal $msg '`--since` requires `--completed`' 'the flag would be ignored (D9)'
+  let err: record = try { todo list --since 2026-11-01; {} } catch {|e| $e }
+  assert equal $err.msg '`--since` requires `--completed`' 'the flag would be ignored (D9)'
+  assert equal $err.details?.code? todo::list::invalid_argument 'the code'
   assert equal (calls $t) [] 'td is not called'
 }
 
 def "test a failing json read raises with td output" []: record -> nothing {
   let t = $in
   fail $t task-list 1 '{"error":"INVALID_PRIORITY"}'
-  let err: record = try { todo list; {} } catch {|e| {msg: $e.msg help: ($e.details?.help? | default '')} }
+  let err: record = try { todo list; {} } catch {|e| {msg: $e.msg code: $e.details?.code? help: ($e.details?.help? | default '')} }
   assert equal $err.msg '`td` exited with code 1' 'the exit code'
+  assert equal $err.code todo::todoist::external_failure 'the code'
   assert ($err.help has INVALID_PRIORITY) $"td's stderr is the help: ($err.help)"
 }
 

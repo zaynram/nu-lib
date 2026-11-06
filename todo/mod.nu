@@ -4,6 +4,7 @@
 
 use command attempt
 use completion "into completions"
+use error
 
 # ——— constants ——————————————————————————————————————————————————————————————
 
@@ -38,16 +39,14 @@ export def list [
   let open_only: list<string> = {label: $label parent: $parent filter: $filter} | transpose flag value
     | where value != null | get flag
   if $completed and $open_only != [] {
-    error make --unspanned {
-      msg: $"`--completed` cannot be combined with ($open_only | each { $'`--($in)`' } | str join ', ')"
-      help: '`td completed list` filters only by `--project` and `--since`'
-    }
+    error raise $"`--completed` cannot be combined with ($open_only | each { $'`--($in)`' } | str join ', ')" --kind invalid_argument --advice (
+      '`td completed list` filters only by `--project` and `--since`'
+    )
   }
   if not $completed and $since != null {
-    error make --unspanned {
-      msg: '`--since` requires `--completed`'
-      help: 'open tasks have no completion date to filter by; add `--completed` to list completed tasks'
-    }
+    error raise '`--since` requires `--completed`' --kind invalid_argument --advice (
+      'open tasks have no completion date to filter by; add `--completed` to list completed tasks'
+    )
   }
   if $completed {
     todoist --json --options={
@@ -193,10 +192,9 @@ def --wrapped todoist [
     let args;
     let res: record = attempt td ...$args
     if $res.exit_code != 0 {
-      error make --unspanned {
-        msg: $"`td` exited with code ($res.exit_code)"
-        help: ([$res.stderr $res.stdout] | str trim | compact --empty | str join (char nl))
-      }
+      error raise $"`td` exited with code ($res.exit_code)" --kind external_failure --advice (
+        [$res.stderr $res.stdout] | str trim | compact --empty | str join (char nl)
+      )
     }
     $res.stdout
   } | if $struct {
@@ -233,9 +231,10 @@ def format-priority []: oneof<nothing, int> -> oneof<nothing, string> {
 }
 
 def repo-name []: nothing -> string {
-  try { attempt --check git rev-parse --show-toplevel } catch {
-    error make --unspanned 'not inside a repository: pass `--project`'
-  } | str trim | path basename
+  let root: string = try { attempt --check git rev-parse --show-toplevel } catch {|e|
+    $e | error raise 'not inside a repository' --kind not_found --advice 'pass --project to name the Todoist project'
+  }
+  $root | str trim | path basename
 }
 
 def tokens []: string -> list<string> {
