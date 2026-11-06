@@ -4,7 +4,8 @@
 # - A test is `def "test <name>" []` or any command carrying the `@test` attribute (`use std/testing *` makes
 #   the attribute parse). Only commands *defined in the suite file* count: commands a suite imports are ignored,
 #   even when their names start with `test`.
-# - A description starting with `ignore`, or an `@ignore` attribute, reports the test as skipped without running it.
+# - A description whose first word is `ignore` (`# ignore`, `# ignore: not ready`), or an `@ignore` attribute, reports
+#   the test as skipped without running it.
 # - `skip <reason>` inside a test aborts it and reports it as skipped (missing tool, wrong OS, no credentials, ...).
 #
 # Hooks (optional; named `def "before all"` etc. or marked `@before-all` etc.)
@@ -23,7 +24,9 @@
 # configuration in `$env.NU_TEST`. With `sandbox: true`, each child also gets a throwaway HOME/XDG tree. Each
 # test's literal command name is written into the child program: nushell has no string-eval, and a `$name` in
 # command position evaluates to the string instead of calling it. Children run detached from the terminal
-# (`setsid`), so Ctrl-C ends the run only once the current child exits; `timeout` bounds a hung child.
+# (`setsid`), so Ctrl-C ends the run only once the current child exits; `timeout` bounds a hung child (the run warns
+# once when the program is missing). Children's stdout is read for result rows only: whatever a suite prints while
+# loading, or a test prints, is discarded.
 #
 # Configuration, lowest to highest precedence
 #   1. built-in defaults (`test config --defaults`)
@@ -51,12 +54,16 @@ const PROJECT_FILE: string = 'nutest.nuon'
 const HOME: path = path self ..
 const HOOKS: list<string> = [before-all before-each after-each after-all]
 const ISOLATION: list<string> = [test suite]
+# The ignore marker: a description whose first word is `ignore`, alone or followed by `:` ("Ignores whitespace" is not one).
+const IGNORE: string = r#'(?i)^\s*ignore(\s|:|$)'#
 # Test names the runner can call (it writes them into the child program as bare words): no quotes, brackets, braces,
 # pipes, semicolons, comments, carets, percent signs or `>` (a redirection), and no word starting with `$`.
-const CALLABLE: string = r#'^[^'"`()\[{}|;#^%>\n]*$'#
+const CALLABLE: string = r#'^[^'"`()\[\]{}|;#^%>\n]*$'#
 const UNCALLABLE_WORD: string = '(^| )\$'
-# A `def` line in suite source: the command name, double/single/back-quoted or bare.
-const DEF_RX: string = r#'(?m)^[ \t]*(?:export[ \t]+)?def[ \t]+(?:--[\w-]+[ \t]+)*(?:"(?<dq>[^"]+)"|'(?<sq>[^']+)'|`(?<bq>[^`]+)`|(?<bare>[^\s\[]+))'#
+# A `def` line in suite source: the command name, double/single/back-quoted or bare. Double- and single-quoted names
+# are captured with their quotes, escapes and adjacent segments (`"say \"hi\""`, `'it''s'`) included, so `from nuon`
+# can read them exactly as the parser does; back-quoted names have no escapes.
+const DEF_RX: string = r#'(?m)^[ \t]*(?:export[ \t]+)?def[ \t]+(?:--[\w-]+[ \t]+)*(?:(?<dq>"(?:[^"\\]|\\.)*"(?:"(?:[^"\\]|\\.)*")*)|(?<sq>'[^']*'(?:'[^']*')*)|`(?<bq>[^`]+)`|(?<bare>[^\s\[]+))'#
 const DEFAULTS: record = {
   paths: [tests/suites] # Suite files or directories searched when no paths are given
   lib-dirs: [] # Extra `--include-path` directories for child interpreters
@@ -100,7 +107,8 @@ export def with-sandbox [
   rm --recursive --force $ctx.root
   if $result has error {
     # Rethrow with the original message (the span is lost, the failure and any SKIP are not).
-    let rest: string = $result.error | error-text | lines | slice 1.. | str join (char newline)
+    # (`drop nth 0`, not `skip 1`: `skip` is this module's own command here.)
+    let rest: string = $result.error | error-text | lines | drop nth 0 | str join (char newline)
     error make --unspanned ({msg: $result.error.msg help: $rest} | compact --empty)
   }
   $result.value
@@ -221,12 +229,16 @@ export def main [
   let suites: list<path> = find-suites $paths $flags
     | where $match == '' or (($it | path parse).stem =~ $match)
   if ($suites | is-empty) {
-    error make --unspanned {msg: 'no test suites matched' help: $"--match: '($match)'"}
+    let searched: list<path> = $paths | default --empty { (resolve $env.PWD $flags).paths }
+    let filter: string = if $match == '' { '' } else { $" whose stem matches --match '($match)'" }
+    error make --unspanned {msg: 'no test suites matched' help: $"no suite files($filter) under: ($searched | str join ', ')"}
   }
   let started: datetime = date now
   # Colours (`config use-colors`) are decided once per run; children never see a terminal, so test output is plain.
   let opts: record = {test: $test verbose: $verbose debug: $debug colors: (style colors)}
-  let results: list = $suites | each {|suite| run-suite $suite (resolve $suite $flags) $opts } | flatten
+  let runs: table<suite: path, cfg: record> = $suites | each {|suite| {suite: $suite cfg: (resolve $suite $flags)} }
+  warn-unbounded ($runs | get cfg) $opts.colors
+  let results: list = $runs | each {|r| run-suite $r.suite $r.cfg $opts } | flatten
   if (is-terminal --stderr) { pb clear }
   summarize $results ((date now) - $started) $strict $opts.colors
   $results | select suite name status duration error file
@@ -242,19 +254,25 @@ export def discover [
   let file: path = $suite | path expand
   let cfg: record = $config | default { resolve $file {} }
   let defined: list<string> = open --raw $file | defined-names
+  # The result travels as a tagged row (as test results do), so whatever the suite prints while loading is ignored.
   let program: string = [
     $"source ($file | to nuon)"
     'scope commands | where type == custom | select name description attributes'
-    '| update attributes { get --optional name | default [] } | to nuon --serialize'
+    '| update attributes { get --optional name | default [] } | to nuon --serialize | encode base64'
+    $"| print $\"\\n($ROW)\($in\)\""
   ] | str join (char newline)
   let res: record = spawn $cfg $program {} --sandbox=$cfg.sandbox
   if $res.exit_code != 0 {
     error make --unspanned {msg: $"could not load suite ($file)" help: ($res.stderr | str trim)}
   }
-  let found: table = $res.stdout | from nuon
+  let payloads: list = $res.stdout | tagged | where ($it | describe) =~ '^(table|list)'
+  if ($payloads | is-empty) {
+    error make --unspanned {msg: $"could not load suite ($file)" help: 'the child interpreter reported no definitions'}
+  }
+  let found: table = $payloads | last
   # Definition order (the order of `def`s in the file), not scope order (alphabetical).
   $defined | uniq | each {|n| $found | where name == $n | get --optional 0 } | compact
-  | each {|c| {name: $c.name role: (role $c) ignore: (($c.description | default '') =~ '(?i)^\s*ignore' or 'ignore' in $c.attributes)} }
+  | each {|c| {name: $c.name role: (role $c) ignore: (($c.description | default '') =~ $IGNORE or 'ignore' in $c.attributes)} }
   | where role != null
 }
 
@@ -341,10 +359,12 @@ def flag-layer [
 
 def compact-record []: record -> record { record where value != null }
 
-# Validate a partial configuration layer and make its paths absolute relative to `base`.
-def normalize-layer [base: path source: string]: record -> record {
+# Validate a partial configuration layer and make its paths absolute relative to `base`. `--internal` also admits the
+# keys the runner adds to a resolved configuration (`resolved`, `project`).
+def normalize-layer [base: path source: string --internal]: record -> record {
   let layer: record = $in
-  let unknown: list<string> = $layer | columns | where $it not-in ($DEFAULTS | columns | append [resolved project])
+  let known: list<string> = $DEFAULTS | columns | if $internal { append [resolved project] } else { }
+  let unknown: list<string> = $layer | columns | where $it not-in $known
   if ($unknown | is-not-empty) {
     error make --unspanned {
       msg: $"unknown test configuration key\(s) in ($source): ($unknown | str join ', ')"
@@ -382,12 +402,16 @@ def normalize-layer [base: path source: string]: record -> record {
 
 # The `$env.NU_TEST` layer: a record, or nuon text as received by a child interpreter.
 def env-layer []: nothing -> record {
-  match ($env.NU_TEST? | describe) {
+  let layer: record = match ($env.NU_TEST? | describe) {
     nothing => ({})
     string => ($env.NU_TEST | from nuon)
     $t if $t starts-with record => $env.NU_TEST
     $t => { error make --unspanned {msg: $"$env.NU_TEST must be a record, got ($t)"} }
-  } | normalize-layer $env.PWD '$env.NU_TEST'
+  }
+  # A child receives the complete configuration the runner resolved (`resolved: true` plus every key). Only that record
+  # may carry the internal keys; in a user's layer they are unknown keys like any other.
+  let resolved: bool = ($layer.resolved? | describe) == bool and $layer.resolved? and ($DEFAULTS | columns | all {|k| $k in $layer })
+  $layer | normalize-layer $env.PWD '$env.NU_TEST' --internal=$resolved
 }
 
 # The nearest project file at or above a directory, if any.
@@ -472,7 +496,12 @@ def find-suites [paths: list<path> flags: record]: nothing -> list<path> {
 
 # Names a suite file defines with `def` (quoted or bare), regardless of what it imports.
 def defined-names []: string -> list<string> {
-  parse --regex $DEF_RX | each {|m| [$m.dq? $m.sq? $m.bq? $m.bare?] | compact --empty | first }
+  parse --regex $DEF_RX | each {|m|
+    let quoted: oneof<string, nothing> = [$m.dq? $m.sq?] | compact --empty | get --optional 0
+    if $quoted == null { return ([$m.bq? $m.bare?] | compact --empty | first) }
+    # The parser's own reading of the literal (escapes, doubled quotes); failing that, the text between the quotes.
+    try { $quoted | from nuon | into string } catch { $quoted | str substring 1..<(($quoted | str length) - 1) }
+  }
 }
 
 # The runner role of a command: test, a hook, or null.
@@ -535,12 +564,7 @@ def run-child [suite: path cfg: record hooks: record names: list<string> opts: r
   let program: string = program $suite $hooks $names
   if $opts.debug { print --stderr $program }
   let res: record = spawn $cfg $program {} --sandbox=$cfg.sandbox
-  # A line that starts with the marker but does not decode is test output, not a row.
-  let rows: list = $res.stdout | lines
-    | where ($it | str starts-with $ROW)
-    | each {|l| try { $l | str substring ($ROW | str length).. | decode base64 | decode | from nuon } }
-    | compact
-    | where ($it | describe) starts-with record
+  let rows: list = $res.stdout | tagged | where ($it | describe) starts-with record
   # A child that dies (parse error, `exit`, crash) emits no row for the remaining tests: report each as an error.
   let missing: list<string> = $names | where $it not-in ($rows | get name)
   let crashed: list = $missing | each {|n|
@@ -551,6 +575,15 @@ def run-child [suite: path cfg: record hooks: record names: list<string> opts: r
   # `(after all)` rows are rendered by the caller, once per suite.
   for row in ($all | where name != '(after all)') { render $row $opts }
   $all
+}
+
+# The decoded payloads of the tagged lines on a child's stdout. A line that starts with the marker but does not decode
+# is test output, not a row; untagged lines are ignored.
+def tagged []: string -> list {
+  lines
+  | where ($it | str starts-with $ROW)
+  | each {|l| try { $l | str substring ($ROW | str length).. | decode base64 | decode | from nuon } }
+  | compact
 }
 
 # A hook chain as a pipeline over `$in` (`before each | other hook`); empty when there are no hooks.
@@ -636,8 +669,7 @@ def spawn-script [cfg: record vars: record script: path]: nothing -> record<stdo
   # empty stdin alone is not enough.
   let detach: list<string> = which --all setsid | where type == external | get --optional 0.path | each {|p| [$p --wait] } | default []
   let limit: list<string> = if $cfg.timeout > 0sec {
-    which --all timeout | where type == external | get --optional 0.path
-    | each {|p| [$p --kill-after=5 $"($cfg.timeout / 1sec)"] } | default []
+    timeout-program | each {|p| [$p --kill-after=5 $"($cfg.timeout / 1sec)"] } | default []
   } else { [] }
   let launch: list<string> = [...$detach ...$limit $nu.current-exe ...$args]
   if not $cfg.scrub { return (with-env $vars { '' | run-external ...$launch | complete }) }
@@ -656,6 +688,20 @@ def spawn-script [cfg: record vars: record script: path]: nothing -> record<stdo
     $kept not-has $k and $k not-in [PWD FILE_PWD CURRENT_FILE config]
   }
   do { hide-env ...$hidden; with-env $vars { '' | run-external ...$launch | complete } }
+}
+
+# The `timeout` program that enforces a configured `timeout`, if there is one on PATH.
+def timeout-program []: nothing -> oneof<path, nothing> {
+  which --all timeout | where type == external | get --optional 0.path
+}
+
+# A configured `timeout` that cannot be enforced is said once per run, so the missing bound never passes unnoticed.
+def warn-unbounded [cfgs: list<record> colors: bool]: nothing -> nothing {
+  let limits: list<duration> = $cfgs | get timeout | where $it > 0sec | uniq
+  if ($limits | is-not-empty) and (timeout-program) == null {
+    let text: string = $limits | each { into string } | str join ', '
+    print --stderr ($"warning: timeout ($text) is configured but no `timeout` program is on PATH: children run unbounded" | tint yellow $colors)
+  }
 }
 
 # An environment value as the text an external program receives (lists joined like PATH).

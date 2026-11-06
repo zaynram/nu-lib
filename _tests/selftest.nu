@@ -35,10 +35,11 @@ def project [files: record]: nothing -> path {
 
 # Run `code` after `use test` in a fresh interpreter whose PWD is `dir`.
 # Returns {value, stdout, stderr, exit_code}; `value` is the code's result (null when the child failed).
+# The caller's `NU_TEST` (a global default, e.g. from config.nu) is dropped: a case sees only what `--vars` sets.
 def runner [dir: path code: string --vars: record = {}]: nothing -> record {
   let res: record = do {
     cd $dir
-    with-env $vars {
+    with-env ({NU_TEST: null} | merge $vars) {
       ^$nu.current-exe --no-config-file --include-path=($ROOT) --commands=$"use test\n($code) | to nuon --serialize" | complete
     }
   }
@@ -105,6 +106,8 @@ def helper [] { 1 }
 def "test b" [] { }
 # ignore: not ready
 def "test c" [] { }
+# Ignores leading whitespace (a description that merely starts with the letters is no marker)
+def "test d" [] { }
 @test
 def attr-a [] { }
 @ignore
@@ -117,6 +120,7 @@ def "before each" [] { }
       [name role ignore];
       ["test b" test false]
       ["test c" test true]
+      ["test d" test false]
       [attr-a test false]
       [attr-ignored test true]
       ["before each" before-each false]
@@ -139,17 +143,34 @@ def "before each" [] { }
   }}
 
   {name: 'run: names that cannot be called are reported, the rest still run' run: {||
+    # Quoted names with escapes or doubled quotes are read as the parser reads them: reported, never dropped.
     let dir = project {'tests/suites/n.nu': `def "test it's broken" [] { }
 def "test a|b" [] { }
 def "test a {b}" [] { }
 def "test a;b" [] { }
+def "test a]b" [] { }
+def "test say \"hi\"" [] { error make {msg: ran} }
+def 'test it''s' [] { }
+def "test a\\b" [] { }
 def "test a --flag" [] { }
 def "test fine one" [] { }`}
-    let rows = ok $dir 'test --isolation suite'
-    assert equal ($rows | statuses) {
-      'test a --flag': ok 'test fine one': ok "test it's broken": error 'test a|b': error 'test a {b}': error 'test a;b': error
+    let expected = {
+      'test a --flag': ok 'test fine one': ok 'test a\b': ok
+      "test it's broken": error 'test a|b': error 'test a {b}': error 'test a;b': error 'test a]b': error
+      'test say "hi"': error "test it''s": error
     }
-    assert str contains ($rows | row "test it's broken").error 'cannot be called'
+    let rows = ok $dir 'test --isolation suite'
+    assert equal ($rows | statuses) $expected
+    assert equal (ok $dir 'test' | statuses) $expected 'the same under test isolation'
+    for name in ["test it's broken" 'test a]b' 'test say "hi"' "test it''s"] {
+      assert str contains ($rows | row $name).error 'cannot be called' $name
+    }
+  }}
+
+  {name: 'discover: output printed while the suite loads does not break discovery' run: {||
+    let dir = project {'tests/suites/noisy.nu': 'print "hello from top level"
+def "test quiet" [] { }'}
+    assert equal (ok $dir 'test' | statuses) {'test quiet': ok}
   }}
 
   {name: 'run: --jobs gives the same results as sequential, and really runs in parallel' run: {||
@@ -203,6 +224,21 @@ def "test quick" [] { }'}
     assert equal ($rows | statuses) {'test hangs': error 'test quick': ok}
     assert str contains ($rows | row 'test hangs').error 'timed out after 1sec'
     assert str contains (runner $dir 'test --isolation suite' --vars {NU_TEST: '{timeout: -1sec}'}).stderr "invalid timeout"
+  }}
+
+  {name: 'config: a timeout without the timeout program warns instead of silently dropping the bound' run: {||
+    let dir = project {'nutest.nuon': '{timeout: 1sec}' 'tests/suites/t.nu': 'def "test runs" [] { }'}
+    # A PATH holding only `env` (the runner scrubs children with it; `nu` is started by its absolute path).
+    let bin = $dir | path join bin
+    mkdir $bin
+    which --all env | where type == external | get --optional 0.path | each {|p| ^ln -s $p ($bin | path join env) }
+    let res = runner $dir 'test' --vars {PATH: $bin}
+    assert equal $res.exit_code 0 $res.stderr
+    assert equal ($res.value | statuses) {'test runs': ok}
+    assert str contains $res.stderr 'timeout 1sec is configured but no `timeout` program is on PATH'
+    if (which timeout | is-not-empty) {
+      assert not ((runner $dir 'test').stderr =~ 'no `timeout` program') 'nothing is said when the program is there'
+    }
   }}
 
   {name: 'env: --no-sandbox keeps custom XDG directories' run: {||
@@ -312,6 +348,12 @@ def "test b" [] { }'
     assert str contains $missing.stderr 'no such suite file or directory'
     let none = runner $dir 'test --match zzz'
     assert str contains $none.stderr 'no test suites matched'
+    assert str contains $none.stderr "--match 'zzz'"
+    mkdir ($dir | path join tests empty)
+    let empty = runner $dir 'test tests/empty'
+    assert str contains $empty.stderr 'no test suites matched'
+    assert str contains $empty.stderr 'tests/empty' 'the searched path is named'
+    assert not ($empty.stderr =~ '--match') 'the help cites --match only when it was given'
   }}
 
   {name: 'config: project file paths and lib-dirs resolve from its own directory' run: {||
@@ -362,6 +404,15 @@ def "test greet" [] { assert equal (greet hello) hi }'
     rm ($dir | path join nutest.nuon)
     assert str contains (runner $dir 'test --isolation everything').stderr "invalid isolation 'everything' in flags"
     assert str contains (runner $dir 'test --jobs 0').stderr "invalid jobs '0' in flags"
+    # The keys the runner adds to a resolved configuration are unknown in a user's layer, not a crash.
+    for layer in ['{resolved: true}' '{project: /x}'] {
+      $layer | save --force ($dir | path join nutest.nuon)
+      assert str contains (runner $dir 'test config').stderr 'unknown test configuration key(s)' $layer
+    }
+    rm ($dir | path join nutest.nuon)
+    assert str contains (runner $dir 'test config' --vars {NU_TEST: '{resolved: true}'}).stderr 'unknown test configuration key(s) in $env.NU_TEST: resolved'
+    # A complete resolved record (what a child receives) is still taken as is.
+    assert equal (ok $dir 'let c = test config; with-env {NU_TEST: ($c | to nuon)} { test config } | get resolved') true
   }}
 
   {name: 'env: children start scrubbed; passthrough and env opt variables in' run: {||
@@ -516,8 +567,12 @@ def "test skipped inside a sandbox" [] { with-sandbox {|c| skip "nope" } }'}
 def main [
   filter?: string # Regex selecting which cases to run
 ]: nothing -> nothing {
-  let results: list = cases
-    | where {|c| $filter == null or $c.name =~ $filter }
+  let selected: list = cases | where {|c| $filter == null or $c.name =~ $filter }
+  if ($selected | is-empty) {
+    print --stderr $"no case matches '($filter)'; run without a filter to list the cases"
+    exit 2
+  }
+  let results: list = $selected
     | each {|c|
       let start: datetime = date now
       let tmp: path = mktemp --directory --tmpdir nutest-selftest-XXXXXX

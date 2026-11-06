@@ -250,18 +250,21 @@ def "test loading the barrel twice changes nothing" []: nothing -> nothing {
 # command, so this is a def, not a const).
 def prelude-line []: nothing -> string { $"use ($ROOT | to nuon) *" }
 
+# The generated file without its one-line header (`drop nth 0`, not `skip 1`: `skip` is the runner's in this suite).
+def body [file: path]: nothing -> list<string> { open --raw $file | lines | drop nth 0 }
+
 def "test init-local writes the autoload file once and keeps edits" []: nothing -> nothing {
   with-sandbox {|ctx|
     let expected: path = $ctx.config | path join nushell autoload nu-lib.nu
     let first: record = plain $ctx 'init-local'
     assert equal $first {path: $expected action: written} 'written into the first user autoload directory'
-    assert equal (open --raw $expected | lines | slice 1..) [(prelude-line)] 'one `use` line after a one-line header'
+    assert equal (body $expected) [(prelude-line)] 'one `use` line after a one-line header'
     assert equal (plain $ctx 'init-local').action unchanged 'the same content is left alone'
     "# edited by hand\n" | save --append $expected
     assert equal (plain $ctx 'init-local').action kept 'different content is kept'
     assert str contains (open --raw $expected) 'edited by hand' 'and really untouched'
     assert equal (plain $ctx 'init-local --force').action overwritten '--force replaces it'
-    assert equal (open --raw $expected | lines | slice 1..) [(prelude-line)] 'with the generated content'
+    assert equal (body $expected) [(prelude-line)] 'with the generated content'
   }
 }
 
@@ -270,7 +273,7 @@ def "test init-local path flag" []: nothing -> nothing {
     let target: path = $ctx.code | path join elsewhere boot.nu
     let r: record = plain $ctx $"init-local --path ($target | to nuon)"
     assert equal $r {path: $target action: written} 'writes where --path says, creating the directory'
-    assert equal (open --raw $target | lines | slice 1..) [(prelude-line)] 'same content'
+    assert equal (body $target) [(prelude-line)] 'same content'
   }
 }
 

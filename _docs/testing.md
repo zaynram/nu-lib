@@ -26,11 +26,14 @@ def "test needs fish" []: nothing -> nothing {
 - The runner calls each test by writing its name into the child program, so a name must parse as bare words:
   no quotes, brackets, braces, `|`, `;`, `#`, `^`, `%`, `>`, and no word starting with `$`. Other names are reported
   as `error` ("this name cannot be called") without stopping the rest of the suite.
-- `# ignore …` as the description (or `@ignore`) reports a test as `skip` with reason `ignored` without running it.
+- A description whose first word is `ignore` (`# ignore`, `# ignore: not ready`), or an `@ignore` attribute, reports
+  a test as `skip` with reason `ignored` without running it. A description that merely starts with those letters
+  (`# Ignores leading whitespace`) is not a marker.
 - `skip "<reason>"` aborts a test as `skip`. Use it for runtime conditions (missing program, wrong OS, no
   credentials) so that an unavailable dependency never reads as passed or failed. A `skip` raised in `before all`
   or `before each` skips the affected tests. Importing it shadows the builtin `skip` in the suite (and in modules
-  parsed after it): use `slice 1..` or `drop nth 0` to drop list items in suites.
+  parsed after it): use `drop nth 0` (or `slice 1..`) to drop list items in suites, and do not apply nu-lint's
+  `slice_to_skip` suggestion there, since `skip 1` would then be the runner's `skip` with reason `1`.
 - Statuses: `ok`, `fail` (the test raised), `skip`, and `error` (infrastructure: a hook failed, the suite did not
   load, or the child interpreter died before reporting).
 
@@ -68,8 +71,9 @@ test | where status != ok     # it's just a table
 
 `--depth` limits how deep directories are searched: `1` means only files directly in the directory.
 
-Progress on stderr is coloured only when `config use-colors` says so (`$env.config.use_ansi_coloring`, `NO_COLOR`,
-whether stdout is a terminal), decided once per run. Test children never see a terminal, so inside a test colours
+Progress on stderr is coloured only when `config use-colors` says so (`$env.config.use_ansi_coloring`, the
+`FORCE_COLOR`/`NO_COLOR`/`CLICOLOR` variables, whether stdout is a terminal; `style/mod.nu` has the precedence),
+decided once per run. Test children never see a terminal, so inside a test colours
 are off unless the test sets `$env.config.use_ansi_coloring = true` itself (it is a per-process setting).
 
 ## Isolation model
@@ -78,12 +82,15 @@ Every discovery and every test runs in a **child interpreter** (`nu --no-config-
 or one per suite with `--isolation suite`. Suites therefore cannot affect each other, the invoking shell, or the
 module state under test, and `before all`/`after all` run around each test in test isolation.
 
-Children start from a **scrubbed environment**: only an allowlist (PATH, HOME, USER, TERM, LANG/LC_*, TMPDIR,
-XDG_RUNTIME_DIR and their Windows equivalents) survives, plus configured `passthrough` names and `env` values. A
-suite gets the same results from an interactive shell (where variables like `EDITOR`, `ZELLIJ`, `WORK` or
-`mods_home` are exported) and from CI. `--no-scrub` opts out. Where an `env` program exists (Linux, macOS, WSL) the child's environment is
-built from scratch with `env -i`; elsewhere the runner falls back to `hide-env`, which Nushell silently ignores
-once a `do --env` has run anywhere up the call stack, so scrubbing is best-effort there.
+Children start from a **scrubbed environment**: only the `KEEP` allowlist in `test/mod.nu` survives — `PATH`/`Path`,
+`HOME`, `USER`, `USERNAME`, `LOGNAME`, `SHELL`, `TERM`, `COLORTERM`, `LANG`, `LANGUAGE`, `LC_*`, `TZ`, `TMPDIR`,
+`TEMP`, `TMP`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` and, for
+Windows, `SYSTEMROOT`/`SystemRoot`, `WINDIR`, `COMSPEC`, `PATHEXT`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA` —
+plus configured `passthrough` names and `env` values. A suite gets the same results from an interactive shell
+(where variables like `EDITOR`, `ZELLIJ`, `WORK` or `mods_home` are exported) and from CI. `--no-scrub` opts out.
+Where an `env` program exists (Linux, macOS, WSL) the child's environment is built from scratch with `env -i`;
+elsewhere the runner falls back to `hide-env`, which Nushell silently ignores once a `do --env` has run anywhere up
+the call stack, so scrubbing is best-effort there.
 
 Children also get an empty stdin and, where `setsid` exists, no controlling terminal, so a test that waits for
 input (`input`, a prompt, a TUI) fails instead of hanging the run (`input` reads the terminal, not stdin). The
@@ -94,6 +101,10 @@ directories (credentials, kv stores) where the user keeps them.
 The runner writes each test's literal command name into the child program. Nushell has no string-eval, and a
 `$name` in command position evaluates to the string instead of calling the command, which would make every
 test vacuously pass.
+
+A child's stdout carries results only, as tagged lines: whatever a suite prints while it loads (a top-level
+`print`, a module's `export-env`) or a test prints is discarded, and so is the child's stderr unless the child
+dies before reporting (it is then attached to the `error` rows). Put diagnostics into assertion messages.
 
 ## Configuration
 
@@ -115,12 +126,14 @@ Settings come from four layers, lowest precedence first:
 | `passthrough` | `[]` | Extra variable names kept when scrubbing |
 | `env` | `{}` | Variables set in every child |
 | `sandbox` | `false` | Give every runner child (discovery and tests) a throwaway HOME/XDG tree |
-| `timeout` | `0sec` | Kill a child that runs longer (reported as `error`, "timed out"); needs the `timeout` program |
+| `timeout` | `0sec` | Kill a child that runs longer (reported as `error`, "timed out"); needs the `timeout` program, without which the run warns once on stderr and the bound is not enforced |
 
 Scalars take the highest layer that sets them; `lib-dirs` and `passthrough` accumulate (most specific first) and
 `env` records merge. Relative paths resolve from the file that names them (`nutest.nuon`) or from `$env.PWD`
 (`$env.NU_TEST`, flags). The directory containing the `test` module is always appended to `lib-dirs`, so suites
-and seams can `use test`. Unknown keys and invalid values are errors that name their source.
+and seams can `use test`. Unknown keys and invalid values are errors that name their source; that includes
+`resolved` and `project`, the keys the runner adds to the configuration it hands children, which only a complete
+resolved record in `$env.NU_TEST` (what `test config` returns) may carry.
 
 `test config [location]` shows the effective configuration; it is exactly what children receive in
 `$env.NU_TEST`, so `test exec` inside a test starts a grandchild configured identically.
@@ -167,5 +180,5 @@ opt-in variable listed in `passthrough` and skip otherwise (run them with `--no-
 
 ## Testing the runner itself
 
-`_tests/selftest.nu` exercises the runner without using it to test itself: `nu _tests/selftest.nu [regex]`.
-Run it after any change to `test/mod.nu`.
+`_tests/selftest.nu` exercises the runner without using it to test itself: `nu _tests/selftest.nu [regex]` (a
+regex that selects no case exits with status 2). Run it after any change to `test/mod.nu`.
