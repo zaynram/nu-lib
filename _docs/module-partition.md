@@ -63,13 +63,13 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `conf` | `conf/machine.nu` host branches (hostname, `/work/ext/bash-env`, `.profile`, `$env.work`), editor (`edit`), `oh-my-posh` (`prompt`). Its `export-env` rewrites `NU_LIB_DIRS`/`NU_PLUGIN_DIRS`. |
 | `mods` | Mostly kv/in-memory logic, but `edit` and definitions resolve through `conf` machine config and `mods_home`; `define` writes into `mods_home`. |
 | `pman` | Package managers, cargo, `nightly-toolkit` (nupm). Destructive. |
-| `link` | `sudo`, `ln`, `unlink`; Windows `mklink`. Privileged. |
+| `link` | `sudo`, `ln`, `unlink`; Windows `cmd /c mklink`. Privileged. |
 | `edit` | `$EDITOR` / `buffer_editor`, `zellij`. |
 | `elevate` | `sudo`. Privileged. |
-| `reload` | `reset`, re-`exec` of the shell binary, a TTY. |
-| `windows` | WSL interop (`/mnt/c`, `powershell.exe`, `wslpath`, `where.exe`). |
-| `mount` | `sshfs`, `fusermount3`, `sudo`, `mount`. Privileged. |
-| `ipex-llm-ollama` | `systemctl` service, `bash`, vendor scripts, `IPEX_LLM_OLLAMA_HOME`. |
+| `reload` | `reset` (only with a TTY on stdin), re-`exec` of the shell binary. |
+| `windows` | WSL interop (`/mnt/c`, `powershell.exe`, `where.exe` — resolved on PATH/WINPATH, else System32 — and `wslpath`). |
+| `mount` | `sshfs`, `fusermount3`, `mount`/`umount` (bind mounts need root), `mountpoint` or `findmnt`. Privileged. |
+| `ipex-llm-ollama` | `systemctl` service, `bash`, vendor scripts (`start-ollama.sh`, `ls-sycl-device`), `IPEX_LLM_OLLAMA_HOME` (default `~/.local/share/ipex-llm-ollama`). |
 | `proj` | `$env.WORK` directory tree, `git`, kv registry; scans on import. `--boot` needs `zellij`. |
 | `track` | `timew`, `git`, optional `td`; installs global hooks on import. |
 | `time` | `timew` (hermetic with a temp `TIMEWARRIORDB`). |
