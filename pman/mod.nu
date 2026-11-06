@@ -55,7 +55,7 @@ export def upgrade [
   } else {
     use std/util "path add"
     path add ...(machine-config user).binaries
-    # The owner's tool environment names the data dir `XDG_DATA_DIR` (see conf/machine.nu); children expect it.
+    # The owner's tool environment names the data dir `XDG_DATA_DIR` (see _docs/examples/machine.nu); children expect it.
     if $env not-has XDG_DATA_DIR { $env.XDG_DATA_DIR = $nu.home-dir | path join .local share }
     let base: record = $REGISTRY | if $system { merge $SYSTEM } else { }
     match ($input | describe | str replace --regex '<.+' '') {

@@ -6,7 +6,7 @@
 # match bash-env-json 0.10.1 except where that was wrong (see `_tests/suites/env.nu`).
 #
 # Runs `bash` (genuinely bash, not POSIX sh: the scripts it reads are bash) and the `env` program. This file
-# imports nothing by bare name, so `conf/machine.nu` can use it without the library on the include path.
+# imports nothing by bare name (only `../error`), so it parses without the library on the include path.
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
