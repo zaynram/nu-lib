@@ -244,3 +244,213 @@ def "test main already in the project does not push the stack" []: nothing -> no
       assert equal $r.before $r.after
   }
 }
+
+# ——— without a workspace ——————————————————————————————————————————————————————
+
+# Run `code` after `use proj` in a sandboxed child without WORK; return its value.
+def in-bare [ctx: record, code: string]: nothing -> oneof<nothing, bool, int, string, list, record> {
+  sandboxed $ctx $"($code) | to nuon --serialize" --prelude 'use proj' --pipe
+}
+
+def "test load without work does not fail" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    assert equal (in-bare $ctx '{meta: (proj meta), list: (proj list)}') {meta: {} list: []} 'nothing scanned, nothing listed'
+  }
+}
+
+def "test scan without work names the variable" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let err = in-bare $ctx 'try { proj scan; null } catch {|e| {msg: $e.msg code: $e.details?.code? help: $e.details?.help?} }'
+    assert equal $err.msg 'WORK is not set' 'the message names WORK'
+    assert equal $err.code 'proj::workspace::unset' 'a stable error code'
+    assert ($err.help has '$env.WORK') 'the advice says what to set'
+  }
+}
+
+def "test kind without work names the variable" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    assert equal (in-bare $ctx 'try { proj kind src; null } catch {|e| $e.msg }') 'WORK is not set' 'one kind'
+    assert equal (in-bare $ctx 'try { proj kind --all; null } catch {|e| $e.msg }') 'WORK is not set' 'all kinds'
+  }
+}
+
+def "test main scan without work names the variable" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    assert equal (in-bare $ctx 'try { proj --scan x; null } catch {|e| $e.msg }') 'WORK is not set' 'proj --scan'
+  }
+}
+
+def "test empty work counts as unset" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r = sandboxed $ctx 'try { proj scan; null } catch {|e| $e.msg } | to nuon' --prelude 'use proj' --vars {WORK: ''} --pipe
+    assert equal $r 'WORK is not set' 'an empty WORK is no workspace'
+  }
+}
+
+# ——— scan options ——————————————————————————————————————————————————————————————
+
+def "test scan kinds limits the scan and keeps the other counts" []: nothing -> nothing {
+  case {|fx|
+      let r = in-proj $fx 'let r = proj scan --reset --kinds [src]; {r: $r, meta: (proj meta | reject last_scan)}'
+      assert equal [$r.r.found $r.r.added] [3 3] 'only src is scanned'
+      assert equal $r.meta {src_count: 3 txt_count: 1 dev_count: 1 ext_count: 1 total_count: 6} 'other kinds keep their counts, the total covers all (P7)'
+  }
+}
+
+def "test scan kinds reset drops only that kind" []: nothing -> nothing {
+  case {|fx|
+      in-proj $fx 'null' | ignore
+      rm --recursive ($fx.work | path join src/beta)
+      let r = in-proj $fx 'proj scan --reset --kinds [src] | ignore; {names: (proj list | get name | sort), total: (proj meta total_count)}'
+      assert equal $r.names [alpha gamma notes tools vend] 'src is rebuilt, the rest is kept'
+      assert equal $r.total 5 'the total is recomputed'
+  }
+}
+
+def "test scan rejects an unknown kind" []: nothing -> nothing {
+  case {|fx|
+      assert equal (in-proj $fx 'try { proj scan --force --kinds [src zz]; null } catch {|e| $e.msg }') "unknown kind: 'zz'" 'named in the error'
+  }
+}
+
+def "test scan of no kinds finds nothing" []: nothing -> nothing {
+  case {|fx|
+      let r = in-proj $fx 'proj scan --force --kinds []'
+      assert equal [$r.found $r.added] [0 0] 'zero totals'
+  }
+}
+
+def "test scan project exclude globs per kind" []: nothing -> nothing {
+  case {|fx|
+      let names = in-proj $fx "with-env {project_exclude: {src: ['**/be*']}} { proj scan --reset | ignore }; proj list --kind src | get name | sort"
+      assert equal $names [alpha gamma] 'beta is excluded'
+  }
+}
+
+# ——— aliases ——————————————————————————————————————————————————————————————————
+
+def "test aliases by absolute path" []: nothing -> nothing {
+  case {|fx|
+      let path: path = $fx.work | path join ext/vend
+      let names = in-proj $fx $"with-env {project_aliases: {($path | to nuon): vendored}} { proj scan --reset | ignore }; proj list | get name"
+      assert ('vendored' in $names) 'renamed by path'
+      assert ('vend' not-in $names) 'the directory name is gone'
+  }
+}
+
+def "test aliases apply to registered projects on rescan" []: nothing -> nothing {
+  case {|fx|
+      in-proj $fx 'null' | ignore # registers vend under its directory name
+      let names = in-proj $fx 'with-env {project_aliases: {vend: vendored}} { proj scan --force | ignore }; proj list | get name'
+      assert ('vendored' in $names) 'renamed by directory name (P4), before the scan returns (P5)'
+      assert ('vend' not-in $names) 'no duplicate left behind'
+  }
+}
+
+# ——— remotes ——————————————————————————————————————————————————————————————————
+
+def "test remote url forms" []: nothing -> nothing {
+  case {|fx|
+      let remotes: record = {
+        port: 'ssh://git@github.com:2222/owner/port.git'
+        scheme: 'ssh://git@github.com/owner/scheme.git'
+        slash: 'https://user@gitlab.com/owner/slash/'
+        numeric: 'git@host.example:1234/numeric.git'
+      }
+      $remotes | items {|name url|
+        let dir: path = $fx.work | path join src $name
+        mkdir $dir
+        git-init $dir --remote $url
+      } | ignore
+      let rows = in-proj $fx 'proj scan --force | ignore; proj list --kind src | select name host repo'
+      let got: record = $rows | where {|r| $remotes has $r.name } | each {|r| {($r.name): [$r.host $r.repo]} } | into record
+      assert equal $got.port [github owner/port] 'ssh with a port'
+      assert equal $got.scheme [github owner/scheme] 'ssh scheme'
+      assert equal $got.slash [gitlab owner/slash] 'https with a user and a trailing slash'
+      assert equal $got.numeric [host 1234/numeric] 'scp-style with a numeric owner'
+  }
+}
+
+# ——— kind, meta, list —————————————————————————————————————————————————————————
+
+def "test kind summarizes one kind" []: nothing -> nothing {
+  case {|fx|
+      let k = in-proj $fx 'proj kind txt'
+      assert equal ($k | reject projects) {name: txt root: ($fx.work | path join txt) description: 'projects containing mostly prose'} 'name, root and description'
+      assert equal ($k.projects | get name) [notes] 'its projects'
+      assert equal ($k.projects | get kind) [txt] 'with their kind'
+  }
+}
+
+def "test kind all lists every kind" []: nothing -> nothing {
+  case {|fx|
+      let all = in-proj $fx 'proj kind --all'
+      assert equal ($all | get name) [src txt dev ext] 'every kind'
+      assert equal ($all | columns) [name description root projects] 'the summary columns'
+      assert equal ($all | where name == dev | get $.0.projects | get name) [tools] 'with its projects'
+  }
+}
+
+def "test kind errors" []: nothing -> nothing {
+  case {|fx|
+      assert equal (in-proj $fx 'try { proj kind zz; null } catch {|e| $e.msg }') "unknown kind: 'zz'" 'unknown kind'
+      assert equal (in-proj $fx 'try { proj kind; null } catch {|e| $e.msg }') 'a kind must be provided without `--all`' 'no kind'
+  }
+}
+
+def "test meta by key" []: nothing -> nothing {
+  case {|fx|
+      assert equal (in-proj $fx 'proj meta src_count') 3 'one value'
+      assert equal (in-proj $fx 'proj meta nope') null 'a missing key is null'
+      assert equal (in-proj $fx 'proj meta last_scan | columns') [found added start end elapsed] 'the last scan'
+  }
+}
+
+def "test list of an unknown kind is empty" []: nothing -> nothing {
+  case {|fx|
+      assert equal (in-proj $fx 'proj list --kind zz') [] 'no rows'
+  }
+}
+
+# ——— test fixture —————————————————————————————————————————————————————————————
+
+def "test fixture registers and removes test projects" []: nothing -> nothing {
+  case {|fx|
+      let code = "use proj [test]; [{name: fake path: /nowhere repo: null vcs: null host: null}] | test before; let during = proj list --long | where kind == test | get name; test after; {during: $during, after: (proj list --long | where kind == test | get name), env: ($env.project_testing? == null)}"
+      let r = in-proj $fx $code
+      assert equal $r.during [fake] 'listed while active'
+      assert equal $r.after [] 'removed afterwards'
+      assert $r.env 'the fixture variable is hidden'
+  }
+}
+
+def "test fixture after without before raises" []: nothing -> nothing {
+  case {|fx|
+      assert equal (in-proj $fx 'use proj [test]; try { test after; null } catch {|e| $e.msg }') "project test fixture is inactive for kind: 'test'" 'inactive fixture'
+  }
+}
+
+# ——— main ——————————————————————————————————————————————————————————————————————
+
+def "test main exec runs the closure from the project root" []: nothing -> nothing {
+  case {|fx|
+      let r = in-proj $fx 'let at = proj alph --exec {|| $env.PWD }; {at: $at, pwd: $env.PWD}'
+      assert equal $r.at ($fx.work | path join src/alpha) 'the closure runs in the project (P3)'
+      assert ($r.pwd != $r.at) 'the caller does not move'
+  }
+}
+
+def "test main exec disables the zellij hook meanwhile" []: nothing -> nothing {
+  case {|fx|
+      let code = "use hook; hook add $.env_change.PWD {name: 'zellij::pwd::auto-switch' code: {|| null }}; {inside: (proj alph --exec {|| hook is-enabled --name=zellij::pwd::auto-switch }), after: (hook is-enabled --name=zellij::pwd::auto-switch)}"
+      assert equal (in-proj $fx $code) {inside: false after: true} 'disabled only while the closure runs'
+  }
+}
+
+def "test main scan picks up new projects first" []: nothing -> nothing {
+  case {|fx|
+      in-proj $fx 'null' | ignore
+      mkdir ($fx.work | path join dev/fresh)
+      assert equal (in-proj $fx 'proj --scan fresh; $env.PWD') ($fx.work | path join dev/fresh) 'found and entered'
+  }
+}
