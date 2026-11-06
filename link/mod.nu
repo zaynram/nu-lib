@@ -1,4 +1,4 @@
-# Link binaries found on PATH into the system-wide bin directory.
+# Link binaries found on PATH into the bin directory (`/usr/bin` on Linux, `%USERPROFILE%\.local\bin` on Windows).
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
