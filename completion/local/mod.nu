@@ -114,12 +114,14 @@ module carapace-complete {
     # An optional override for the shell name to use for the `carapace` invocation
     --deserialize (-d): closure
     # Closure to run to hydrate `carapace` output; necessary when using a shell besides `nushell` / `fish`
+    --runtime-env (-r): record
+    # The `CARAPACE_SHELL_*` variables to run under (default: computed now with `runtime-env`)
   ]: list<string> -> oneof<list<string>, table<value: string>> {
     let spans: list;
     let parse: closure = $deserialize
       | default { match $shell { nushell => {|| from json } fish => {|| fish-complete parse-output } } }
       | default { {|| lines | each { split row (char sp) | first } } } # best-effort: the first word of each line
-    let found = with-env (runtime-env) {
+    let found = with-env ($runtime_env | default { runtime-env }) {
       try { ^carapace $name $shell ...$spans | do $parse } catch { [] }
     }
     $found | default []
@@ -138,13 +140,17 @@ export use carapace-complete
 
 # The external completer `set-completer` installs, with `default` as its fallback.
 def completer [default: oneof<nothing, closure>]: nothing -> closure {
+  # `runtime-env` walks every command in scope (~6 ms); it is computed once here and reused while the number of
+  # commands in scope is unchanged, so a keystroke does not pay for it.
+  let snapshot: record = {count: (scope commands | length) env: (carapace-complete runtime-env)}
   {|buffer: string, place?: record|
     let spans: list<string> = if $place == null { $buffer } else { $place.command | str join (char sp) }
       | into spans --unalias
+    let runtime: record = if (scope commands | length) == $snapshot.count { $snapshot.env } else { carapace-complete runtime-env }
     $spans | match $spans.0? {
       null => { [] }
       $0 if ($env.fish_commands? | default $FISH) has $0 => { fish-complete ($spans | str join (char sp)) }
-      $0 => { carapace-complete $0 }
+      $0 => { carapace-complete $0 --runtime-env $runtime }
     } | if $in == [] and [$env.config.completions.external.completer? null] not-has $default {
       do --ignore-errors $default $buffer | default []
     } else { }

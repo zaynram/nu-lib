@@ -126,7 +126,6 @@ def kinds []: nothing -> list<string> { $KINDS }
 # An error record piped in (e.g. a caught error: a record with `msg`) becomes the error's single `inner` error; any
 # other pipeline input is ignored, so a raise may sit first in a block that receives input. Empty `--code` and
 # `--advice` values are left out. An unknown kind raises `error::raise::invalid_argument`.
-# (`raise` takes any input: an error record is chained as `inner`, anything else is ignored, see above)
 @category core
 export def raise [
   message: string # Error message to include in the rendered output (lowercase start, no trailing period)

@@ -28,8 +28,7 @@ export def main [
   cd $cd
   let items: list<string> = $input
     | append $rest
-    | each {|it| $it | resolve-item $depth }
-    | flatten
+    | each --flatten {|it| $it | resolve-item $depth }
     | default --empty [$env.PWD]
   if $env.ZELLIJ? == null {
     let editor: list<string> = get-editor

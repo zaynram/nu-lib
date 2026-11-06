@@ -73,7 +73,7 @@ def "test truncate updates the name column of a table" []: nothing -> nothing {
 
 def "test truncate keeps the input order" []: nothing -> nothing {
   let input: list<string> = 1..30 | each {|i| $'dir($i)/file($i)' }
-  assert equal ($input | path truncate 1) (1..30 | each {|i| $'file($i)' }) 'parallel truncation keeps order'
+  assert equal ($input | path truncate 1) (1..30 | each {|i| $'file($i)' }) 'truncation keeps the input order'
 }
 
 def "test truncate to zero segments raises" []: nothing -> nothing {

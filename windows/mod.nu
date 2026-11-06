@@ -80,11 +80,10 @@ export def --wrapped "win run" [
   ...rest: string
   # Arguments to pass through to the application if it resolves
 ]: nothing -> any {
-  # The last arm receives the match input (the resolved value), which `error raise` does not take: hence `null |`.
   win which $name | match ($in | describe) {
     string => { run-external $in ...$rest }
     nothing => { error raise $"command not found: '($name)'" --kind not_found }
-    $t => { null | error raise $"unexpected return type of `win which`: '($t)'" --kind internal }
+    $t => { error raise $"unexpected return type of `win which`: '($t)'" --kind internal }
   }
 }
 

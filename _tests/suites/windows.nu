@@ -18,6 +18,11 @@ def stub [dir: path, name: path, body: string]: nothing -> path {
 
 const CACHE: path = $nu.data-dir | path join windows_env.msgpack
 
+# The cache tests write `$nu.data-dir`, fixed at startup: under `--no-sandbox` that is the user's real data dir.
+def need-sandboxed-data-dir []: nothing -> nothing {
+  if not ($nu.data-dir | str contains 'nutest-sandbox') { skip 'needs a sandboxed data dir (run without --no-sandbox)' }
+}
+
 # Children must start without the suite's own WINPATH/WSL_DISTRO_NAME (set by `use windows` above): the runner's
 # environment scrub (`hide-env` after a `do --env`) is a no-op inside test children on this nightly.
 const PRELUDE: string = 'hide-env --ignore-errors WINPATH WSL_DISTRO_NAME; use windows *'
@@ -194,6 +199,7 @@ def "test env overwrite returns only the windows path" []: nothing -> nothing {
 }
 
 def "test env caches the raw windows variables" []: nothing -> nothing {
+  need-sandboxed-data-dir
   with-win {|t|
     with-env {PATH: [/a] WINPATH: [/mnt/c/W]} {
       win env | ignore
@@ -205,6 +211,7 @@ def "test env caches the raw windows variables" []: nothing -> nothing {
 }
 
 def "test env reuses the cache until reset" []: nothing -> nothing {
+  need-sandboxed-data-dir
   with-win {|t|
     with-env {PATH: [/a] WINPATH: [/mnt/c/W]} { win env | ignore }
     with-env {PATH: [/a] WINPATH: [/mnt/c/X]} {
