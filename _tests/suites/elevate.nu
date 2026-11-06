@@ -50,6 +50,11 @@ def auth-stubs [dir: path]: nothing -> nothing {
 
 # ——— elevate ——————————————————————————————————————————————————————————————————
 
+def "test every command carries a category" []: nothing -> nothing {
+  let missing = scope commands | where name =~ '^elevate( |$)' and category == '' | get name
+  assert equal $missing [] 'commands without @category'
+}
+
 def "test elevate execs the current nu through sudo" []: nothing -> nothing {
   with-sudo {|t|
     let res = sandboxed $t.ctx 'elevate' --prelude 'use elevate' --vars {PATH: $t.path}

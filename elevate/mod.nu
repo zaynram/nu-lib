@@ -64,6 +64,7 @@ export def --env --wrapped sh [
 # `-l`/`-s` flags pass through; the long names `--login`, `--pattern` and `--strict` always belong to this
 # command, wherever they appear on the line, so a command that needs one of them must be wrapped
 # (`with-auth sh -c 'tool --strict'`).
+@category system
 export def --wrapped with-auth [
   name: string
   # The name of the external command to run

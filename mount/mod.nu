@@ -19,6 +19,7 @@ def format-remote-options []: record<user: string, ipv4: string, auth: path> -> 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
 # Check whether a path is a mount point (`mountpoint -q`, or `findmnt` when `mountpoint` is not installed).
+@category filesystem
 export def is-mounted []: path -> bool {
   let target: path = $in | path expand
   if not ($target | path exists) { return false }
@@ -37,12 +38,11 @@ export def is-mounted []: path -> bool {
 # Unmount a filesystem, if the path is a mount point.
 #
 # A bind mount is removed with `umount` (which needs root); an sshfs mount (`--remote`) with `fusermount3 -u`.
+@category filesystem
 export def unmount [--remote]: path -> nothing {
   let target: path = $in
   if not ($target | is-mounted) { return } else if $remote { ^fusermount3 -u $target } else { ^umount $target }
 }
-
-# ——— definitions ——————————————————————————————————————————————————————————————
 
 # Create a filesystem mount from a remote device over sshfs, or bind-mount a local path.
 #

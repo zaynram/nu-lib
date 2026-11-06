@@ -1,5 +1,8 @@
 # Link binaries found on PATH into the bin directory (`/usr/bin` on Linux, `%USERPROFILE%\.local\bin` on Windows).
 
+# nu-lint-ignore-file: string_param_as_path
+# (`bin`'s `name` is a program name looked up on PATH; joining it onto the link directory does not make it a path)
+
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use completion "into completions"
@@ -17,7 +20,7 @@ use error
 # source on PATH) and `external_failure` (`unlink`/`ln`/`mklink` failed; what they printed is the advice).
 @category platform
 export def bin [
-  name: oneof<string, path>@_executables # The name of the binary to link
+  name: string@_executables # The name of the binary to link
 ]: nothing -> path {
   let os: string = $nu.os-info.name
   let config: record<link: path, skip: list<path>> = match $os {

@@ -46,6 +46,13 @@ def calls [log: path]: nothing -> list<string> {
   if ($log | path exists) { open $log | lines } else { [] }
 }
 
+# ——— surface ——————————————————————————————————————————————————————————————————
+
+def "test every command carries a category" []: nothing -> nothing {
+  let missing = scope commands | where name =~ '^mount( |$)' and category == '' | get name
+  assert equal $missing [] 'commands without @category'
+}
+
 # ——— is-mounted ———————————————————————————————————————————————————————————————
 
 def "test is mounted recognises a mount point" []: nothing -> nothing {

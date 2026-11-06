@@ -48,6 +48,11 @@ def unused-name []: nothing -> string {
 
 # ——— cases ————————————————————————————————————————————————————————————————————
 
+def "test the name is a string" []: nothing -> nothing {
+  let shape = scope commands | where name == 'link bin' | get $.0.signatures | values | flatten | where parameter_name == name | get $.0.syntax_shape
+  assert equal $shape string 'a path never links: the source is looked up on PATH by name'
+}
+
 def "test links the first external on PATH into usr bin" []: nothing -> nothing {
   with-stub-sudo {|t|
     let name: string = unused-name
