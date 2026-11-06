@@ -96,6 +96,7 @@ Settings come from four layers, lowest precedence first:
 | `scrub` | `true` | Start children from the allowlisted environment |
 | `passthrough` | `[]` | Extra variable names kept when scrubbing |
 | `env` | `{}` | Variables set in every child |
+| `sandbox` | `false` | Give every runner child (discovery and tests) a throwaway HOME/XDG tree |
 
 Scalars take the highest layer that sets them; `lib-dirs` and `passthrough` accumulate (most specific first) and
 `env` records merge. Relative paths resolve from the file that names them (`nutest.nuon`) or from `$env.PWD`
@@ -111,6 +112,10 @@ points at.
 
 ## Sandboxes
 
+- `sandbox: true` in the configuration runs every discovery and test child with `HOME` and `XDG_*` pointing
+  into a fresh temp tree that is removed afterwards. Modules that persist state (`std-rfc/kv --universal`,
+  caches, tool databases under the data dir) then never touch the real ones, and tools that read credentials
+  from `HOME` see none, so tests needing them skip. `test exec` and `sandboxed` are not affected.
 - `with-sandbox {|ctx| … }` creates a temp directory with `home`, `config`, `data` (including the `nushell`
   directory `std-rfc/kv` needs), `cache`, `state` and `code`, removes it afterwards even on failure, and
   re-raises failures (a `skip` inside stays a skip).

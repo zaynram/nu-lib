@@ -20,7 +20,7 @@
 # Discovery and execution happen in child interpreters started with `--no-config-file`, so suites can never
 # poison each other or the invoking session. Children get a scrubbed environment (an allowlist plus the
 # configured `env`/`passthrough`), the configured library directories as `--include-path`, and the effective
-# configuration in `$env.NU_TEST`. Each test's literal command name is written into the child program: nushell
+# configuration in `$env.NU_TEST`. With `sandbox: true`, each child also gets a throwaway HOME/XDG tree. Each test's literal command name is written into the child program: nushell
 # has no string-eval, and a `$name` in command position evaluates to the string instead of calling it.
 #
 # Configuration, lowest to highest precedence
@@ -59,6 +59,7 @@ const DEFAULTS: record = {
   scrub: true # Start children from an allowlisted environment instead of the caller's
   passthrough: [] # Extra variable names (exact) kept when scrubbing
   env: {} # Variables set in every child (applied after scrubbing)
+  sandbox: false # Give every runner child its own throwaway HOME/XDG tree (removed afterwards)
 }
 # Variables kept when scrubbing: enough to find programs, locate home/temp, and render text.
 const KEEP: list<string> = [
@@ -85,19 +86,9 @@ export def skip [
 export def with-sandbox [
   action: closure # Receives the sandbox context record
 ]: nothing -> any {
-  let root: path = mktemp --directory --tmpdir nutest-sandbox-XXXXXX
-  let ctx: record = {
-    root: $root
-    home: $root
-    config: ($root | path join .config)
-    data: ($root | path join .local share)
-    cache: ($root | path join .cache)
-    state: ($root | path join .local state)
-    code: ($root | path join code)
-  }
-  mkdir $ctx.config ($ctx.data | path join nushell) $ctx.cache $ctx.state $ctx.code
+  let ctx: record = new-sandbox
   let result: record = try { {value: (do $action $ctx)} } catch {|e| {error: $e} }
-  rm --recursive --force $root
+  rm --recursive --force $ctx.root
   if $result has error {
     # Rethrow with the original message (the span is lost, the failure and any SKIP are not).
     error make --unspanned {msg: $result.error.msg help: ($result.error | error-text)}
@@ -117,14 +108,36 @@ export def sandboxed [
   --vars (-e): record = {} # Additional variables for the child (override the sandbox's)
   --pipe (-p) # Return the child's stdout parsed as nuon (error on non-zero exit) instead of the complete record
 ]: nothing -> any {
-  let sandbox: record = {
+  let sandbox: record = $ctx | sandbox-vars | merge $vars
+  [$prelude $code] | compact --empty | str join (char newline) | exec --vars=$sandbox --pipe=$pipe
+}
+
+# A fresh sandbox directory tree (see `with-sandbox`); the caller removes `root`.
+def new-sandbox []: nothing -> record {
+  let root: path = mktemp --directory --tmpdir nutest-sandbox-XXXXXX
+  let ctx: record = {
+    root: $root
+    home: $root
+    config: ($root | path join .config)
+    data: ($root | path join .local share)
+    cache: ($root | path join .cache)
+    state: ($root | path join .local state)
+    code: ($root | path join code)
+  }
+  mkdir $ctx.config ($ctx.data | path join nushell) $ctx.cache $ctx.state $ctx.code
+  $ctx
+}
+
+# The variables that point a child's home and XDG directories into a sandbox.
+def sandbox-vars []: record -> record {
+  let ctx: record = $in
+  {
     HOME: $ctx.home
     XDG_CONFIG_HOME: $ctx.config
     XDG_DATA_HOME: $ctx.data
     XDG_CACHE_HOME: $ctx.cache
     XDG_STATE_HOME: $ctx.state
-  } | merge $vars
-  [$prelude $code] | compact --empty | str join (char newline) | exec --vars=$sandbox --pipe=$pipe
+  }
 }
 
 # ——— configuration ————————————————————————————————————————————————————————————
@@ -218,7 +231,7 @@ export def discover [
     'scope commands | where type == custom | select name description attributes'
     '| update attributes { get --optional name | default [] } | to nuon --serialize'
   ] | str join (char newline)
-  let res: record = spawn $cfg $program {}
+  let res: record = spawn $cfg $program {} --sandbox=$cfg.sandbox
   if $res.exit_code != 0 {
     error make --unspanned {msg: $"could not load suite ($file)" help: ($res.stderr | str trim)}
   }
@@ -324,6 +337,12 @@ def normalize-layer [base: path source: string]: record -> record {
     error make --unspanned {msg: $"invalid isolation '($layer.isolation)' in ($source)" help: $"expected one of: ($ISOLATION | str join ', ')"}
   }
   # `path join` keeps an absolute right-hand side as is.
+  for key in [scrub sandbox] {
+    let v: any = $layer | get --optional $key
+    if $v != null and ($v | describe) != bool {
+      error make --unspanned {msg: $"invalid ($key) '($v)' in ($source)" help: 'expected true or false'}
+    }
+  }
   for key in [depth jobs] {
     let v: any = $layer | get --optional $key
     if $v != null and (($v | describe) != int or $v < 1) {
@@ -485,7 +504,7 @@ def run-child [suite: path cfg: record hooks: record names: list<string> opts: r
   if ($names | is-empty) { return [] }
   let program: string = program $suite $hooks $names
   if $opts.debug { print --stderr $program }
-  let res: record = spawn $cfg $program {}
+  let res: record = spawn $cfg $program {} --sandbox=$cfg.sandbox
   let rows: list = $res.stdout | lines
     | where ($it | str starts-with $ROW)
     | each { str substring ($ROW | str length).. | decode base64 | decode | from nuon }
@@ -545,7 +564,18 @@ def program [suite: path hooks: record names: list<string>]: nothing -> string {
 }
 
 # Start a child interpreter for a configuration; returns the `complete` record.
-def spawn [cfg: record program: string extra: record]: nothing -> record<stdout: string, stderr: string, exit_code: int> {
+def spawn [
+  cfg: record
+  program: string
+  extra: record
+  --sandbox # Run the child in a fresh sandbox (HOME/XDG) that is removed afterwards
+]: nothing -> record<stdout: string, stderr: string, exit_code: int> {
+  if $sandbox {
+    let ctx: record = new-sandbox
+    let res: record = spawn $cfg $program (($ctx | sandbox-vars) | merge $extra)
+    rm --recursive --force $ctx.root
+    return $res
+  }
   let vars: record = $cfg.env | merge $extra | merge {NU_TEST: ($cfg | to nuon)}
   let child: closure = {||
     ^$nu.current-exe --no-config-file --table-mode=none --error-style=plain --include-path=($cfg.lib-dirs | str join (char esep)) --commands=($program)

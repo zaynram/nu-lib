@@ -291,6 +291,24 @@ def "test the effective config is visible" [] { assert equal ($env.NU_TEST | fro
     assert equal ($open | row 'test leaked vars are hidden').status fail
   }}
 
+  {name: 'env: sandbox gives every child a throwaway HOME/XDG tree' run: {||
+    let dir = project {
+      'tests/suites/b.nu': 'use std/assert
+use std-rfc/kv *
+def "test home and data dirs live in a temp sandbox" [] {
+  $nu.home-dir | save --append $env.LOG
+  assert ($nu.data-dir | str starts-with $nu.home-dir)
+  assert not equal $nu.home-dir $env.REAL_HOME
+  kv set --universal written yes
+  assert equal (kv get --universal written) yes
+}'
+    }
+    let log = $dir | path join homes.txt
+    {sandbox: true env: {LOG: $log REAL_HOME: $nu.home-dir}} | to nuon | save ($dir | path join nutest.nuon)
+    assert equal (ok $dir 'test' | statuses) {'test home and data dirs live in a temp sandbox': ok}
+    assert equal (open $log | path exists) false
+  }}
+
   {name: 'exec: tests can start configured grandchildren' run: {||
     let dir = project {
       'nutest.nuon': '{lib-dirs: [lib]}'
