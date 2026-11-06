@@ -27,6 +27,8 @@ def "test needs fish" []: nothing -> nothing {
   no quotes, brackets, braces, `|`, `;`, `#`, `^`, `%`, `>`, no word starting with `$`, and no bare `=` or `&&`
   word (an assignment or the shell operator to the parser; `a=b` and `a&&b` are plain words). Other names are
   reported as `error` ("this name cannot be called") without stopping the rest of the suite.
+- Tests and hooks are called without arguments: one with a required positional parameter is reported as `error`
+  at discovery ("takes a required argument") without running, and a hook with one blocks its suite.
 - A description whose first word is `ignore` (`# ignore`, `# ignore: not ready`), or an `@ignore` attribute, reports
   a test as `skip` with reason `ignored` without running it. A description that merely starts with those letters
   (`# Ignores leading whitespace`) is not a marker.
@@ -131,7 +133,7 @@ Settings come from four layers, lowest precedence first:
 | `passthrough` | `[]` | Extra variable names kept when scrubbing |
 | `env` | `{}` | Variables set in every child |
 | `sandbox` | `false` | Give every runner child (discovery and tests) a throwaway HOME/XDG tree |
-| `timeout` | `0sec` | Kill a child that runs longer (reported as `error`, "timed out", only when the child ran for the bound: a test that itself exits with status 124 is reported by that code); needs the `timeout` program, without which the run warns once on stderr and the bound is not enforced |
+| `timeout` | `0sec` | Kill a child that runs longer (reported as `error`, "timed out", only when the child ran for the bound: a test that itself exits with status 124 is reported by that code); needs coreutils' `timeout` (Windows' `timeout.exe` and BusyBox's take no `--kill-after` and count as absent), without which the run warns once on stderr and the bound is not enforced |
 
 Scalars take the highest layer that sets them; `lib-dirs` and `passthrough` accumulate (most specific first) and
 `env` records merge. Relative paths resolve from the file that names them (`nutest.nuon`) or from `$env.PWD`
@@ -165,9 +167,10 @@ points at.
 ## This repository
 
 ```
-nutest.nuon          # paths: [_tests/suites], lib-dirs: [.], sandbox: true
+nutest.nuon          # paths: [_tests/suites], lib-dirs: [.], sandbox: true, timeout: 120sec,
+                     # passthrough: [TODO_TEST_LIVE TODO_TEST_WRITE] (opt-in switches of suites that reach real services)
 _tests/
-  mod.nu             # shared seam: std/assert, skip, with-sandbox, sandboxed, ROOT, FIXTURES
+  mod.nu             # shared seam: std/assert, skip, with-sandbox, sandboxed, need-posix, ROOT, FIXTURES
   selftest.nu        # framework-free test of the runner
   fixtures/<module>/ # fixture files, outside suite discovery
   suites/<module>.nu # one suite per module; submodules are covered by their parent's suite

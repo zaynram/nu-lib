@@ -22,9 +22,10 @@ const ROOT: path = path self ..
 # ——— fixtures —————————————————————————————————————————————————————————————————
 
 # Create a temp project from a record of relative path -> file text; returns its directory.
-# `main` points TMPDIR at a per-case directory and removes it afterwards, so cases never clean up themselves.
+# `main` points `$env.TMPDIR` at a per-case directory and removes it afterwards, so cases never clean up themselves
+# (`--tmpdir-path`, not `--tmpdir`: the latter reads the process environment, which `with-env` leaves alone).
 def project [files: record]: nothing -> path {
-  let dir: path = mktemp --directory --tmpdir nutest-self-XXXXXX
+  let dir: path = mktemp --directory --tmpdir-path $env.TMPDIR nutest-self-XXXXXX
   for f in ($files | transpose rel text) {
     let p: path = $dir | path join $f.rel
     mkdir ($p | path dirname)
@@ -117,14 +118,38 @@ def "before each" [] { }
 '#}
     let found = ok $dir 'test discover tests/suites/a.nu'
     assert equal $found [
-      [name role ignore];
-      ["test b" test false]
-      ["test c" test true]
-      ["test d" test false]
-      [attr-a test false]
-      [attr-ignored test true]
-      ["before each" before-each false]
+      [name role ignore positional];
+      ["test b" test false false]
+      ["test c" test true false]
+      ["test d" test false false]
+      [attr-a test false false]
+      [attr-ignored test true false]
+      ["before each" before-each false false]
     ]
+  }}
+
+  {name: 'discover: a required positional parameter is reported, never parsed into the child program' run: {||
+    let dir = project {'tests/suites/p.nu': 'use std/testing *
+def "test needs one" [x: string] { }
+def "test optional is fine" [x?: string] { }
+def "test rest is fine" [...r: string] { }
+def "test fine" []: [nothing -> nothing, record -> nothing] { ignore }
+@test
+def attr-needs-one [n: int] { }'
+      'tests/suites/h.nu': 'def "before each" [x: int] { }
+def "test a" [] { }'}
+    let found = ok $dir 'test discover tests/suites/p.nu | select name positional | transpose --header-row --as-record'
+    assert equal $found {'test needs one': true 'test optional is fine': false 'test rest is fine': false 'test fine': false attr-needs-one: true}
+    # Under suite isolation a missing argument would be a parse error of the whole child program: the other tests run.
+    let expected = {'test needs one': error 'test optional is fine': ok 'test rest is fine': ok 'test fine': ok attr-needs-one: error}
+    let rows = ok $dir 'test tests/suites/p.nu --isolation suite'
+    assert equal ($rows | statuses) $expected
+    assert str contains ($rows | row 'test needs one').error 'takes a required argument'
+    assert equal (ok $dir 'test tests/suites/p.nu' | statuses) $expected 'the same under test isolation'
+    # A hook with one blocks its suite, as a hook the runner cannot name does.
+    let hooked = ok $dir 'test tests/suites/h.nu --isolation suite'
+    assert equal ($hooked | statuses) {'test a': error}
+    assert str contains ($hooked | row 'test a').error "the hook 'before each' takes a required argument"
   }}
 
   {name: 'run: statuses, skip reasons, ignored tests, failure text, punctuation in names' run: {||
@@ -248,10 +273,24 @@ def "test quick" [] { }'}
     let res = runner $dir 'test' --vars {PATH: $bin}
     assert equal $res.exit_code 0 $res.stderr
     assert equal ($res.value | statuses) {'test runs': ok}
-    assert str contains $res.stderr 'timeout 1sec is configured but no `timeout` program is on PATH'
-    if (which timeout | is-not-empty) {
-      assert not ((runner $dir 'test').stderr =~ 'no `timeout` program') 'nothing is said when the program is there'
+    assert str contains $res.stderr 'timeout 1sec is configured but no coreutils `timeout` is on PATH'
+    if (which timeout | is-not-empty) and (^timeout --version | complete).stdout =~ '(?i)coreutils' {
+      assert not ((runner $dir 'test').stderr =~ 'no coreutils `timeout`') 'nothing is said when the program is there'
     }
+  }}
+
+  {name: 'config: a `timeout` that is not coreutils (Windows, BusyBox) counts as absent' run: {||
+    let dir = project {'nutest.nuon': '{timeout: 1sec}' 'tests/suites/t.nu': 'def "test runs" [] { }'}
+    let bin = $dir | path join bin
+    mkdir $bin
+    which --all env | where type == external | get --optional 0.path | each {|p| ^ln -s $p ($bin | path join env) }
+    # BusyBox's usage: no `--version`, no `--kill-after`. Picked as the limiter, it would end every child with it.
+    "#!/bin/sh\necho 'Usage: timeout [-s SIG] [-k KILL_SECS] SECS PROG ARGS' >&2\nexit 1\n" | save --force ($bin | path join timeout)
+    ^chmod +x ($bin | path join timeout)
+    let res = runner $dir 'test' --vars {PATH: $bin}
+    assert equal $res.exit_code 0 $res.stderr
+    assert equal ($res.value | statuses) {'test runs': ok}
+    assert str contains $res.stderr 'no coreutils `timeout` is on PATH'
   }}
 
   {name: 'env: the scrub allowlist forwards custom XDG directories (what --no-sandbox relies on)' run: {||

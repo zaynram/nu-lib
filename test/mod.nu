@@ -10,6 +10,8 @@
 # - A test's name is written into the child program as bare words, so it must parse as such: no quotes, brackets,
 #   braces, `|`, `;`, `#`, `^`, `%`, `>`, no word starting with `$`, and no bare `=` or `&&` word (an assignment or
 #   the shell operator to the parser). Other names are reported as `error` without stopping the suite.
+# - Tests and hooks are called without arguments, so one with a required positional parameter is reported as
+#   `error` at discovery without running (a hook with one blocks its suite, as an uncallable hook name does).
 #
 # Hooks (optional; named `def "before all"` etc. or marked `@before-all` etc.)
 # - `before all`  runs once per child interpreter, before its tests; its output is the suite context.
@@ -27,9 +29,10 @@
 # configuration in `$env.NU_TEST`. With `sandbox: true`, each child also gets a throwaway HOME/XDG tree. Each
 # test's literal command name is written into the child program: nushell has no string-eval, and a `$name` in
 # command position evaluates to the string instead of calling it. Children run detached from the terminal
-# (`setsid`), so Ctrl-C ends the run only once the current child exits; `timeout` bounds a hung child (the run warns
-# once when the program is missing). Children's stdout is read for result rows only: whatever a suite prints while
-# loading, or a test prints, is discarded.
+# (`setsid`), so Ctrl-C ends the run only once the current child exits; coreutils' `timeout` bounds a hung child (the
+# run warns once when it is missing: Windows' `timeout.exe` and BusyBox's `timeout` do not take `--kill-after`, so
+# they count as missing). Children's stdout is read for result rows only: whatever a suite prints while loading, or
+# a test prints, is discarded.
 #
 # Configuration, lowest to highest precedence
 #   1. built-in defaults (`test config --defaults`)
@@ -77,7 +80,7 @@ const DEFAULTS: record = {
   passthrough: [] # Extra variable names (exact) kept when scrubbing
   env: {} # Variables set in every child (applied after scrubbing)
   sandbox: false # Give every runner child its own throwaway HOME/XDG tree (removed afterwards)
-  timeout: 0sec # Kill a child that runs longer than this (0sec: no limit; needs the `timeout` program)
+  timeout: 0sec # Kill a child that runs longer than this (0sec: no limit; needs coreutils' `timeout`)
 }
 # Variables kept when scrubbing: enough to find programs, locate home/temp, and render text.
 const KEEP: list<string> = [
@@ -237,10 +240,11 @@ export def main [
     error make --unspanned {msg: 'no test suites matched' help: $"no suite files($filter) under: ($searched | str join ', ')"}
   }
   let started: datetime = date now
-  # Colours (`config use-colors`) are decided once per run; children never see a terminal, so test output is plain.
-  let opts: record = {test: $test verbose: $verbose debug: $debug colors: (style colors)}
+  # Colours (`config use-colors`) and the `timeout` program are decided once per run; children never see a terminal,
+  # so test output is plain.
+  let opts: record = {test: $test verbose: $verbose debug: $debug colors: (style colors) limiter: (timeout-program)}
   let runs: table<suite: path, cfg: record> = $suites | each {|suite| {suite: $suite cfg: (resolve $suite $flags)} }
-  warn-unbounded ($runs | get cfg) $opts.colors
+  warn-unbounded ($runs | get cfg) $opts
   let results: list = $runs | each {|r| run-suite $r.suite $r.cfg $opts } | flatten
   if (is-terminal --stderr) { pb clear }
   summarize $results ((date now) - $started) $strict $opts.colors
@@ -249,19 +253,23 @@ export def main [
 
 # Enumerate the commands a suite defines and their roles, in a child interpreter.
 #
-# Returns one row per test or hook. Imported commands are excluded even when named like tests.
+# Returns one row per test or hook; `positional` says whether the command requires a positional argument, which
+# the runner (calling it without any) cannot supply. Imported commands are excluded even when named like tests.
 export def discover [
   suite: path # Path to a suite file
   --config (-c): record # Effective configuration (default: resolved for the suite)
-]: nothing -> table<name: string, role: string, ignore: bool> {
+]: nothing -> table<name: string, role: string, ignore: bool, positional: bool> {
   let file: path = $suite | path expand
   let cfg: record = $config | default { resolve $file {} }
   let defined: list<string> = open --raw $file | defined-names
   # The result travels as a tagged row (as test results do), so whatever the suite prints while loading is ignored.
+  # The signatures fold to one bool in the child: whether any input shape declares a required positional parameter.
   let program: string = [
     $"source ($file | to nuon)"
-    'scope commands | where type == custom | select name description attributes'
-    '| update attributes { get --optional name | default [] } | to nuon --serialize | encode base64'
+    'scope commands | where type == custom | select name description attributes signatures'
+    '| update attributes { get --optional name | default [] }'
+    '| update signatures { values | flatten | any parameter_type == positional and is_optional == false }'
+    '| to nuon --serialize | encode base64'
     $"| print $\"\\n($ROW)\($in\)\""
   ] | str join (char newline)
   let res: record = spawn $cfg $program {} --sandbox=$cfg.sandbox
@@ -275,7 +283,7 @@ export def discover [
   let found: table = $payloads | last
   # Definition order (the order of `def`s in the file), not scope order (alphabetical).
   $defined | uniq | each {|n| $found | where name == $n | get --optional 0 } | compact
-  | each {|c| {name: $c.name role: (role $c) ignore: (($c.description | default '') =~ $IGNORE or 'ignore' in $c.attributes)} }
+  | each {|c| {name: $c.name role: (role $c) ignore: (($c.description | default '') =~ $IGNORE or 'ignore' in $c.attributes) positional: $c.signatures} }
   | where role != null
 }
 
@@ -553,16 +561,27 @@ def run-suite [suite: path cfg: record opts: record]: nothing -> list {
   let wanted: table = $cmds | where role == test | where $opts.test == '' or $it.name =~ $opts.test
   let ignored: list = $wanted | where ignore | each {|t| {name: $t.name status: skip duration: 0sec error: 'ignored'} }
   let runnable: table = $wanted | where not $it.ignore
-  # A test is called by writing its name into the child program, so the name must parse as bare words.
+  # A test is called by writing its name into the child program, so the name must parse as bare words; it is called
+  # without arguments, so it must not require one.
   let callable: closure = {|n| $n =~ $CALLABLE and $n !~ $UNCALLABLE_WORD }
-  let uncallable: list = $runnable | where not (do $callable $it.name) | each {|t|
-    {name: $t.name status: error duration: 0sec error: "this name cannot be called: remove quotes, brackets, braces, | ; # ^ % >, words starting with $, and bare = or && words"}
+  let uncallable: list = $runnable | where not (do $callable $it.name) or $it.positional | each {|t|
+    let why: string = if (do $callable $t.name) {
+      'this test takes a required argument: tests and hooks take none'
+    } else {
+      "this name cannot be called: remove quotes, brackets, braces, | ; # ^ % >, words starting with $, and bare = or && words"
+    }
+    {name: $t.name status: error duration: 0sec error: $why}
   }
-  let names: list<string> = $runnable | where (do $callable $it.name) | get name
-  # A hook name is written into every test's chain: one that cannot be called would break the whole child program.
-  let bad_hooks: list<string> = $hooks | values | flatten | where not (do $callable $it)
-  if ($bad_hooks | is-not-empty) {
-    let reason: string = $"the hook '($bad_hooks | first)' cannot be called: hooks follow the same naming rule as tests"
+  let names: list<string> = $runnable | where (do $callable $it.name) and not $it.positional | get name
+  # A hook is written into every test's chain: one the runner cannot call would break the whole child program.
+  let reason: oneof<nothing, string> = $cmds | where role in $HOOKS | each {|h|
+    if not (do $callable $h.name) {
+      $"the hook '($h.name)' cannot be called: hooks follow the same naming rule as tests"
+    } else if $h.positional {
+      $"the hook '($h.name)' takes a required argument: tests and hooks take none"
+    }
+  } | get --optional 0
+  if $reason != null {
     let blocked: list = $runnable | each {|t| {name: $t.name status: error duration: 0sec error: $reason} }
     for row in [...$ignored ...$blocked] { render $row $opts }
     return (do $annotate [...$blocked ...$ignored])
@@ -590,7 +609,7 @@ def run-child [suite: path cfg: record hooks: record names: list<string> opts: r
   let program: string = program $suite $hooks $names
   if $opts.debug { print --stderr $program }
   let started: datetime = date now
-  let res: record = spawn $cfg $program {} --sandbox=$cfg.sandbox
+  let res: record = spawn $cfg $program {} --sandbox=$cfg.sandbox --limiter=$opts.limiter
   let elapsed: duration = (date now) - $started
   let rows: list = $res.stdout | tagged | where ($it | describe) starts-with record
   # A child that dies (parse error, `exit`, crash) emits no row for the remaining tests: report each as an error.
@@ -675,10 +694,11 @@ def spawn [
   program: string
   extra: record
   --sandbox # Run the child in a fresh sandbox (HOME/XDG) that is removed afterwards
+  --limiter: oneof<nothing, list<path>> # The `timeout` program for `cfg.timeout`, as `timeout-program` gives it (default: looked up now)
 ]: nothing -> record<stdout: string, stderr: string, exit_code: int> {
   if $sandbox {
     let ctx: record = new-sandbox
-    let res: record = spawn $cfg $program (($ctx | sandbox-vars) | merge $extra)
+    let res: record = spawn $cfg $program (($ctx | sandbox-vars) | merge $extra) --limiter=$limiter
     rm --recursive --force $ctx.root
     return $res
   }
@@ -687,12 +707,12 @@ def spawn [
   # hundred tests per suite.
   let script: path = mktemp --tmpdir nutest-XXXXXX.nu
   $program | save --force $script
-  let res: record = spawn-script $cfg $vars $script
+  let res: record = spawn-script $cfg $vars $script ($limiter | default { timeout-program })
   rm --force $script
   $res
 }
 
-def spawn-script [cfg: record vars: record script: path]: nothing -> record<stdout: string, stderr: string, exit_code: int> {
+def spawn-script [cfg: record vars: record script: path limiter: list<path>]: nothing -> record<stdout: string, stderr: string, exit_code: int> {
   let args: list<string> = [
     --no-config-file --table-mode=none --error-style=plain
     $"--include-path=($cfg.lib-dirs | str join (char esep))"
@@ -703,7 +723,7 @@ def spawn-script [cfg: record vars: record script: path]: nothing -> record<stdo
   # empty stdin alone is not enough.
   let detach: list<string> = which --all setsid | where type == external | get --optional 0.path | each {|p| [$p --wait] } | default []
   let limit: list<string> = if $cfg.timeout > 0sec {
-    timeout-program | each {|p| [$p --kill-after=5 $"($cfg.timeout / 1sec)"] } | default []
+    $limiter | each --flatten {|p| [$p --kill-after=5 $"($cfg.timeout / 1sec)"] }
   } else { [] }
   let launch: list<string> = [...$detach ...$limit $nu.current-exe ...$args]
   if not $cfg.scrub { return (with-env $vars { '' | run-external ...$launch | complete }) }
@@ -724,17 +744,22 @@ def spawn-script [cfg: record vars: record script: path]: nothing -> record<stdo
   do { hide-env ...$hidden; with-env $vars { '' | run-external ...$launch | complete } }
 }
 
-# The `timeout` program that enforces a configured `timeout`, if there is one on PATH.
-def timeout-program []: nothing -> oneof<path, nothing> {
+# The coreutils `timeout` that enforces a configured `timeout`, as a one-item list; empty when PATH has none. Other
+# programs of that name (Windows' `timeout.exe`, BusyBox's `timeout`) do not take `--kill-after` and would end every
+# child with a usage error, so a `timeout` whose `--version` does not name coreutils counts as absent. `main` looks
+# it up once per run for the test children; `discover` and `exec` look it up themselves.
+def timeout-program []: nothing -> list<path> {
   which --all timeout | where type == external | get --optional 0.path
+  | each {|p| if (^$p --version | complete).stdout =~ '(?i)coreutils' { [$p] } else { [] } }
+  | default []
 }
 
 # A configured `timeout` that cannot be enforced is said once per run, so the missing bound never passes unnoticed.
-def warn-unbounded [cfgs: list<record> colors: bool]: nothing -> nothing {
+def warn-unbounded [cfgs: list<record> opts: record]: nothing -> nothing {
   let limits: list<duration> = $cfgs | get timeout | where $it > 0sec | uniq
-  if ($limits | is-not-empty) and (timeout-program) == null {
+  if ($limits | is-not-empty) and ($opts.limiter | is-empty) {
     let text: string = $limits | each { into string } | str join ', '
-    print --stderr ($"warning: timeout ($text) is configured but no `timeout` program is on PATH: children run unbounded" | tint yellow $colors)
+    print --stderr ($"warning: timeout ($text) is configured but no coreutils `timeout` is on PATH: children run unbounded" | tint yellow $opts.colors)
   }
 }
 
