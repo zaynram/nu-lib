@@ -199,6 +199,31 @@ def "test exec rejects a command line without a program" []: nothing -> nothing 
   }
 }
 
+def "test exec wants the command line before the run options" []: nothing -> nothing {
+  with-stub {|t|
+    assert equal (code-of { session exec --floating 'cargo build' }) 'session::exec::invalid_argument' 'a leading flag is not a program'
+    assert equal (calls $t.log) [] 'nothing was run'
+  }
+}
+
+def "test layout completions include symlinked layouts" []: nothing -> nothing {
+  need-posix
+  with-sandbox {|ctx|
+    let layouts: path = $ctx.config | path join zellij layouts
+    mkdir $layouts
+    'layout {}' | save ($ctx.code | path join real.kdl)
+    ^ln -s ($ctx.code | path join real.kdl) ($layouts | path join linked.kdl)
+    'layout {}' | save ($layouts | path join plain.kdl)
+    # `_layouts` is a private completer: a child that `source`s the module file can call it.
+    let program: string = $"source ($ROOT | path join session mod.nu | to nuon); _layouts | to nuon"
+    let res = with-env {ZELLIJ_CONFIG_DIR: ($ctx.config | path join zellij)} {
+      ^$nu.current-exe --no-config-file --include-path $ROOT --commands $program | complete
+    }
+    assert equal $res.exit_code 0 $res.stderr
+    assert equal ($res.stdout | from nuon | sort) [linked plain] 'a layout that is a symlink is offered too'
+  } | ignore
+}
+
 # ——— enter ——————————————————————————————————————————————————————————————————————
 
 def "test enter attaches and creates by default" []: nothing -> nothing {
@@ -220,6 +245,15 @@ def "test enter without attaching starts a session" []: nothing -> nothing {
     assert equal (calls $t.log | last) '' 'nothing to pass: a plain client start'
     session enter nu-lib --attach=false --layout dev --debug
     assert equal (calls $t.log | last) '--session nu-lib --new-session-with-layout dev --debug' 'the further arguments reach the client here too'
+  }
+}
+
+def "test enter has no short attach flag" []: nothing -> nothing {
+  with-stub {|t|
+    # `--attach` takes a value, so a short `-a` could only ever be a parse error: the client gets it instead.
+    let res = ^$nu.current-exe --no-config-file --include-path $ROOT --commands 'use session; session enter nu-lib -a' | complete
+    assert equal $res.exit_code 0 $"the line parses: ($res.stderr | str trim)"
+    assert equal (calls $t.log | last) 'attach --create nu-lib -a' '-a reaches `zellij attach`'
   }
 }
 

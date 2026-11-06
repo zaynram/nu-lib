@@ -166,9 +166,10 @@ export def --wrapped manage [
 # Run a command line in a new pane of the current Zellij session.
 #
 # The first argument is the command line (`'cargo build'`); the remaining arguments are options for
-# `zellij run` (`--floating`, `--name build`). The command line is split on spaces with no quoting, so an argument
-# that contains a space must come through the pipeline: a list piped in replaces the arguments split from the
-# command line (`[-c 'a b'] | session exec sh`); the command line's first word stays the program.
+# `zellij run` (`--floating`, `--name build`), so a line that starts with a flag is an error. The command line is
+# split on spaces with no quoting, so an argument that contains a space must come through the pipeline: a list
+# piped in replaces the arguments split from the command line (`[-c 'a b'] | session exec sh`); the command line's
+# first word stays the program.
 @category shells
 export def --wrapped exec [
   ...rest: string@_run-args # The command line, then `zellij run` options
@@ -182,6 +183,12 @@ export def --wrapped exec [
         advice: "`session exec 'cargo build' --floating`"
       }
     }
+  if ($command | str starts-with '-') {
+    error raise $"'($command)' is a flag, not a command line" ...{
+      kind: invalid_argument
+      advice: "put the command line first: `session exec 'cargo build' --floating`"
+    }
+  }
   let words: list<string> = $command | split row ' ' | where $it != ''
   if $words == [] {
     error raise $"the command line '($command)' names no program" ...{
@@ -203,7 +210,7 @@ export def --wrapped exec [
 @category shells
 export def --wrapped enter [
   name?: string@_names # The session to enter
-  --attach (-a) = true # Attach to the session, creating it if needed; `--attach=false` starts a new session
+  --attach = true # Attach to the session, creating it if needed; `--attach=false` starts a new session
   --layout (-l): string@_layouts # The layout of a newly created session
   ...rest: string@_attach-args # Further arguments for the client (`zellij attach`, or `zellij` with `--attach=false`)
 ]: nothing -> nothing {
@@ -226,7 +233,7 @@ def _names []: nothing -> list<string> {
 }
 
 def _layouts []: nothing -> list<string> {
-  glob --no-dir --no-symlink (config-dir | path join layouts '*.kdl') | path parse | get $.stem
+  glob --no-dir (config-dir | path join layouts '*.kdl') | path parse | get $.stem
 }
 
 # Completions of the client's own command line, through the active completer.
