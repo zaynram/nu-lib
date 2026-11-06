@@ -1,7 +1,7 @@
 # Data-first test harness (the bash-env pattern, evolved).
 #
 # Suites are plain .nu files. A test is `def "test <name>" []` — or any
-# command marked with a `@test` attribute (`use std/testing *` makes the
+# command marked with a `@test` attribute (`use std/testing ` makes the
 # attribute parse). A leading `ignore` in the description, or `@ignore`,
 # reports the test as skipped without running it. Optional hooks
 # `def "before each"` / `def "after each"` (or `@before-each`/`@after-each`)
@@ -34,16 +34,124 @@ const ROLES: list<string> = [
   after-all
 ]
 
+alias "ansi dgb" = ansi dark_gray_bold
+const TEMPLATE: string = $"(ansi dgb)[(ansi rst)(ansi cb){stem}(ansi rst)(ansi dgb)](ansi rst)"
+
+const LIB_STRAT: list<string> = [append prepend]
+const LIB_CURRENT: list<string> = [const env all]
+
+const SEAM: string = '' + r###'
+# Test seam to load module commands, avoid shadowing, and expose assertion commands to suites.
+export use (path self {module})
+export use std/assert
+export use test skip
+
+# Register additional NU_LIB_DIRS for subprocesses in the empty array below.
+export-env {{ use test register; register ...{include} }}
+'###
+
+const STUB: string = r###'
+# Test suite: {name}
+# {path}
+
+# The statement below loads the module commands and runs the seam to ensure module resolution.
+# * It is recommended to leave it alone unless you know what you are doing!
+
+use ../mod.nu
+
+# Configure setup and cleanup behaviors by uncommenting the methods below.
+# * Only defined methods will be used (opt-in).
+# * All methods here are run with `do --env` so environment changes will be reflected in test case scopes.
+#
+# If defined, the setup methods should return a record to set the `$ctx` variable.
+# * This is not strictly necessary; setup methods can be used for purely side effects.
+# * The `$ctx` variable is the result of `before all` in the rest of the methods.
+# * The `$ctx` variable is overwritten by `before each` before the `after [each|all]` scopes.
+#
+# def "before all" []: nothing -> record {{ default {{}} }}
+# def "before each" []: nothing -> record {{ default {{}} }}
+# def "after each" []: nothing -> nothing {{ }}
+# def "after all" []: nothing -> nothing {{ }}
+#
+# Add your test cases using the `assert` commands from the standard library; e.g.
+#
+# def "test addition" []: nothing -> nothing {{
+#   assert equal (1 + 1) 2, 'one plus one equals two'
+# }}
+#
+# Below is a template test case definition to get you started.
+# * Be sure to use descriptive names for test cases!
+
+def "test {name}-does-something" []: nothing -> nothing {{
+  # ...test logic goes here
+}}
+
+'###
+
+# Scaffold test suite directories with a seam stubbed automatically.
+export def init [
+  ...suites: string
+  # Names of test suite files to create stubs for
+  --include (-i): list<directory> = []
+  # Additional library directories to load for test suites
+  --directory (-d): directory = ./tests/suites
+  # Path to the directory to create the test suites in (the seam will be placed in the directory above)
+  --module (-m): string = ..
+  # Relative path to the module directory (with `mod.nu`) or file (suffixed with `.nu`)
+  --force (-f)
+  # Overwrite any existing files matching those created by this method
+]: nothing -> table {
+  let root: path = $directory | path expand
+  mkdir --verbose $root
+  let seam: path = $root | path basename --replace mod.nu
+  {include: $include module: $module} | format pattern $SEAM | save --force=$force $seam
+  let suites = $suites | default --empty [
+      $'($root | path basename --replace $module | path expand | path parse | get $.stem).nu'
+    ]
+  for s in $suites {
+    let p: path = $root | path join $s
+    {name: $s path: $p} | format pattern $STUB | save --force=$force $p
+  }
+  $root | path dirname | ls $in
+}
+
 # Register directories to be included in the `--include-path` of Nushell test subprocesses.
-export def add-lib [
-  ...dirs: directory # Directories to register for test subprocesses
+export def register [
+  --current (-c): string@$LIB_CURRENT
+  # Add the values from the specified source(s)
+  --strategy (-s): string@$LIB_STRAT = prepend
+  # Whether to prepend or append directories added with `--current`
+  ...dirs: directory
+  # Directories to register for test subprocesses (appended to pipeline input)
 ]: oneof<nothing, list<directory>> -> list<directory> {
-  append $dirs
+  if $strategy !~ '^(append|prepend)$' { error make --unspanned $"invalid strategy: '($strategy)'" }
+  alias add = run-internal $strategy
+  [...$in ...$dirs] | match $current {
+    null => ()
+    const => (add $NU_LIB_DIRS)
+    env => (add $env.NU_LIB_DIRS)
+    all => (add [...$NU_LIB_DIRS ...$env.NU_LIB_DIRS])
+    _ => { error make --unspanned $"'($current)' is not one of ($LIB_CURRENT)" }
+  } | compact --empty
+  | path expand
   | uniq
-  | compact --empty
-  | path expand --strict
   | where ($it | path type) == dir
-  | kv set --return=input --table=$KV include_path {|| str join (char esep) }
+  | kv set --return=input --table=$KV include_path
+}
+
+# View the currently registered directories for subprocess `--include-path`s.
+#
+# Command strings can be passed as pipeline input and will be evaluated with the test subprocess runner.
+# This is particularly useful for debugging module resolution.
+export def registry []: [
+  nothing -> list<path>
+  string -> record<exit_code: int, stdout: string, stderr: string>
+  list<string> -> table<exit_code: int, stdout: string, stderr: string>
+] {
+  match ($in | describe) {
+    nothing => (kv get --table=$KV include_path | default [])
+    string | list<string> => (each --flatten { subprocess $in })
+  }
 }
 
 # Run the suites at a path and return their results as a table.
@@ -51,27 +159,44 @@ export def add-lib [
 # Progress renders on stderr; the return value is pure data, so it pipes:
 # `test tests/suites | where status == fail`.
 export def main [
-  path?: directory # A suite file or a directory of suite files
-  --include (-i): string@_suite-stems = '.+' # Only run suites whose basename matches
+  ...search: path # Exact paths to suite files to run
+  --root (-r): directory = tests/suites # Root directory to search for test suites when none are provided
+  --include (-i): list<directory> = [] # Include these directories in NU_LIB_DIRS of subprocesses
+  --match (-m): string@_suite-stems = .+ # Only run suites whose basename matches this regex
   --test (-t): string@_test-names = '' # Only run tests whose command name matches
   --isolation: string@_isolation = test # Interpreter per 'test' (hermetic) or per 'suite' (fast)
-  --verbose (-v) # Print captured errors under failing tests
-  --debug (-d) # Print debug information (useful for collection errors)
   --strict (-s) # Raise an error when any test fails, for CI and hooks
+  --verbose (-v) # Print captured errors under failing tests
+  --depth (-d): int = 3 # Maximum depth to recurse from the suites root to find test files
+  --debug (-D) # Print debug information (useful for collection errors)
 ]: nothing -> table {
   if $isolation not-in [test suite] {
     error make --unspanned $"--isolation must be 'test' or 'suite', got '($isolation)'"
   }
-  let suites: list<path> = $path
-    | default ($env.pwd! | path join tests suites)
-    | if $debug { debug echo 'suites-root' } else { }
-    | try { path expand --strict } catch { error make 'unable to resolve test suites directory' }
-    | match ($in | path type) { dir => (try { glob ($in | path join *.nu) }) _ => ([$in]) }
-    | default []
-    | where ($it | path basename) =~ $include
-    | if $debug { debug echo 'discovered-suites' } else { }
+  if $include != [] { register ...$include }
+  let suites: list<path> = $search | default --empty {||
+      $root | try {
+        path expand --strict
+        | if $debug { debug echo 'suites-root' } else { }
+        | match ($in | path type) {
+          file => (append [])
+          dir => (glob --no-dir --no-symlink --depth=3 $'($in)/*/*.nu')
+        } | where ($it | path basename) =~ $match
+      } catch {
+        error make --unspanned {
+          msg: 'unable to resolve test suites'
+          help: $"search path: '($root)'"
+        }
+      } | if $debug { debug echo 'discovered-suites' } else { }
+      | default --empty {||
+        error make --unspanned {
+          msg: 'no test suites matched the provided parameters'
+          help: $"searched for pattern: '($root)/**/*.nu'"
+        }
+      }
+    }
   let results: table = $suites | each {|suite|
-      print --stderr $"(ansi dark_gray_bold)[(ansi rst)(ansi cyan_bold)($suite | path parse | get stem)(ansi rst)(ansi dark_gray_bold)](ansi rst)"
+      path parse | format pattern $TEMPLATE | print --stderr $in
       let cmds: table = discover $suite
       let stem: string = $suite | path parse | get $.stem
       let hooks: record = $cmds
@@ -215,9 +340,9 @@ export def snippet [name: string]: record -> string {
   }
   | format pattern r#'do {{
   let start = date now
-  let ctx = do --env {{ {setup} }}
+  let ctx = do --env {{ {setup} }} | default {}
   let row = try {{
-    let ctx = do --env {{ {before} }}
+    let ctx = do --env {{ {before} }} | default {}
     $ctx | {name}
     do --env {{ {after} }} | ignore
     {{name: {qname}, status: 'ok', error: null}}
@@ -298,14 +423,17 @@ def summarize [results: table strict: bool]: nothing -> nothing {
   if $strict and $errors > 0 { error make --unspanned $"($errors) test\(s) failed" }
 }
 
+alias noni = ^$nu.current-exe --table-mode=none --error-style=plain --no-config-file
+
 export def subprocess [
-  commands: string
+  c: string
   --pipe # Attempt to deserialize stdout (raises an error for non-zero exit codes)
+  --libs: list<directory> # Extra directories for the `--include-path` option
 ]: nothing -> oneof<record<stdout: string, stderr: string, exit_code: int>, list, table, string, number, nothing> {
-  let include_path: string = kv get --table=$KV include_path | default ('')
-  ^$nu.current-exe --table-mode=none --error-style=plain --no-config-file --include-path=($include_path) --commands=($commands)
-  | complete
-  | match $in.exit_code {
+  let i: string = kv get --table=$KV include_path
+    | if $libs != null { prepend $libs | path expand | uniq } else { default [] }
+    | str join (char esep)
+  noni --include-path=($i) --commands=($c) | complete | match $in.exit_code {
     _ if not $pipe => ()
     0 => (get $.stdout | from nuon)
     $c => { error make --unspanned {msg: $'subprocess exited with code ($c)' help: $in.stderr} }
