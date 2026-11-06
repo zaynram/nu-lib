@@ -77,3 +77,104 @@ def "test tags and passthrough" []: record -> nothing {
   assert ('#repo' in (time tags | get name)) 'tags reads tags.data'
   assert equal (time get dom.tracked.count | str trim) '2' 'raw passthrough'
 }
+
+# ——— more ——————————————————————————————————————————————————————————————————————
+
+def "test db defaults next to the nushell data directory" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let db = sandboxed $ctx 'time db | to nuon' --prelude 'use time' --pipe
+    assert equal $db ($ctx.data | path join timewarrior) 'timewarrior beside $nu.data-dir'
+    let set = sandboxed $ctx 'time db | to nuon' --prelude 'use time' --vars {TIMEWARRIORDB: /x/tw} --pipe
+    assert equal $set /x/tw 'TIMEWARRIORDB wins'
+  }
+}
+
+def "test tags of a fresh database is empty" []: record -> nothing {
+  $env.TIMEWARRIORDB = $in.db
+  assert equal (time tags) [] 'no tags.data yet'
+}
+
+def "test tags counts uses" []: record -> nothing {
+  let t = $in
+  $env.TIMEWARRIORDB = $t.db
+  seed $t.now
+  time start alpha --at=($t.now - 5min) | ignore
+  let counts: record = time tags | each {|r| {($r.name): $r.count} } | into record
+  assert equal $counts {'#repo': 1 alpha: 2 beta: 1} 'one row per tag with its count'
+}
+
+def "test list rows are typed" []: record -> nothing {
+  let t = $in
+  $env.TIMEWARRIORDB = $t.db
+  seed $t.now
+  time start open --at=($t.now - 5min) | ignore
+  let rows = time list
+  assert equal ($rows | columns) [id start end span tags annotation] 'the columns'
+  assert equal ($rows | get id | sort) [1 2 3] 'ids'
+  assert equal ($rows | where tags == [open] | first | get end) null 'the open interval has no end'
+  assert equal ($rows | get start | each { describe } | uniq) [datetime] 'local datetimes'
+  assert equal ($rows | get span | each { describe } | uniq) [duration] 'spans'
+}
+
+def "test list from alone ends now" []: record -> nothing {
+  let t = $in
+  $env.TIMEWARRIORDB = $t.db
+  seed $t.now
+  assert equal (time list --from=($t.now - 2hr) | length) 2 'beta, and alpha overlapping the range'
+  assert equal (time list --from=($t.now - 5min) | length) 0 'nothing after beta stopped'
+}
+
+def "test list passes hints and requires every tag" []: record -> nothing {
+  let t = $in
+  $env.TIMEWARRIORDB = $t.db
+  seed $t.now
+  assert equal (time list '#repo' alpha | length) 1 'both tags'
+  assert equal (time list '#repo' beta | length) 0 'not both tags'
+  assert equal (time list :all | length) 2 'a hint passes through'
+}
+
+def "test today and week" []: record -> nothing {
+  let t = $in
+  let now: record = $t.now | into record
+  if $now.hour == 0 and $now.minute < 10 { skip 'too close to midnight for :day' }
+  $env.TIMEWARRIORDB = $t.db
+  time start x --at=($t.now - 5min) | ignore
+  assert equal (time today | get tags) [[x]] 'the interval of today'
+  assert equal (time week | get tags) [[x]] 'and of this week'
+}
+
+def "test start without tags and in the future" []: record -> nothing {
+  $env.TIMEWARRIORDB = $in.db
+  assert equal (time start | get tags) [] 'an untagged interval'
+  let msg: string = try { time start --at=((date now) + 1hr) x; 'no error' } catch {|e| $e.msg }
+  assert equal $msg 'timew start: Time tracking cannot be set in the future.' 'timew stderr is the error'
+}
+
+def "test stop returns the closed interval" []: record -> nothing {
+  let t = $in
+  $env.TIMEWARRIORDB = $t.db
+  time start beta --at=($t.now - 1hr) | ignore
+  let s = time stop
+  assert equal $s.tags [beta] 'the interval that was open'
+  assert ($s.end != null) 'now closed'
+}
+
+def "test modify start and empty tags" []: record -> nothing {
+  let t = $in
+  $env.TIMEWARRIORDB = $t.db
+  seed $t.now
+  let m = time modify 2 --start=($t.now - 4hr)
+  assert ((($m.start - ($t.now - 4hr)) | math abs) < 1sec) 'modify moves the start'
+  assert equal (time modify 1 --tags=[] | get tags) [] 'an empty tag set untags'
+}
+
+def "test modify an unknown id raises" []: record -> nothing {
+  $env.TIMEWARRIORDB = $in.db
+  let msg: string = try { time modify 99 --annotate x; 'no error' } catch {|e| $e.msg }
+  assert equal $msg "timew annotate: ID '@99' does not correspond to any tracking." 'timew stderr'
+}
+
+def "test passthrough returns timew output" []: record -> nothing {
+  $env.TIMEWARRIORDB = $in.db
+  assert equal (time get dom.active | str trim) '0' 'raw text'
+}
