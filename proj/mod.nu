@@ -14,6 +14,7 @@ use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
 use hook with
 use error
 use log
+use session
 use style
 
 # ——— constants ————————————————————————————————————————————————————————————————
@@ -123,15 +124,16 @@ export def scan [
   # Discard the registered projects of the scanned kinds first (all metadata when every kind is scanned)
 ]: nothing -> oneof<ScanMetadata, nothing> {
   if $prune { print $"removed (prune-missing-dirs) projects"; return }
-  let current: oneof<nothing, record> = snapshot
-  if not ($reset or $force) and $current != null and (date now) - $current.last_scan.start < $TTL {
-    return $current.last_scan
-  }
+  # The arguments and the workspace are checked before the TTL short-circuit: a fresh snapshot excuses neither.
   let unknown: list<string> = $kinds | where {|k| $KIND not-has $k }
   if $unknown != [] {
     error raise $"unknown kind: '($unknown | first)'" --kind invalid_argument --advice $"kinds: ($KIND | columns | str join ', ')"
   }
   let work: path = workspace
+  let current: oneof<nothing, record> = snapshot
+  if not ($reset or $force) and $current != null and (date now) - $current.last_scan.start < $TTL {
+    return $current.last_scan
+  }
   let scanned: list<string> = $KIND | columns | where $it in $kinds
   if $reset and ($KIND | columns | all {|k| $k in $kinds }) { reset-table proj }
   let start: datetime = date now
@@ -283,9 +285,11 @@ def create-session-in-project []: record -> nothing {
   ^zellij attach --create-background $in.name options --default-cwd $in.path
 }
 
+# Whether a Zellij session is named after the project (its name or its directory). `session list` handles the
+# client's "no sessions" exit and a missing client.
 def is-existing-session []: ProjectInfo -> bool {
   let proj: record;
-  let sessions: list<string> = zellij list-sessions --short --no-formatting | lines | str trim
+  let sessions: list<string> = session list --short
   $sessions has $proj.name or $sessions has ($proj.path | path basename)
 }
 

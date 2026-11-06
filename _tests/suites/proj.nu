@@ -19,6 +19,7 @@ use ../mod.nu *
 #   txt/notes, ext/vend               -> not under version control
 #   src/.hidden, src/link (symlink)   -> must be ignored
 def fixture [ctx: record]: nothing -> record<ctx: record, root: path, work: path> {
+  need-posix # the fixture's symlink
   let work: path = $ctx.code | path join work
   [src/alpha src/beta src/gamma src/.hidden dev/tools txt/notes ext/vend]
   | each {|d| mkdir ($work | path join $d) }
@@ -325,6 +326,22 @@ def "test scan rejects an unknown kind" []: nothing -> nothing {
       assert equal $err.msg "unknown kind: 'zz'" 'named in the error'
       assert equal $err.code 'proj::scan::invalid_argument' 'the code'
       assert ($err.help =~ 'src, txt, dev, ext') $'the advice lists the kinds: ($err.help)'
+  }
+}
+
+def "test scan validates the kinds inside the ttl" []: nothing -> nothing {
+  case {|fx|
+      let err = caught-in-proj $fx 'proj scan --force | ignore; proj scan --kinds [zz]'
+      assert equal $err.code 'proj::scan::invalid_argument' 'a fresh snapshot does not skip the check'
+      assert equal $err.msg "unknown kind: 'zz'" 'named in the error'
+  }
+}
+
+def "test scan needs the workspace inside the ttl" []: nothing -> nothing {
+  case {|fx|
+      let err = caught-in-proj $fx 'proj scan --force | ignore; hide-env WORK; proj scan'
+      assert equal $err.msg 'WORK is not set' 'a fresh snapshot does not stand in for the workspace'
+      assert equal $err.code 'proj::workspace::missing_dependency' 'the derived code'
   }
 }
 
