@@ -16,11 +16,9 @@ const DOTENV_EXTENSIONS: list<string> = [env conf dotenv]
 const BASH_EXTENSIONS: list<string> = [sh bash]
 const BASH_NAMES: list<string> = ['.envrc' '.profile' '.bashrc' '.bash_profile' '.bash_login']
 # An assignment as `from dotenv` takes it (`export` allowed; a key is anything but whitespace, `=` and `#`), with
-# the start of its value: the quote that opens it, else its first character.
-const ASSIGNMENT: string = r#'^\s*(?:export\s+)?(?<key>[^\s=#]+)\s*=\s*(?<start>.?)'#
-# A line a dotenv reader takes: blank, a comment, or an assignment.
-const DOTENV_LINE: string = r#'^\s*($|#|(export\s+)?[^\s=#]+\s*=)'#
-# What only a shell gives meaning to, anywhere in a value: `$(…)` (also `$((…))`) or a backtick.
+# its value as written.
+const ASSIGNMENT: string = r#'^\s*(?:export\s+)?(?<key>[^\s=#]+)\s*=\s*(?<raw>.*)$'#
+# What only a shell gives meaning to, anywhere in a written value: `$(…)` (also `$((…))`) or a backtick.
 const SHELL_VALUE: string = r#'\$\(|`'#
 # Variables Nushell manages itself: a bash file's `cd` changes them and `load-env` refuses them (as `from-bash
 # --load` leaves them out).
@@ -43,24 +41,65 @@ def read-text [file: path]: nothing -> string {
   try { open --raw $file } catch {|e| $e | error raise $"'($file)' could not be read" --kind io }
 }
 
+# The position of the quote that closes a value opened with `quote`, or null when the line does not close it (a
+# `\"` does not close a double-quoted value).
+def closing-index [quote: string]: string -> oneof<nothing, int> {
+  if $quote == "'" {
+    str index-of "'" | if $in < 0 { null } else { $in }
+  } else {
+    parse --regex r#'^(?<before>(?:[^"\\]|\\.)*)"'# | get --optional $.0?.before | if $in == null { null } else { str length }
+  }
+}
+
+# The lines of dotenv text as written, each `skip` (blank or comment), `assignment` (with `key`, the opening `quote`
+# or '' and the `body`: the value up to its closing quote, else up to a trailing comment), `continuation` (inside a
+# quoted multi-line value) or `junk` (nothing a dotenv file can hold, with its `text`); `index` is the line number
+# from 0. The state carried between lines is the quote a value left open ('' for none).
+def walk-lines []: string -> list<record> {
+  lines | enumerate | generate {|l, open|
+    let line: string = $l.item
+    if $open != '' {
+      {out: {index: $l.index kind: continuation} next: (if ($line | closing-index $open) == null { $open } else { '' })}
+    } else if $line =~ '^\s*($|#)' {
+      {out: {index: $l.index kind: skip} next: ''}
+    } else {
+      let m: oneof<nothing, record> = $line | parse --regex $ASSIGNMENT | get $.0?
+      if $m == null {
+        {out: {index: $l.index kind: junk text: ($line | str trim)} next: ''}
+      } else if ($m.raw | str substring 0..<1) in ['"' "'"] {
+        let quote: string = $m.raw | str substring 0..<1
+        let rest: string = $m.raw | str substring 1..
+        let close: oneof<nothing, int> = $rest | closing-index $quote
+        let body: string = if $close == null { $rest } else { $rest | str substring 0..<$close }
+        {out: {index: $l.index kind: assignment key: $m.key quote: $quote body: $body} next: (if $close == null { $quote } else { '' })}
+      } else {
+        let body: string = $m.raw | str replace --regex '\s+#.*$' ''
+        {out: {index: $l.index kind: assignment key: $m.key quote: '' body: $body} next: ''}
+      }
+    }
+  } ''
+}
+
 # What dotenv text holds: `{vars}`, or why it is not a dotenv file: `{line, text}` (the first line that is not
-# blank, a comment or an assignment), `{key}` (a value only a shell gives meaning to: `$(…)` or a backtick in an
-# unquoted or double-quoted value, or an unquoted leading `~`) or `{inner}` (`from dotenv` failed, and no line
-# explains why).
+# blank, a comment, an assignment or the continuation of a quoted value), `{key}` (a value only a shell gives
+# meaning to, as written: `$(…)` or a backtick in an unquoted or double-quoted value, or an unquoted leading `~`)
+# or `{inner}` (`from dotenv` failed, and no line explains why).
 def dotenv-verdict []: string -> record {
   let text: string = $in
   let parsed: record = try { {vars: ($text | from dotenv)} } catch {|e| {inner: $e} }
+  let walk: list<record> = $text | walk-lines
   if $parsed has inner {
-    let bad: oneof<nothing, record> = $text | lines | enumerate | where item !~ $DOTENV_LINE | get $.0?
-    return (if $bad == null { $parsed } else { {line: ($bad.index + 1) text: ($bad.item | str trim)} })
+    let bad: oneof<nothing, record> = $walk | where kind == junk | get $.0?
+    return (if $bad == null { $parsed } else { {line: ($bad.index + 1) text: $bad.text} })
   }
-  # The start of every value as written (the last assignment of a key wins, as in `from dotenv`): `from dotenv`
-  # strips the quotes, which decide what a shell would have done with `~`, `$(…)` and backticks.
-  let starts: record = $text | lines | parse --regex $ASSIGNMENT | each {|a| [$a.key $a.start] } | into record
-  let shell: oneof<nothing, string> = $parsed.vars | items {|key value|
-    let start: string = $starts | get --optional ([$key] | into cell-path) | default ''
-    if $start == '~' or ($start != "'" and $value =~ $SHELL_VALUE) { $key }
-  } | compact | get $.0?
+  # The written value decides (the last assignment of a key wins, as in `from dotenv`): quotes say what a shell
+  # would have done, and the expansion `from dotenv` performed is not a shell's.
+  let shell: oneof<nothing, string> = $walk
+    | where kind == assignment
+    | reverse
+    | uniq-by key
+    | where quote != "'" and (($it.quote == '' and ($it.body | str starts-with '~')) or $it.body =~ $SHELL_VALUE)
+    | get $.0?.key
   if $shell == null { $parsed } else { {key: $shell} }
 }
 

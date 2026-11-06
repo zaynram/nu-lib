@@ -710,3 +710,19 @@ def "test dotenv is the deprecated alias of parse" []: nothing -> nothing {
     assert equal (env dotenv ($dir | path join .env)) {A: '1'} 'the alias reads the file'
   }
 }
+
+def "test parse judges written values, not their expansion" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {'lit.env': "A='$(x)'\nB=\"$A\"\nK=\"x\" # $(y)\n"}
+    assert equal (env parse ($dir | path join lit.env)) {A: '$(x)' B: '$(x)' K: x} 'a literal that expands to $(…) is still a literal'
+  }
+}
+
+def "test parse skips the continuation lines of a quoted value" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {'multi.env': "A=\"first\nsecond\"\nnot an assignment\n" 'cont.env': "K=\"first\nK=~\n\"\nZ=1\n"}
+    let e = try { env parse ($dir | path join multi.env); {} } catch {|e| $e }
+    assert str contains $e.msg 'line 3 is not KEY=VALUE: not an assignment' 'the junk line, not the continuation'
+    assert equal (env parse ($dir | path join cont.env)) {K: "first\nK=~\n" Z: '1'} 'a continuation that looks like an assignment is text'
+  }
+}
