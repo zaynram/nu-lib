@@ -63,6 +63,17 @@ or a new external dependency.
     record; it is not a key/value conversion for `[[k v]; …]` tables.
   - `rotate` is a matrix rotation for tables: on a record it puts values before keys (`rotate key value` labels
     them backwards) and `--ccw` reverses the order. Use `transpose` for records.
+- `each` doubles as "apply if present": piped a scalar or record it runs the closure once and returns the bare result;
+  piped `null` it skips the closure. Only use it that way where the value can never be a list (a list is iterated).
+- `each` by default; `par-each` costs ~1 ms per call before any work, so it only pays off when each item does slow
+  work (I/O, an external program, heavy computation) and there are many items. Never use it for writes to shared
+  state (`std-rfc/kv`/SQLite, files, `$env`): parallel kv writes contend on SQLite's lock and race.
+- Batch persistent state: every `kv get`/`kv set --universal` opens SQLite (~0.5 ms). Data that is read or written as
+  a whole (a registry, a cache) belongs in one value, not one key per row.
+- `describe` walks the whole value; type dispatch with `match ($in | describe)` is free on scalars and records but
+  scales with list/table size — use `first | describe` when only the element shape matters.
+- Hook bodies (`pre_execution`, `pre_prompt`, `env_change`) run on every command or `cd`: read `$env`, not storage,
+  and avoid spawning external programs there.
 - Measure before arguing about speed: `timeit { … }` for one run, `use std/bench; bench {…} {…} -n 10` for mean
   and spread across alternatives. `_docs/data-shaping.md` records measurements.
 
