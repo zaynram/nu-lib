@@ -173,12 +173,12 @@ export def find [
   $item | match ($in | path type) {
     file => { submit $target --return=$return | return $in }
     dir => { cd $in }
-    _ => { null | error raise --code=config::app::unresolved_target $"no config directory or file named '($target)'" }
+    _ => { null | error raise --code=config::find::unresolved_target $"no config directory or file named '($target)'" }
   }
   if $path != null { $path } else {
     let files: list = try { xglob **/* --no-dir } | default []
     match ($files | length) {
-      0 => { error raise --code=config::app::unresolved_target $"no config files found for '($target)'" }
+      0 => { error raise --code=config::find::unresolved_target $"no config files found for '($target)'" }
       1 => { $files | first }
       _ => { $files | path truncate --root . | path select }
     }

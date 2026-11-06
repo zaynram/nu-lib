@@ -328,6 +328,7 @@ def "test find unknown target raises and creates nothing" []: nothing -> nothing
   with-config {|cfg|
     let err: record = try { conf find typo --return; {} } catch {|e| $e }
     assert ($err.msg =~ 'typo') $'an unknown target raises: ($err.msg?)'
+    assert equal $err.details?.code? config::find::unresolved_target 'the find error code'
     assert not ($cfg | path join typo | path exists) 'no directory is created for a typo'
   }
 }
@@ -336,6 +337,7 @@ def "test find empty directory raises" []: nothing -> nothing {
   with-config {|cfg|
     let err: record = try { conf find empty --return; {} } catch {|e| $e }
     assert ($err.msg =~ 'no config files found') $'an empty directory raises: ($err.msg?)'
+    assert equal $err.details?.code? config::find::unresolved_target 'the find error code'
   }
 }
 
