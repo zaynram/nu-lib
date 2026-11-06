@@ -9,6 +9,7 @@
 # nu-lint-ignore-file: missing_output_type
 # (helpers return whatever the child or the closure produced)
 use conf
+use style
 use ../mod.nu *
 
 const USER_KEYS: list<string> = [home share cache config state autoload modules binaries scripts]
@@ -252,6 +253,22 @@ def "test a broken override is reported by use conf and the defaults are loaded"
     let defaults: list<string> = value $ctx '(conf machine-config vendor --no-file).plugins'
     assert equal ($res.value | where $it in $defaults) $defaults 'the default plugin dirs are loaded'
     assert equal (child $ctx 'conf machine-config vendor').exit_code 1 'an explicit call still raises'
+  }
+}
+
+def "test the fallback warning is coloured only when colours are on" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let dir: path = $ctx.config | path join nushell
+    mkdir $dir
+    '{vendor: {plugins: "not-a-list"}}' | save --force ($dir | path join machine.nuon)
+    let plain: record = child $ctx 'null'
+    assert equal $plain.exit_code 0 $'`use conf` survives: ($plain.stderr)'
+    assert ($plain.stderr =~ 'ignored, using the defaults') 'the warning is printed'
+    assert not ($plain.stderr =~ '\e\[') $'no escape sequences without a terminal: ($plain.stderr)'
+    # The export-env block runs when `use conf` executes, after the assignment.
+    let styled: record = child $ctx 'null' --prelude '$env.config.use_ansi_coloring = true; use conf'
+    assert equal $styled.exit_code 0 $'`use conf` survives: ($styled.stderr)'
+    assert str contains $styled.stderr ('conf: the machine override file was ignored, using the defaults:' | style paint yellow --colors=true) 'the warning is yellow when colours are on'
   }
 }
 

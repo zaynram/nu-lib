@@ -6,6 +6,7 @@ use error
 use completion "into completions"
 use path
 use edit
+use style
 
 export use machine.nu *
 
@@ -234,7 +235,8 @@ export-env {
   } catch {|e|
     # The cause is the help: a validation hint, or a failing script's stderr (collapsed to one line).
     let cause: string = $e.details?.help? | default '' | lines | str trim | compact --empty | str join ' | ' | str substring 0..240
-    print --stderr $"(ansi yellow)conf: the machine override file was ignored, using the defaults:(ansi reset) ($e.msg)(if $cause != '' { $' — ($cause)' })"
+    let warning: string = 'conf: the machine override file was ignored, using the defaults:' | style paint yellow
+    print --stderr $"($warning) ($e.msg)(if $cause != '' { $' — ($cause)' })"
     $libs | vars --vendor --load --no-file
   }
 }
