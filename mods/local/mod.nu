@@ -15,7 +15,8 @@ use conf [ machine-config ]
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
-const EXCLUDE: list<string> = [**/nupm+/** **/tests/** **/tests.nu **/*.bak*/**]
+# Not definitions: nupm's store, tests, backups, and the library's underscore directories (`_docs`, `_tests`).
+const EXCLUDE: list<string> = [**/nupm+/** **/tests/** **/tests.nu **/*.bak*/** **/_*/**]
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
