@@ -48,6 +48,7 @@ def "test attr styles only the name" []: nothing -> nothing {
 def "test an unknown attr is an error listing the valid ones" []: nothing -> nothing {
   let e = caught { style ansi extern --attr nonsense git }
   assert equal $e.msg "unknown attribute 'nonsense'" 'the attribute is named'
+  assert equal $e.code 'style::ansi-extern::invalid_argument' 'the derived code names the command with a dash'
   assert str contains ($e.labels.0?.text? | default '') 'bold, dimmed, italic' 'the valid attributes are listed'
 }
 

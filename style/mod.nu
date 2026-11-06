@@ -1,5 +1,9 @@
 # Extensions to the built-in `ansi` command providing additional style methods.
 
+# ——— imports ——————————————————————————————————————————————————————————————————
+
+use error
+
 # ——— constants ————————————————————————————————————————————————————————————————
 
 # Nushell's own colors for the external-command shapes, used when the color config does not set them.
@@ -31,10 +35,9 @@ export def --wrapped "ansi extern" [
 ]: nothing -> string {
   let colors: record = $SHAPE_DEFAULTS | merge ($env.config?.color_config? | default {} | select --optional ...($SHAPE_DEFAULTS | columns) | compact)
   let pre: string = if $attr == null { '' } else if $attr in (_ansi_attributes) { ansi $'attr_($attr)' } else {
-    error make {
-      msg: $"unknown attribute '($attr)'"
-      label: {text: $"expected one of: (_ansi_attributes | str join ', ')" span: (metadata $attr).span}
-    }
+    error raise $"unknown attribute '($attr)'" --kind invalid_argument --labels [
+      {text: $"expected one of: (_ansi_attributes | str join ', ')" span: (metadata $attr).span}
+    ] | do $in
   }
   let end: string = if $rest == [] { '' } else {
     let args: string = $rest | each { if $in =~ '\s' or $in == '' { to nuon } else { } } | str join ' '
