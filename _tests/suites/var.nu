@@ -5,11 +5,14 @@ use var
 use ../mod.nu *
 
 # Every test writes the universal store: each starts with this guard, which skips instead of touching a real data
-# directory (`--no-sandbox`). (A skip raised from a `before each` hook would be reported as an error.)
+# directory (`--no-sandbox`) and empties the sandboxed store. (A skip raised from a `before each` hook would be
+# reported as an error.)
 def guard-store []: nothing -> nothing {
   if not ($nu.data-dir | str starts-with ($nu.temp-dir | path join nutest-sandbox-)) {
     skip 'needs the runner sandbox: the universal kv store would be the real one'
   }
+  # start empty, also when the tests share one child (`--isolation suite`)
+  var | columns | each {|key| var --drop $key } | ignore
 }
 
 # The details of the error raised by `action`, or null when it raised nothing.
