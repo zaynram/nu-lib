@@ -587,16 +587,36 @@ def spawn [
     return $res
   }
   let vars: record = $cfg.env | merge $extra | merge {NU_TEST: ($cfg | to nuon)}
-  let child: closure = {||
-    ^$nu.current-exe --no-config-file --table-mode=none --error-style=plain --include-path=($cfg.lib-dirs | str join (char esep)) --commands=($program)
-    | complete
-  }
-  if not $cfg.scrub { return (with-env $vars $child) }
+  let args: list<string> = [
+    --no-config-file --table-mode=none --error-style=plain
+    $"--include-path=($cfg.lib-dirs | str join (char esep))"
+    $"--commands=($program)"
+  ]
+  if not $cfg.scrub { return (with-env $vars { ^$nu.current-exe ...$args | complete }) }
   let keep: list<string> = $KEEP | append $cfg.passthrough
-  let hidden: list<string> = $env | columns | where {|k|
-    $k not-in $keep and $k !~ '^LC_' and $k not-in [PWD FILE_PWD CURRENT_FILE config]
+  let kept: record = $env | columns | where {|k| $k in $keep or $k =~ '^LC_' } | each {|k| {$k: ($env | get $k)} } | into record
+  let env_bin: list = which --all env | where type == external
+  if ($env_bin | is-not-empty) {
+    # `env -i` builds the child's environment from scratch. `hide-env` cannot be relied on: once a `do --env` has
+    # run anywhere up the call stack (common in tests and hooks), it silently stops hiding anything.
+    let assignments: list<string> = $kept | merge $vars | items {|k v| $"($k)=($v | env-text)" }
+    return (^($env_bin.0.path) -i ...$assignments $nu.current-exe ...$args | complete)
   }
-  do { hide-env ...$hidden; with-env $vars $child }
+  # No `env` program (native Windows): hide what we can; see the caveat above.
+  let hidden: list<string> = $env | columns | where {|k|
+    $kept not-has $k and $k not-in [PWD FILE_PWD CURRENT_FILE config]
+  }
+  do { hide-env ...$hidden; with-env $vars { ^$nu.current-exe ...$args | complete } }
+}
+
+# An environment value as the text an external program receives (lists joined like PATH).
+# nu-lint-ignore: missing_in_type
+def env-text []: any -> string {
+  match ($in | describe) {
+    $t if $t starts-with list => ($in | each { into string } | str join (char esep))
+    $t if ($t starts-with record) or ($t starts-with table) => ($in | to nuon)
+    _ => ($in | into string)
+  }
 }
 
 # ——— reporting ————————————————————————————————————————————————————————————————

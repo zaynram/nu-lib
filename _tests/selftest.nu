@@ -292,6 +292,22 @@ def "test the effective config is visible" [] { assert equal ($env.NU_TEST | fro
     assert equal ($open | row 'test leaked vars are hidden').status fail
   }}
 
+  {name: 'env: grandchildren started from inside a test are scrubbed too (even after do --env)' run: {||
+    let dir = project {
+      'tests/suites/g.nu': 'use std/assert
+use test
+def "test exec after do --env hides the parent variables" [] {
+  $env.INNER_LEAK = "leaked"
+  do {
+    do --env { }
+    let seen = test exec "$env.INNER_LEAK? | default unset | to nuon" --pipe
+    assert equal $seen unset
+  }
+}'
+    }
+    assert equal (ok $dir 'test' | statuses) {'test exec after do --env hides the parent variables': ok}
+  }}
+
   {name: 'env: sandbox gives every child a throwaway HOME/XDG tree' run: {||
     let dir = project {
       'tests/suites/b.nu': 'use std/assert
