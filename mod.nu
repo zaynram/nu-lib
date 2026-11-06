@@ -79,11 +79,14 @@ export use completion/local *
 
 # ——— bootstrap ————————————————————————————————————————————————————————————————
 
-# Write the autoload file that loads the library's interactive surface: `use <root> *`.
+# Write the autoload file that loads the library's interactive surface: a parse-time `const NU_LIB_DIRS` naming
+# the library root, then `use <root> *`.
 #
-# That one line loads the environment set-up and every command of this barrel, with the `<module>/local` variants
-# as bare names (`alarm set`, `mods edit`, `set-completer`, …). Writing is idempotent: an existing file with the
-# same content is left alone, and one with different content is kept unless `--force` is given.
+# The `use` loads the environment set-up and every command of this barrel, with the `<module>/local` variants as
+# bare names (`alarm set`, `mods edit`, `set-completer`, …). The constant comes first because the barrel's modules
+# import each other by bare name, so the root must be on the include path when the barrel parses: without it the
+# file loads only in a shell whose configuration already lists the root. Writing is idempotent: an existing file
+# with the same content is left alone, and one with different content is kept unless `--force` is given.
 @category env
 export def init-local [
   --path (-p): path # The file to write (default: `nu-lib.nu` in the first user autoload directory)
@@ -92,6 +95,8 @@ export def init-local [
   let file: path = $path | default { $nu.user-autoload-dirs | first | path join $AUTOLOAD_FILE } | path expand
   let text: string = [
     '# Written by `init-local` (nu-lib): the interactive command surface, local variants as bare names.'
+    '# The constant puts the library root on the include path before the barrel parses (its modules import each other by name).'
+    $"const NU_LIB_DIRS: list<path> = [($ROOT | to nuon)]"
     $"use ($ROOT | to nuon) *"
   ] | str join (char newline) | $in + (char newline)
   let current: oneof<nothing, string> = if ($file | path type) == file { open --raw $file }
@@ -117,8 +122,9 @@ export def init-local [
 # - `conf` (login shells): the vendor scope's NU_LIB_DIRS, NU_PLUGIN_DIRS and PATH;
 # - `mods` (interactive login shells): `mods_home`/`mods_refs` and the `use`/`hide` tracking hook;
 # - `completion/local` (interactive login shells): the external completers' variables and PATH entry;
-# - `proj` (interactive login shells): the registry scan of `$env.WORK` (skipped when WORK is unset; a scan within
-#   the last day is reused) and the `std/dirs` ring;
+# - `proj` (interactive login shells): the `std/dirs` ring and, when WORK is set and the registry snapshot is
+#   missing or stale (the kind directories changed, or it is older than a day), a background refresh of it; with a
+#   fresh snapshot, or without WORK, import scans nothing;
 # - `track` (interactive login shells): the `track::sync` and `track::focus` hooks (added once);
 # - `windows` (WSL: `WSL_DISTRO_NAME` is set or the kernel release names Microsoft): splits the Windows entries of
 #   PATH into WINPATH.

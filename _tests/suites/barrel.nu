@@ -16,16 +16,21 @@ def plain [ctx: record code: string --prelude: string = $USE_BARREL --vars: reco
   $res.stdout | lines | last | from nuon
 }
 
-# Run `code` like `plain`, in a child started with `--login` (and `--interactive` unless `--not-interactive`).
-def login [ctx: record code: string --prelude: string = $USE_BARREL --vars: record = {} --not-interactive]: nothing -> any {
-  let flags: list<string> = if $not_interactive { [--login] } else { [--login --interactive] }
-  let vars: record = {
+# The HOME/XDG variables that point a child into the sandbox.
+def sandbox-env [ctx: record]: nothing -> record {
+  {
     HOME: $ctx.home
     XDG_CONFIG_HOME: $ctx.config
     XDG_DATA_HOME: $ctx.data
     XDG_CACHE_HOME: $ctx.cache
     XDG_STATE_HOME: $ctx.state
-  } | merge $vars
+  }
+}
+
+# Run `code` like `plain`, in a child started with `--login` (and `--interactive` unless `--not-interactive`).
+def login [ctx: record code: string --prelude: string = $USE_BARREL --vars: record = {} --not-interactive]: nothing -> any {
+  let flags: list<string> = if $not_interactive { [--login] } else { [--login --interactive] }
+  let vars: record = sandbox-env $ctx | merge $vars
   let program: string = $"($prelude)\n($code) | to nuon --serialize"
   let res: record = with-env $vars {
     '' | ^$nu.current-exe --no-config-file ...$flags --include-path=($ROOT) --commands $program | complete
@@ -211,14 +216,18 @@ def "test interactive login shells load track" []: nothing -> nothing {
 }
 
 # Wait (up to 10 s) for proj's hydration job to finish.
-const AWAIT_PROJ: string = 'mut n = 0; while (job list | is-not-empty) and $n < 100 { sleep 100ms; $n += 1 }'
+const AWAIT_PROJ: string = 'for _ in 1..100 { if (job list | is-empty) { break }; sleep 100ms }'
 
 def "test interactive login shells scan the workspace in the background" []: nothing -> nothing {
   with-sandbox {|ctx|
     let work: path = workspace $ctx
-    let code: string = $"let spawned = job list | get description; ($AWAIT_PROJ); {spawned: $spawned, total: \(proj meta total_count\)}"
-    let r: record = login $ctx $code --vars {WORK: $work}
-    assert equal $r {spawned: ['proj: scanning the workspace'] total: 1} 'proj registers the workspace from a job'
+    # Not the job list right after the import (a 10-20 ms job may already be gone) but what the job leaves behind:
+    # a snapshot stamped after the import began, holding the one project.
+    let prelude: string = $"let started = date now\n($USE_BARREL)"
+    let code: string = $"($AWAIT_PROJ); {at: \(proj meta\).stamp.at started: $started total: \(proj meta total_count\) hydrating: \(proj meta hydrating\)}"
+    let r: record = login $ctx $code --prelude $prelude --vars {WORK: $work}
+    assert ($r.at > $r.started) $'the import scanned the workspace: ($r)'
+    assert equal [$r.total $r.hydrating] [1 false] 'the project is registered and the job is done'
   }
   with-sandbox {|ctx|
     assert equal (login $ctx 'proj meta') {} 'nothing is scanned without WORK'
@@ -251,25 +260,27 @@ def "test loading the barrel twice changes nothing" []: nothing -> nothing {
 
 # ——— prelude.nu and init-local ————————————————————————————————————————————————
 
-# The line every generated file carries (the root exactly as `init-local` writes it; `to nuon` is not a parse-time
-# command, so this is a def, not a const).
-def prelude-line []: nothing -> string { $"use ($ROOT | to nuon) *" }
+# The lines every generated file carries (the root exactly as `init-local` writes it; `to nuon` is not a parse-time
+# command, so this is a def, not a const): the include-path constant, then the import.
+def prelude-lines []: nothing -> list<string> {
+  [$"const NU_LIB_DIRS: list<path> = [($ROOT | to nuon)]" $"use ($ROOT | to nuon) *"]
+}
 
-# The generated file without its one-line header (`drop nth 0`, not `skip 1`: `skip` is the runner's in this suite).
-def body [file: path]: nothing -> list<string> { open --raw $file | lines | drop nth 0 }
+# The generated file without its comment header.
+def body [file: path]: nothing -> list<string> { open --raw $file | lines | where $it !~ '^#' }
 
 def "test init-local writes the autoload file once and keeps edits" []: nothing -> nothing {
   with-sandbox {|ctx|
     let expected: path = $ctx.config | path join nushell autoload nu-lib.nu
     let first: record = plain $ctx 'init-local'
     assert equal $first {path: $expected action: written} 'written into the first user autoload directory'
-    assert equal (body $expected) [(prelude-line)] 'one `use` line after a one-line header'
+    assert equal (body $expected) (prelude-lines) 'the constant and the `use` line after a comment header'
     assert equal (plain $ctx 'init-local').action unchanged 'the same content is left alone'
     "# edited by hand\n" | save --append $expected
     assert equal (plain $ctx 'init-local').action kept 'different content is kept'
     assert str contains (open --raw $expected) 'edited by hand' 'and really untouched'
     assert equal (plain $ctx 'init-local --force').action overwritten '--force replaces it'
-    assert equal (body $expected) [(prelude-line)] 'with the generated content'
+    assert equal (body $expected) (prelude-lines) 'with the generated content'
   }
 }
 
@@ -278,7 +289,25 @@ def "test init-local path flag" []: nothing -> nothing {
     let target: path = $ctx.code | path join elsewhere boot.nu
     let r: record = plain $ctx $"init-local --path ($target | to nuon)"
     assert equal $r {path: $target action: written} 'writes where --path says, creating the directory'
-    assert equal (body $target) [(prelude-line)] 'same content'
+    assert equal (body $target) (prelude-lines) 'same content'
+  }
+}
+
+def "test the generated file loads without the root on the include path" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let target: path = $ctx.code | path join nu-lib.nu
+    plain $ctx $"init-local --path ($target | to nuon)" | ignore
+    let probe: string = '{alarm: (scope commands | where name == "alarm set" | is-not-empty) libs: $env.NU_LIB_DIRS}'
+    # A fresh machine: no `--include-path`, no NU_LIB_DIRS, a working directory outside the repository (`use` also
+    # looks there), a sandboxed HOME.
+    let res: record = with-env (sandbox-env $ctx | insert NU_LIB_DIRS null) {
+      cd $ctx.code
+      '' | ^$nu.current-exe --no-config-file --commands $"source ($target | to nuon)\n($probe) | to nuon" | complete
+    }
+    assert equal $res.exit_code 0 $"the file loads on its own: ($res.stderr | str trim)"
+    let r: record = $res.stdout | lines | last | from nuon
+    assert $r.alarm 'the surface is there'
+    assert ($ROOT in $r.libs) 'and the root is on NU_LIB_DIRS'
   }
 }
 
