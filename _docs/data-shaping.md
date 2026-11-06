@@ -21,6 +21,12 @@ Measured 2026-11-06 on Nushell 0.116.2-nightly.32 with `std/bench` (`-n 10`, mea
 | | `each {…} \| flatten` | 2.3 | 0.03 |
 | | `reduce --fold [] {\|p acc\| $acc \| append $p}` | 1037.0 | 75.7 |
 
+Nightly 0.116.2-nightly.33 adds `record each` and `record where` (same closure contract as `items`: return a record,
+a `[k v]` pair, or null to drop). Over the 5,000-field record, mapping with `record each {|k v| {$k: ($v * 2)} }`
+took 7.7 ms against 54 ms for `items … | into record` in the same run, and filtering with
+`record where {|k v| $v mod 2 == 0 }` 5.4 ms against 16.2 ms for `items … | compact | into record`; the results are
+identical. A row condition (`record where value > 1`) sees `{key, value}` rows.
+
 `items` feeding `into record` costs the same whichever shape it returns: `[$k $v]` pairs 26.4 ± 0.6 ms,
 single-key records `{$k: $v}` 26.6 ± 0.2 ms (5,000 entries); the closure calls dominate. Both resolve duplicate
 keys to the later value; a pair list errors on any element that is not exactly two items.

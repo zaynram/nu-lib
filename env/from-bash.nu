@@ -75,9 +75,7 @@ def to-vars []: list<string> -> record {
 # The shell variables of a snapshot: the set variables that are not exported, minus the inhibited ones.
 def shellvars [snapshot: record<env: record, set: record>]: nothing -> record {
   $snapshot.set
-  | items {|name value| if ($snapshot.env has $name) or $name in $INHIBITED { null } else { {$name: $value} } }
-  | compact
-  | into record
+  | record each {|name value| if ($snapshot.env has $name) or $name in $INHIBITED { null } else { {$name: $value} } }
 }
 
 # The changes from `before` to `after` for one kind of variable: new and changed values, and null for the

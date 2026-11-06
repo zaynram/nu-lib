@@ -67,10 +67,12 @@ or a new external dependency.
   (`math sum`, `str join`) when one exists.
 - Lists: `each --flatten` when each iteration yields a list (same cost as `each | flatten`, reads better).
 - Records:
-  - `items {|k v| …}` for per-entry work: iterating a record, or mapping/filtering it into a new record by returning
-    `[key value]` pairs or single-key records `{$k: $v}` (null to drop, then `compact`) and finishing with
-    `into record`. It is the fastest option; the two return shapes cost the same and both let later duplicate keys
-    win, so pick whichever reads better (pairs additionally reject anything that isn't exactly two items).
+  - `record each {|k v| …}` to map a record into a new record (the closure returns `{$k: $v}`, a `[k v]` pair, or
+    null to drop the field) and `record where <row condition | closure>` to filter one (`record where value > 1`,
+    `key starts-with NU_`; rows are `{key, value}`). They are the fastest options by a wide margin (7× and 3× over
+    the `items … | into record` forms) and exist on the nightlies this library targets.
+  - `items {|k v| …}` for per-entry work that does not build a record (printing, collecting a list); it is also
+    the portable fallback for mapping (`items {…} | compact | into record`, same closure contract).
   - `transpose k v` when the entries need table verbs (`where`, `sort-by`, `group-by`, multi-step `update`), then
     `transpose --header-row --as-record` back. Clearer for multi-step reshaping, roughly 2–7× slower than `items`.
   - `into record` turns a list of `[key value]` pairs into a record. Given a table it *merges the rows* (union of

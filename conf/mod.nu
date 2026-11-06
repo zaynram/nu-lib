@@ -112,12 +112,11 @@ export def --env vars [
   let input: record = $in | default {}
   let scope: record = profile-env (if $vendor { 'vendor' } else { 'user' }) --no-file=$no_file
   let combined: record = $scope
-    | items {|key dirs|
+    | record each {|key dirs|
       let existing: list = $env | get --optional --ignore-case $key | default []
       let added: list = $input | get --optional $key | default [] | append $dirs | uniq | where $it not-in $existing
       {$key: ($added | append $existing)}
     }
-    | into record
   let e: record = $input | merge $combined | merge $with
   if $load { $e | load-env }
   if $return or not $load { return $e }

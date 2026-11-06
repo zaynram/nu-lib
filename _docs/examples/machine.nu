@@ -34,8 +34,7 @@ def linux-user []: nothing -> record {
     | default $sourced.WORK?
     | default { error make --unspanned 'WORK is not set (neither in the environment nor by ~/.profile)' }
   let dirs: record = $PROFILE_DIRS
-    | items {|var key| {$key: ($sourced | get --optional $var)} }
-    | into record
+    | record each {|var key| {$key: ($sourced | get --optional $var)} }
     | compact
   let share: path = $dirs.share? | default ($nu.data-dir | path dirname)
   let profile_path: list<string> = $sourced.PATH?
