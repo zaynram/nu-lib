@@ -1,4 +1,5 @@
-# `into completions` formatting and option merging: `test completion/tests/suites`.
+# `into completions` formatting and option merging: `test _tests/suites/completion.nu`.
+use completion
 use ../mod.nu *
 
 def "test formats elements by type" []: nothing -> nothing {

@@ -1,4 +1,5 @@
-# `alarm` against the session store: `test alarm/tests/suites`. Every test unsets what it sets.
+# `alarm` against the session store: `test _tests/suites/alarm.nu`. Every test unsets what it sets.
+use alarm
 use ../mod.nu *
 
 def "test set, list, show and unset" []: nothing -> nothing {

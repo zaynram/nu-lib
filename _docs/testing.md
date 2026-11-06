@@ -135,6 +135,28 @@ points at.
 - `exec '<code>' [--pipe]` runs code in a child configured like a test child; handy for debugging module
   resolution.
 
+## This repository
+
+```
+nutest.nuon          # paths: [_tests/suites], lib-dirs: [.], sandbox: true
+_tests/
+  mod.nu             # shared seam: std/assert, skip, with-sandbox, sandboxed, ROOT, FIXTURES
+  selftest.nu        # framework-free test of the runner
+  fixtures/<module>/ # fixture files, outside suite discovery
+  suites/<module>.nu # one suite per module; submodules are covered by their parent's suite
+```
+
+Every suite starts by importing what it tests, then the seam:
+
+```nushell
+use validate
+use ../mod.nu *
+```
+
+Modules resolve from the repository root, so a worktree tests its own code. Children are sandboxed, so suites for
+modules with persistent state need no clean-up of real data; suites that must reach real services gate on an
+opt-in variable listed in `passthrough` and skip otherwise (run them with `--no-sandbox`).
+
 ## Testing the runner itself
 
 `_tests/selftest.nu` exercises the runner without using it to test itself: `nu _tests/selftest.nu [regex]`.

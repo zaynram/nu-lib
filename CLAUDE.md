@@ -79,8 +79,12 @@ or a new external dependency.
 
 ## Testing
 
-- The `test` module is the runner (`_docs/testing.md`). The repository's `nutest.nuon` lists the suite `paths` and
-  puts the repository root on the children's include path, so run `nu --no-config-file -I <checkout> -c 'use test; test'`
+- The `test` module is the runner (`_docs/testing.md`). Suites live in `_tests/suites/<module>.nu` (submodules are
+  covered in their parent's suite); fixtures in `_tests/fixtures/<module>/`; `_tests/mod.nu` is the shared seam.
+- A suite imports the module(s) it tests **before** the seam (`use validate` then `use ../mod.nu *`): the runner's
+  `skip` otherwise shadows the builtin `skip` inside modules parsed after it.
+- The repository's `nutest.nuon` lists the suite `paths`, puts the repository root on the children's include path,
+  and sandboxes every test child (throwaway HOME/XDG). Run `nu --no-config-file -I <checkout> -c 'use test; test'`
   from the checkout root.
 - `test` returns a table; `test --strict` raises on any failure. Results report `skip` for unavailable dependencies,
   never `ok`.

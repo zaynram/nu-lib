@@ -1,4 +1,6 @@
-# `track` against a scratch Timewarrior database and git repository: `test track/tests/suites`.
+# `track` against a scratch Timewarrior database and git repository: `test _tests/suites/track.nu`.
+use track
+use time
 use ../mod.nu *
 
 def "before each" []: nothing -> record<db: path, repo: path, name: string> {

@@ -1,10 +1,13 @@
 # Extraction-layer coverage: target resolution, model shape, and failure
 # behavior, all against hermetic fixture modules.
+use docgen collect
 use ../mod.nu *
+
+const FX: path = $FIXTURES | path join docgen
 
 # The sample fixture's collected model.
 def sample-model []: nothing -> record {
-  collect ($FIXTURES | path join sample) | first
+  collect ($FX | path join sample) | first
 }
 
 def "test collect-extracts-module-metadata" []: nothing -> nothing {
@@ -12,7 +15,7 @@ def "test collect-extracts-module-metadata" []: nothing -> nothing {
   assert equal $module.name sample
   assert equal $module.description "A tiny module exercising every metadata surface the collector extracts."
   assert equal $module.extra_description ""
-  assert equal $module.file ($FIXTURES | path join sample mod.nu)
+  assert equal $module.file ($FX | path join sample mod.nu)
 }
 
 def "test collect-lists-exports-prefixed-and-sorted" []: nothing -> nothing {
@@ -86,37 +89,37 @@ def "test collect-carries-search-terms" []: nothing -> nothing {
 }
 
 def "test collect-accepts-file-and-name-targets" []: nothing -> nothing {
-  let by_dir = collect ($FIXTURES | path join sample)
-  assert equal (collect ($FIXTURES | path join sample mod.nu)) $by_dir
-  $env.NU_LIB_DIRS = [$FIXTURES]
+  let by_dir = collect ($FX | path join sample)
+  assert equal (collect ($FX | path join sample mod.nu)) $by_dir
+  $env.NU_LIB_DIRS = [$FX]
   assert equal (collect sample) $by_dir
 }
 
 def "test collect-accepts-single-file-module" []: nothing -> nothing {
-  let model = collect ($FIXTURES | path join single.nu) | first
+  let model = collect ($FX | path join single.nu) | first
   assert equal $model.module.name single
-  assert equal $model.module.file ($FIXTURES | path join single.nu)
+  assert equal $model.module.file ($FX | path join single.nu)
   assert equal $model.commands.name ["single shout"]
 }
 
 def "test collect-handles-multiple-targets" []: nothing -> nothing {
-  let dir = $FIXTURES | path join sample
+  let dir = $FX | path join sample
   assert equal (collect $dir $dir | length) 2
 }
 
 def "test collect-model-is-nuon-serializable" []: nothing -> nothing {
   # the model doubles as a committed IR snapshot, so it must survive a
   # nuon roundtrip losslessly
-  let model = collect ($FIXTURES | path join sample)
+  let model = collect ($FX | path join sample)
   assert equal ($model | to nuon | from nuon) $model
 }
 
 def "test collect-raises-on-broken-module" []: nothing -> nothing {
-  assert error { collect ($FIXTURES | path join broken) }
+  assert error { collect ($FX | path join broken) }
 }
 
 def "test collect-raises-on-missing-target" []: nothing -> nothing {
-  assert error { collect ($FIXTURES | path join nonexistent) }
+  assert error { collect ($FX | path join nonexistent) }
 }
 
 def "test collect-requires-a-target" []: nothing -> nothing {
@@ -125,14 +128,14 @@ def "test collect-requires-a-target" []: nothing -> nothing {
 
 # The nested fixture's collected rows: the module plus its two submodules.
 def nested-model []: nothing -> table {
-  collect ($FIXTURES | path join nested)
+  collect ($FX | path join nested)
 }
 
 def "test collect-emits-submodules-as-qualified-rows" []: nothing -> nothing {
   let rows = nested-model
   assert equal ($rows | get module.name) [nested "nested sub" "nested sub leaf"]
   # submodules report no file of their own and inherit the parent's
-  assert equal ($rows | get module.file | uniq) [($FIXTURES | path join nested mod.nu)]
+  assert equal ($rows | get module.file | uniq) [($FX | path join nested mod.nu)]
 }
 
 def "test collect-names-nested-exports-as-imported" []: nothing -> nothing {

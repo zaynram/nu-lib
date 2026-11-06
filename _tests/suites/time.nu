@@ -1,4 +1,5 @@
-# `time` against a scratch Timewarrior database: `test time/tests/suites`.
+# `time` against a scratch Timewarrior database: `test _tests/suites/time.nu`.
+use time
 use ../mod.nu *
 
 def "before each" []: nothing -> record<db: path, now: datetime> {

@@ -74,5 +74,5 @@ export alias week = list :week
 
 ## Verification
 
-`test time/tests/suites` exercises every command against a scratch `TIMEWARRIORDB`. Static checks:
+`test _tests/suites/time.nu` exercises every command against a scratch `TIMEWARRIORDB`. Static checks:
 `nu --ide-check` and `nu-lint` report nothing for `time/mod.nu`.

@@ -1,9 +1,8 @@
-# `work` against a scratch repository of ticket files: `test work/tests/suites`.
+# `work` against a scratch repository of ticket files: `test _tests/suites/work.nu`.
 
-use /work/dev/nu/proj
+use work
+use proj
 use ../mod.nu *
-
-const work: path = path self ../..
 
 # The core spec's example document as `alpha`, plus an xabort row so nested condition bullets render.
 const ALPHA: string = '
@@ -105,7 +104,7 @@ def --env "after each" []: record -> nothing {
 }
 
 @category after-all
-def --env "after all" []: record -> nothing {
+def --env "after all" []: nothing -> nothing {
   ignore
   use proj test
   test after

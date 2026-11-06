@@ -1,4 +1,5 @@
-# `validate rules` against small documents: `test validate/tests/suites`.
+# `validate rules` against small documents: `test _tests/suites/validate.nu`.
+use validate
 use ../mod.nu *
 
 alias "validate rules" = validate rules --colors=false

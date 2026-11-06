@@ -1,4 +1,6 @@
-# `todo`: offline matcher, live reads, and opt-in live writes (`TODO_TEST_WRITE=1`): `test todo/tests/suites`.
+# `todo`: offline matcher, plus opt-in live reads (`TODO_TEST_LIVE=1`) and writes (`TODO_TEST_WRITE=1`) against the
+# real Todoist account, which need the real home directory: `TODO_TEST_LIVE=1 test _tests/suites/todo.nu --no-sandbox`.
+use todo
 use ../mod.nu *
 
 def "test find matcher offline" []: nothing -> nothing {
@@ -11,6 +13,7 @@ def "test find matcher offline" []: nothing -> nothing {
 }
 
 def "test live reads" []: nothing -> nothing {
+  if ($env.TODO_TEST_LIVE? | is-empty) { skip 'set TODO_TEST_LIVE=1 (and run with --no-sandbox) to read the live Todoist account' }
   if (which td | is-empty) { skip 'td is not installed' }
   assert ('Inbox' in (todo projects | get name)) 'projects'
   assert ((todo labels | length) > 0) 'labels'
@@ -24,7 +27,8 @@ def "test live reads" []: nothing -> nothing {
 }
 
 def "test live writes" []: nothing -> nothing {
-  if ($env.TODO_TEST_WRITE? | is-empty) { skip 'set TODO_TEST_WRITE=1 to run the write path against Todoist' }
+  if ($env.TODO_TEST_WRITE? | is-empty) { skip 'set TODO_TEST_WRITE=1 (and run with --no-sandbox) to run the write path against Todoist' }
+  if (which td | is-empty) { skip 'td is not installed' }
   let t = todo add todo-test-smoke --description 'delete me'
   assert equal $t.content todo-test-smoke 'add'
   assert equal (todo edit $t.id --description updated | get description) updated 'edit'

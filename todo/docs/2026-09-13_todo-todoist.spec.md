@@ -111,7 +111,7 @@ parse. The same rule keeps `rm` and `find` out of any module this one imports.
 
 ## Verification
 
-`test todo/tests/suites` checks the matcher offline against fixture rows and the read commands
-against the live account. Setting `TODO_TEST_WRITE=1` additionally runs add, edit, done,
-reopen and rm on a throwaway task in Inbox. Static checks: `nu --ide-check` and `nu-lint` report
+`test _tests/suites/todo.nu` checks the matcher offline against fixture rows. The live read
+commands run only with the real home directory (`--no-sandbox`) and `TODO_TEST_LIVE=1`; setting
+`TODO_TEST_WRITE=1` as well runs add, edit, done, reopen and rm on a throwaway task in Inbox. Static checks: `nu --ide-check` and `nu-lint` report
 nothing for `todo/mod.nu` and `util/mod.nu`.

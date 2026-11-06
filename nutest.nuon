@@ -1,4 +1,10 @@
-# Test runner configuration (see `help test`). Paths are relative to this file.
+# Test runner configuration (see `help test` and _docs/testing.md). Paths are relative to this file.
 {
+  paths: [_tests/suites]
+  # The repository root resolves the library's own modules, even from a worktree.
   lib-dirs: [.]
+  # Every test child gets a throwaway HOME/XDG tree: no suite can touch real kv stores, caches or credentials.
+  sandbox: true
+  # Opt-in switches for suites that can reach real services (they also need --no-sandbox).
+  passthrough: [TODO_TEST_LIVE TODO_TEST_WRITE]
 }
