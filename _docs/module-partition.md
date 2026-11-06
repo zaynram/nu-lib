@@ -97,13 +97,6 @@ statements inside its own `export-env`: the modules are already parsed, so this 
 itself (`source-env` would re-parse each file as a script on every load and execute its `use` statements
 unguarded).
 
-The root barrel's `local` module gathers every local variant under its module's name: `use <library root> local`
-gives `local alarm …`, `local completion …` and `local mods …`, and `use <library root> *` exposes `local …` as
-well. A new split module gets an entry there. The variants are re-exported with `export use` of a module named after
-the original (for `alarm` and `mods`, the barrel's wrappers that declare `main`), not with `export module`: an
-import reaches one level of a module's commands, so a submodule of `local` would not be callable as
-`local <module> …`.
-
 ## Outside code
 
 Nothing outside the repository is imported at parse time, and no third-party code is vendored. Two components

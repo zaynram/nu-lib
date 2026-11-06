@@ -50,7 +50,7 @@ def ok [dir: path code: string --vars: record = {}]: nothing -> any {
 
 # {test-name: status} for compact assertions.
 def statuses []: list -> record {
-  reduce --fold {} {|row acc| $acc | insert $row.name $row.status }
+  each {|row| {$row.name: $row.status} } | into record
 }
 
 def row [name: string]: list -> record { where name == $name | first }
@@ -148,11 +148,65 @@ def "test fine one" [] { }`}
     assert str contains ($rows | row "test it's broken").error 'cannot be called'
   }}
 
-  {name: 'run: --jobs gives the same results as sequential' run: {||
-    let dir = project {'tests/suites/s.nu': $STATUSES}
-    let one = ok $dir 'test | select name status'
-    let many = ok $dir 'test --jobs 4 | select name status'
+  {name: 'run: --jobs gives the same results as sequential, and really runs in parallel' run: {||
+    let dir = project {'tests/suites/s.nu': $STATUSES 'tests/suites/slow.nu': (1..4 | each {|i| $'def "test s($i)" [] { sleep 1sec }' } | str join "\n")}
+    let one = ok $dir 'test tests/suites/s.nu | select name status'
+    let many = ok $dir 'test tests/suites/s.nu --jobs 4 | select name status'
     assert equal $many $one
+    let start = date now
+    ok $dir 'test tests/suites/slow.nu --jobs 4 | get status' | ignore
+    let wall = (date now) - $start
+    assert ($wall < 3sec) $'four 1-second tests with --jobs 4 took ($wall): not parallel'
+  }}
+
+  {name: 'run: output without a trailing newline and marker-like output do not break rows' run: {||
+    let dir = project {'tests/suites/o.nu': 'use std/assert
+def "test prints without newline" [] { ^printf abc; assert true }
+def "test prints a marker-like line" [] { print "#NUTEST-ROW#notbase64!!"; assert true }'}
+    assert equal (ok $dir 'test' | statuses) {'test prints without newline': ok 'test prints a marker-like line': ok}
+  }}
+
+  {name: 'run: suite isolation survives a suite with hundreds of tests' run: {||
+    let dir = project {'tests/suites/big.nu': (1..220 | each {|i| $'def "test number ($i) of many with a reasonably long descriptive name" [] {{ }}' } | str join "\n")}
+    let rows = ok $dir 'test --isolation suite'
+    assert equal ($rows | length) 220
+    assert equal ($rows | where status != ok) []
+  }}
+
+  {name: 'run: a redirection token in a test name is reported, not executed' run: {||
+    let dir = project {'tests/suites/r.nu': 'def "test o> out" [] { error make {msg: ran} }
+def "test fine" [] { }'}
+    let rows = ok $dir 'test'
+    assert equal ($rows | statuses) {'test o> out': error 'test fine': ok}
+    assert str contains ($rows | row 'test o> out').error 'cannot be called'
+    assert not ($dir | path join out | path exists) 'no file was created by a redirection'
+  }}
+
+  {name: 'config: a symlinked project file counts' run: {||
+    let dir = project {'cfgs/nutest.nuon': '{isolation: suite, env: {FROM_LINK: yes}}' 'tests/suites/p.nu': $PASSING}
+    ^ln -s cfgs/nutest.nuon ($dir | path join nutest.nuon)
+    let cfg = ok $dir 'test config'
+    assert equal [$cfg.isolation $cfg.env] [suite {FROM_LINK: yes}]
+  }}
+
+  {name: 'config: timeout ends a hung child and is validated' run: {||
+    if (which timeout | is-empty) { error make --unspanned {msg: 'SKIP: needs the timeout program'} }
+    let dir = project {'nutest.nuon': '{timeout: 1sec}' 'tests/suites/h.nu': 'def "test hangs" [] { sleep 20sec }
+def "test quick" [] { }'}
+    let start = date now
+    let rows = ok $dir 'test'
+    assert ((date now) - $start < 12sec) 'the run did not wait for the sleep'
+    assert equal ($rows | statuses) {'test hangs': error 'test quick': ok}
+    assert str contains ($rows | row 'test hangs').error 'timed out after 1sec'
+    assert str contains (runner $dir 'test --isolation suite' --vars {NU_TEST: '{timeout: -1sec}'}).stderr "invalid timeout"
+  }}
+
+  {name: 'env: --no-sandbox keeps custom XDG directories' run: {||
+    let dir = project {}
+    let xdg = $dir | path join xdg
+    mkdir ($xdg | path join nushell)
+    let seen = ok $dir 'test exec "$env.XDG_DATA_HOME? | to nuon" --pipe' --vars {XDG_DATA_HOME: $xdg}
+    assert equal $seen $xdg
   }}
 
   {name: 'hooks: contexts flow and after each runs after a failure (test isolation)' run: {||
@@ -389,7 +443,7 @@ def "test grandchild resolves the same modules" [] { assert equal (test exec "us
   {name: 'stdin: children cannot reach the terminal, so input-waiting tests end' run: {||
     let dir = project {'tests/suites/i.nu': 'use std/assert
 def "test reading stdin gets nothing" [] { assert equal (try { input --numchar 1 } catch { "" } | default "") "" }'}
-    if (which script timeout | length) < 2 { print '      (skipped: needs `script` and `timeout`)'; return }
+    if (which script timeout | length) < 2 { error make --unspanned {msg: 'SKIP: needs `script` and `timeout`'} }
     # Run the runner on a pseudo-terminal: a child that could reach the terminal would block in `input`.
     let cmd = $"timeout 15 '($nu.current-exe)' --no-config-file --include-path='($ROOT)' --commands 'use test; test | get status | to nuon'"
     let res = do { cd $dir; ^script -qec $cmd /dev/null | complete }
@@ -450,15 +504,17 @@ def main [
       let start: datetime = date now
       let tmp: path = mktemp --directory --tmpdir nutest-selftest-XXXXXX
       let outcome: record = with-env {TMPDIR: $tmp} {
-        try { do $c.run; {error: null} } catch {|e| {error: ($e.rendered? | default $e.msg)} }
+        try { do $c.run; {error: null} } catch {|e| {error: ($e.rendered? | default $e.msg) msg: $e.msg} }
       }
       rm --recursive --force $tmp
-      let ok: bool = $outcome.error == null
-      print $"(if $ok { ansi green } else { ansi red })[(if $ok { 'pass' } else { 'FAIL' })](ansi reset) ($c.name) (ansi attr_dimmed)(((date now) - $start) / 1sec | math round --precision 1)s(ansi reset)"
-      {case: $c.name ok: $ok error: $outcome.error}
+      let status: string = if $outcome.error == null { 'pass' } else if ($outcome.msg? | default '' | str starts-with 'SKIP: ') { 'skip' } else { 'FAIL' }
+      let color: string = match $status { pass => (ansi green) skip => (ansi yellow) _ => (ansi red) }
+      let note: string = if $status == skip { $" (ansi attr_dimmed)— ($outcome.msg | str substring 6..)(ansi reset)" } else { '' }
+      print $"($color)[($status)](ansi reset) ($c.name) (ansi attr_dimmed)(((date now) - $start) / 1sec | math round --precision 1)s(ansi reset)($note)"
+      {case: $c.name ok: ($status != 'FAIL') skipped: ($status == skip) error: (if $status == 'FAIL' { $outcome.error })}
     }
   let failed: list = $results | where not ok
   for f in $failed { print $"\n(ansi red)FAIL(ansi reset) ($f.case)\n($f.error)" }
-  print $"\n($results | length) cases, ($failed | length) failed"
+  print $"\n($results | length) cases, ($failed | length) failed, ($results | where skipped | length) skipped"
   if ($failed | is-not-empty) { exit 1 }
 }

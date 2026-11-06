@@ -20,8 +20,10 @@
 # Discovery and execution happen in child interpreters started with `--no-config-file`, so suites can never
 # poison each other or the invoking session. Children get a scrubbed environment (an allowlist plus the
 # configured `env`/`passthrough`), the configured library directories as `--include-path`, and the effective
-# configuration in `$env.NU_TEST`. With `sandbox: true`, each child also gets a throwaway HOME/XDG tree. Each test's literal command name is written into the child program: nushell
-# has no string-eval, and a `$name` in command position evaluates to the string instead of calling it.
+# configuration in `$env.NU_TEST`. With `sandbox: true`, each child also gets a throwaway HOME/XDG tree. Each
+# test's literal command name is written into the child program: nushell has no string-eval, and a `$name` in
+# command position evaluates to the string instead of calling it. Children run detached from the terminal
+# (`setsid`), so Ctrl-C ends the run only once the current child exits; `timeout` bounds a hung child.
 #
 # Configuration, lowest to highest precedence
 #   1. built-in defaults (`test config --defaults`)
@@ -49,8 +51,8 @@ const HOME: path = path self ..
 const HOOKS: list<string> = [before-all before-each after-each after-all]
 const ISOLATION: list<string> = [test suite]
 # Test names the runner can call (it writes them into the child program as bare words): no quotes, brackets, braces,
-# pipes, semicolons, comments, carets or percent signs, and no word starting with `$`. Verified on the nightly.
-const CALLABLE: string = r#'^[^'"`()\[{}|;#^%\n]*$'#
+# pipes, semicolons, comments, carets, percent signs or `>` (a redirection), and no word starting with `$`.
+const CALLABLE: string = r#'^[^'"`()\[{}|;#^%>\n]*$'#
 const UNCALLABLE_WORD: string = '(^| )\$'
 # A `def` line in suite source: the command name, double/single/back-quoted or bare.
 const DEF_RX: string = r#'(?m)^[ \t]*(?:export[ \t]+)?def[ \t]+(?:--[\w-]+[ \t]+)*(?:"(?<dq>[^"]+)"|'(?<sq>[^']+)'|`(?<bq>[^`]+)`|(?<bare>[^\s\[]+))'#
@@ -64,11 +66,13 @@ const DEFAULTS: record = {
   passthrough: [] # Extra variable names (exact) kept when scrubbing
   env: {} # Variables set in every child (applied after scrubbing)
   sandbox: false # Give every runner child its own throwaway HOME/XDG tree (removed afterwards)
+  timeout: 0sec # Kill a child that runs longer than this (0sec: no limit; needs the `timeout` program)
 }
 # Variables kept when scrubbing: enough to find programs, locate home/temp, and render text.
 const KEEP: list<string> = [
   PATH Path HOME USER USERNAME LOGNAME SHELL TERM COLORTERM LANG LANGUAGE TZ TMPDIR TEMP TMP
-  XDG_RUNTIME_DIR SYSTEMROOT SystemRoot WINDIR COMSPEC PATHEXT USERPROFILE APPDATA LOCALAPPDATA
+  XDG_RUNTIME_DIR XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME
+  SYSTEMROOT SystemRoot WINDIR COMSPEC PATHEXT USERPROFILE APPDATA LOCALAPPDATA
 ]
 
 # ——— suite helpers (exported for suites) ——————————————————————————————————————
@@ -95,7 +99,8 @@ export def with-sandbox [
   rm --recursive --force $ctx.root
   if $result has error {
     # Rethrow with the original message (the span is lost, the failure and any SKIP are not).
-    error make --unspanned {msg: $result.error.msg help: ($result.error | error-text)}
+    let rest: string = $result.error | error-text | lines | slice 1.. | str join (char newline)
+    error make --unspanned ({msg: $result.error.msg help: $rest} | compact --empty)
   }
   $result.value
 }
@@ -332,9 +337,7 @@ def flag-layer [
   } | compact-record | normalize-layer $env.PWD flags
 }
 
-def compact-record []: record -> record {
-  transpose key value | where value != null | reduce --fold {} {|kv acc| $acc | insert $kv.key $kv.value }
-}
+def compact-record []: record -> record { record where value != null }
 
 # Validate a partial configuration layer and make its paths absolute relative to `base`.
 def normalize-layer [base: path source: string]: record -> record {
@@ -355,6 +358,10 @@ def normalize-layer [base: path source: string]: record -> record {
     if $v != null and ($v | describe) != bool {
       error make --unspanned {msg: $"invalid ($key) '($v)' in ($source)" help: 'expected true or false'}
     }
+  }
+  let t: any = $layer | get --optional timeout
+  if $t != null and (($t | describe) != duration or $t < 0sec) {
+    error make --unspanned {msg: $"invalid timeout '($t)' in ($source)" help: 'expected a duration such as 30sec (0sec: no limit)'}
   }
   for key in [depth jobs] {
     let v: any = $layer | get --optional $key
@@ -389,7 +396,7 @@ def project-file [start: path]: nothing -> oneof<path, nothing> {
     if $up != $d { {out: $d next: $up} } else { {out: $d} }
   } $dir
   | each { path join $PROJECT_FILE }
-  | where ($it | path type) == file
+  | where ($it | path expand | path type) == file
   | get --optional 0
 }
 
@@ -499,7 +506,7 @@ def run-suite [suite: path cfg: record opts: record]: nothing -> list {
   # A test is called by writing its name into the child program, so the name must parse as bare words.
   let callable: closure = {|n| $n =~ $CALLABLE and $n !~ $UNCALLABLE_WORD }
   let uncallable: list = $runnable | where not (do $callable $it.name) | each {|t|
-    {name: $t.name status: error duration: 0sec error: "this name cannot be called: remove quotes, brackets, braces, | ; # ^ % and words starting with $"}
+    {name: $t.name status: error duration: 0sec error: "this name cannot be called: remove quotes, brackets, braces, | ; # ^ % > and words starting with $"}
   }
   let names: list<string> = $runnable | where {|t| do $callable $t.name } | get name
   let rows: list = match $cfg.isolation {
@@ -525,13 +532,17 @@ def run-child [suite: path cfg: record hooks: record names: list<string> opts: r
   let program: string = program $suite $hooks $names
   if $opts.debug { print --stderr $program }
   let res: record = spawn $cfg $program {} --sandbox=$cfg.sandbox
+  # A line that starts with the marker but does not decode is test output, not a row.
   let rows: list = $res.stdout | lines
     | where ($it | str starts-with $ROW)
-    | each { str substring ($ROW | str length).. | decode base64 | decode | from nuon }
+    | each {|l| try { $l | str substring ($ROW | str length).. | decode base64 | decode | from nuon } }
+    | compact
+    | where ($it | describe) starts-with record
   # A child that dies (parse error, `exit`, crash) emits no row for the remaining tests: report each as an error.
   let missing: list<string> = $names | where $it not-in ($rows | get name)
   let crashed: list = $missing | each {|n|
-    {name: $n status: error duration: 0sec error: $"child interpreter exited with code ($res.exit_code) before reporting\n($res.stderr | str trim)"}
+    let why: string = if $res.exit_code == 124 and $cfg.timeout > 0sec { $"timed out after ($cfg.timeout)" } else { $"exited with code ($res.exit_code) before reporting" }
+    {name: $n status: error duration: 0sec error: $"child interpreter ($why)\n($res.stderr | str trim)"}
   }
   let all: list = [...$rows ...$crashed]
   # `(after all)` rows are rendered by the caller, once per suite.
@@ -572,7 +583,8 @@ def program [suite: path hooks: record names: list<string>]: nothing -> string {
   }
   [
     $"source ($suite | to nuon)"
-    $"def __nutest_emit [row: record] { print $\"($ROW)\($row | to nuon | encode base64\)\" }"
+    # The leading newline puts the marker at a line start even after output without a trailing newline.
+    $"def __nutest_emit [row: record] { print $\"\\n($ROW)\($row | to nuon | encode base64\)\" }"
     'def __nutest_text [e]: nothing -> string {'
     '  let d = $e.details? | default {msg: $e.msg labels: [] help: null inner: []}'
     '  [$d.msg ...($d.labels? | default [] | get --optional text | default []) $d.help? ...($d.inner? | default [] | get --optional msg | default [])]'
@@ -601,25 +613,39 @@ def spawn [
     return $res
   }
   let vars: record = $cfg.env | merge $extra | merge {NU_TEST: ($cfg | to nuon)}
+  # The program goes through a file: as a `--commands` argument it would hit the OS argument-size limit at a few
+  # hundred tests per suite.
+  let script: path = mktemp --tmpdir nutest-XXXXXX.nu
+  $program | save --force $script
+  let res: record = spawn-script $cfg $vars $script
+  rm --force $script
+  $res
+}
+
+def spawn-script [cfg: record vars: record script: path]: nothing -> record<stdout: string, stderr: string, exit_code: int> {
   let args: list<string> = [
     --no-config-file --table-mode=none --error-style=plain
     $"--include-path=($cfg.lib-dirs | str join (char esep))"
-    $"--commands=($program)"
+    $script
   ]
   # Children get an empty stdin and, where `setsid` exists, no controlling terminal: a test that waits for input
   # (`input`, a prompt, a TUI) fails instead of hanging the run. `input` reads the terminal, not stdin, so an
   # empty stdin alone is not enough.
   let detach: list<string> = which --all setsid | where type == external | get --optional 0.path | each {|p| [$p --wait] } | default []
-  let launch: list<string> = [...$detach $nu.current-exe ...$args]
+  let limit: list<string> = if $cfg.timeout > 0sec {
+    which --all timeout | where type == external | get --optional 0.path
+    | each {|p| [$p --kill-after=5 $"($cfg.timeout / 1sec)"] } | default []
+  } else { [] }
+  let launch: list<string> = [...$detach ...$limit $nu.current-exe ...$args]
   if not $cfg.scrub { return (with-env $vars { '' | run-external ...$launch | complete }) }
   let keep: list<string> = $KEEP | append $cfg.passthrough
-  let kept: record = $env | columns | where {|k| $k in $keep or $k =~ '^LC_' } | each {|k| {$k: ($env | get $k)} } | into record
+  let kept: record = $env | record where {|k v| $k in $keep or $k =~ '^LC_' }
   let env_bin: list = which --all env | where type == external
   if ($env_bin | is-not-empty) {
     # `env -i` builds the child's environment from scratch. `hide-env` cannot be relied on: once a `do --env` has
     # run anywhere up the call stack (common in tests and hooks), it silently stops hiding anything.
     let assignments: list<string> = $kept | merge $vars | items {|k v| $"($k)=($v | env-text)" }
-    let command: list<string> = [...$detach $env_bin.0.path '-i' ...$assignments $nu.current-exe ...$args]
+    let command: list<string> = [...$detach ...$limit $env_bin.0.path '-i' ...$assignments $nu.current-exe ...$args]
     return ('' | run-external ...$command | complete)
   }
   # No `env` program (native Windows): hide what we can; see the caveat above.

@@ -122,14 +122,6 @@ def "test the alarm and mods wrappers delegate" []: nothing -> nothing {
   }
 }
 
-def "test mods and alarm mains delegate" []: nothing -> nothing {
-  with-sandbox {|ctx|
-    let r: record = plain $ctx '{mods: (mods | columns) alarm: (alarm | describe)}'
-    assert equal $r.mods [name module_id] 'mods returns the tracked modules'
-    assert ($r.alarm =~ '^(list|table|nothing)') $'alarm lists the alarms: ($r.alarm)'
-  }
-}
-
 def "test mods main passes its input on" []: nothing -> nothing {
   with-sandbox {|ctx|
     let file: path = plain $ctx $"{name: sbbarrel definition: {|| export def q [] { 1 } } directory: '($ctx.code)'} | mods"

@@ -24,7 +24,7 @@ def "test needs fish" []: nothing -> nothing {
   (`use std/testing *` makes the attributes parse). Imported commands never count, even when named `test …`.
 - Tests run in the order they are defined.
 - The runner calls each test by writing its name into the child program, so a name must parse as bare words:
-  no quotes, brackets, braces, `|`, `;`, `#`, `^`, `%`, and no word starting with `$`. Other names are reported
+  no quotes, brackets, braces, `|`, `;`, `#`, `^`, `%`, `>`, and no word starting with `$`. Other names are reported
   as `error` ("this name cannot be called") without stopping the rest of the suite.
 - `# ignore …` as the description (or `@ignore`) reports a test as `skip` with reason `ignored` without running it.
 - `skip "<reason>"` aborts a test as `skip`. Use it for runtime conditions (missing program, wrong OS, no
@@ -82,7 +82,10 @@ built from scratch with `env -i`; elsewhere the runner falls back to `hide-env`,
 once a `do --env` has run anywhere up the call stack, so scrubbing is best-effort there.
 
 Children also get an empty stdin and, where `setsid` exists, no controlling terminal, so a test that waits for
-input (`input`, a prompt, a TUI) fails instead of hanging the run (`input` reads the terminal, not stdin).
+input (`input`, a prompt, a TUI) fails instead of hanging the run (`input` reads the terminal, not stdin). The
+flip side: Ctrl-C reaches the runner, not the detached child, so an interrupted run ends when the current child
+does; set `timeout` to bound a hung child. The allowlist keeps `XDG_*_HOME`, so `--no-sandbox` sees custom XDG
+directories (credentials, kv stores) where the user keeps them.
 
 The runner writes each test's literal command name into the child program. Nushell has no string-eval, and a
 `$name` in command position evaluates to the string instead of calling the command, which would make every
@@ -108,6 +111,7 @@ Settings come from four layers, lowest precedence first:
 | `passthrough` | `[]` | Extra variable names kept when scrubbing |
 | `env` | `{}` | Variables set in every child |
 | `sandbox` | `false` | Give every runner child (discovery and tests) a throwaway HOME/XDG tree |
+| `timeout` | `0sec` | Kill a child that runs longer (reported as `error`, "timed out"); needs the `timeout` program |
 
 Scalars take the highest layer that sets them; `lib-dirs` and `passthrough` accumulate (most specific first) and
 `env` records merge. Relative paths resolve from the file that names them (`nutest.nuon`) or from `$env.PWD`

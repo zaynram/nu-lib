@@ -4,7 +4,7 @@
 # `nu --no-config-file` with the library root as the include path (`run <file> | to nuon`), so library modules are
 # available (`use env from-bash`, `use conf`, …) and `$NU_LIB_DIRS | first` is the library root. Only the returned
 # record crosses back, as nuon: return strings and lists of strings. Stdout is the result, so report on stderr
-# (`print --stderr`). A failing script fails `machine-config` (`conf::machine::external_failure`, with this stderr).
+# (`print --stderr`). A failing script fails `machine-config` (`conf::machine::load::external_failure`, with this stderr).
 #
 # These are the owner's values for a laptop that runs Nushell both in WSL (Linux) and natively on Windows:
 # - Linux, user scope: the XDG directories come from `~/.profile`, read through `env from-bash` with a minimal
