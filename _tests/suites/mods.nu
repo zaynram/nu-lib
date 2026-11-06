@@ -1,16 +1,23 @@
 # `mods` (abstract) and `mods/local` (`edit`, resolved through the machine configuration):
 # `test _tests/suites/mods.nu`.
 #
-# The registry lives in in-memory `std-rfc/kv` tables, so it is fresh in every test child. `use mods` sets
+# The registry lives in in-memory `std-rfc/kv` tables: fresh in every test child, and emptied after each test so
+# `--isolation suite` (one child for the whole suite) behaves the same. `use mods` sets
 # `mods_home` to the first existing NU_LIB_DIRS entry, which is the repository root in test children: every
 # test that defines a module passes `--directory` or points `mods_home` at a sandbox, so nothing is written
 # into the repository. Cases that depend on the environment `use mods` starts from run in sandboxed children,
-# which first hide the `mods_home` this suite's own `use mods` set (the runner's scrubbing cannot hide variables
-# set by a suite's imports).
+# which start from a scrubbed environment (the `mods_home` this suite's own `use mods` set does not reach them).
 # nu-lint-ignore-file: missing_output_type
 # (helpers return whatever the child produced)
 use mods
+use std-rfc/kv [ "kv list" "kv drop" ]
 use ../mod.nu *
+
+def "after each" []: any -> nothing {
+  for table in [used_modules hidden_modules] {
+    for key in (kv list --table=$table | get --optional key | default []) { kv drop --table=$table $key | ignore }
+  }
+}
 
 const HOOK: string = 'mods::use_or_hide::update-mods-used'
 

@@ -47,7 +47,10 @@ def run-tty [t: record, code: string]: nothing -> list<string> {
   let file: path = $t.ctx.code | path join case.nu
   $"use reload; ($code)" | save --force $file
   let command: string = $"'($nu.current-exe)' --no-config-file --include-path '($ROOT)' '($file)'"
-  let res = with-env {SHELL: /bin/sh} { ^script --quiet --return --command $command /dev/null | complete }
+  # `script` occasionally dies of SIGPIPE (exit 141) under load before the grandchild runs; retry that case once.
+  let attempt: closure = {|| with-env {SHELL: /bin/sh} { ^script --quiet --return --command $command /dev/null | complete } }
+  let first: record = do $attempt
+  let res: record = if $first.exit_code == 141 { do $attempt } else { $first }
   assert equal $res.exit_code 0 $"the grandchild succeeds: ($res.stdout)"
   $res.stdout | lines | str trim
 }
