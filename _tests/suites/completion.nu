@@ -18,6 +18,7 @@ def nuon-quoted []: list<string> -> list<string> {
 
 # Write an executable `sh` script named `name` into `dir`.
 def stub [dir: path name: path body: string]: nothing -> nothing {
+  need-posix
   let file: path = $dir | path join $name
   $"#!/bin/sh\n($body)\n" | save --force $file
   ^chmod +x $file
@@ -34,7 +35,7 @@ def with-stubs [action: closure]: nothing -> nothing {
   }
 }
 
-# A command with a category that `help commands` reports as `custom_core` (see `runtime-env`).
+# A command with a category, which `help commands` reports as `custom` (see `runtime-env`).
 @category core
 def "zz annotated" []: nothing -> nothing { }
 
