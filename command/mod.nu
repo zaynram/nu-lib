@@ -1,5 +1,9 @@
 # Run external commands and turn their `complete` records into values or errors.
 
+# ——— imports ——————————————————————————————————————————————————————————————————
+
+use error
+
 # ——— definitions ——————————————————————————————————————————————————————————————
 
 # Return the stdout of a finished external command, or raise its output as an error when it failed.
@@ -32,19 +36,16 @@ export def post-complete [
   # the signature already rejects other input types, including records without the three fields
   let result: any = if ($input | describe) == closure { $input | run-captured } else { $input }
   if ($result.exit_code? | describe) != int {
-    error make --unspanned {
-      msg: 'unable to gather external command result'
-      help: $"the closure must end with an external command that exists, or with `| complete`; it produced ($result | describe)"
-    }
+    error raise 'unable to gather external command result' --kind invalid_argument --advice $"the closure must end with an external command that exists, or with `| complete`; it produced ($result | describe)"
   }
   if $result.exit_code == 0 {
     let stdout: any = $result.stdout? | default ''
     return (if $then != null { do $then $stdout } else { $stdout })
   }
-  let details: record = $result | details $desc --empty=$empty --inner=$inner
-  if ($label | is-empty) { error make --unspanned $details }
-  if ($label | describe) starts-with record { error make ($details | insert $.label $label) }
-  error make ($details | insert $.labels $label)
+  let name: string = if (which $desc | where type == external) != [] { $'`($desc)`' } else { $desc }
+  let help: string = $result | output-help --empty=$empty
+  # Without labels `error raise` raises here; with them it returns the closure, which `do` runs with the spans intact.
+  $inner | error raise $"($name) exited with code ($result.exit_code)" --kind external_failure --advice $help --labels ($label | append []) | do $in
 }
 
 # Run an external command and return its `complete` record (or, with `--check`, its stdout).
@@ -67,9 +68,9 @@ export def --wrapped attempt [
   # Merge `stderr` into `stdout` (`stderr` is then always empty)
 ]: oneof<nothing, string> -> oneof<string, record<stdout: string, stderr: string, exit_code: int>> {
   let input: any = $in
-  let p: path = which --all $command
-    | where type == external
-    | if $in == [] { error make --unspanned $"command not found: '($command)'" } else { get $.0.path }
+  let found: list = which --all $command | where type == external
+  if $found == [] { error raise $"command not found: '($command)'" --kind not_found }
+  let p: path = $found | get $.0.path
   let result: record = match [($input == null) $merge] {
     [true false] => (^$p ...$rest | complete)
     [true true] => (^$p ...$rest out+err>| complete)
@@ -91,16 +92,10 @@ def run-captured []: closure -> oneof<nothing, record> {
   }
 }
 
-# The error record for a failed command: message, the captured output as help, and the inner error if any.
-def details [
-  desc: string
-  --empty: oneof<nothing, string>
-  --inner: oneof<record, error>
-]: record -> record {
+# The help text of a failed command: `[output]:` followed by its stdout and stderr, or by `empty` when both are blank.
+def output-help [--empty: oneof<nothing, string>]: record -> string {
   let result: record = $in
   let output: string = $"($result.stdout? | default '')($result.stderr? | default '')"
     | if ($in | str trim) == '' { $empty | default '' } else { }
-  let name: string = if (which $desc | where type == external) != [] { $'`($desc)`' } else { $desc }
-  {msg: $"($name) exited with code ($result.exit_code)" help: ($"[output]:(char nl)($output)" | str trim --right)}
-  | if $inner != null { insert $.inner [$inner] } else { }
+  $"[output]:(char nl)($output)" | str trim --right
 }

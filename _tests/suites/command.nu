@@ -45,6 +45,7 @@ def "test post complete then is not called on failure" []: nothing -> nothing {
 def "test post complete raises on a non zero exit code" []: nothing -> nothing {
   let e = caught { done "partial\n" "boom\n" 2 | command post-complete }
   assert equal $e.msg 'external command exited with code 2' 'default descriptor and exit code'
+  assert equal $e.code 'command::post-complete::external_failure' 'the derived code'
   assert equal $e.help "[output]:\npartial\nboom" 'stdout then stderr in the help text'
   assert equal $e.labels [] 'unlabelled errors are unspanned'
   assert equal $e.inner [] 'no inner error by default'
@@ -88,6 +89,7 @@ def "test post complete attaches a single label" []: nothing -> nothing {
   let e = caught { done '' x 1 | command post-complete --label {text: 'called here' span: $span} }
   assert equal ($e.labels | get text) ['called here'] 'a record is the error label'
   assert equal ($e.labels.0?.span?) $span 'the label keeps its span'
+  assert equal $e.code 'command::post-complete::external_failure' 'the code is derived where the closure is made'
 }
 
 def "test post complete attaches a table of labels" []: nothing -> nothing {
@@ -145,6 +147,7 @@ def "test post complete accepts a multi line closure ending in complete" []: not
 def "test post complete reports a closure without an external result" []: nothing -> nothing {
   let e = caught { {|| ^nu-lib-command-that-does-not-exist } | command post-complete }
   assert equal $e.msg 'unable to gather external command result' 'a missing command produces no result'
+  assert equal $e.code 'command::post-complete::invalid_argument' 'the closure is the bad argument'
   assert str contains $e.help 'must end with an external command' 'the help says what the closure must do'
   assert equal (caught { {|| 'a value' } | command post-complete }).msg 'unable to gather external command result' 'a closure returning a value'
 }
@@ -176,6 +179,7 @@ def "test attempt check raises on failure" []: nothing -> nothing {
   need sh
   let e = caught { command attempt --check sh '-c' 'echo bad >&2; exit 5' }
   assert equal $e.msg '`sh` exited with code 5' 'the command name is the descriptor'
+  assert equal $e.code 'command::post-complete::external_failure' 'raised by post-complete'
   assert equal $e.help "[output]:\nbad" 'the output is the help text'
 }
 
@@ -202,6 +206,7 @@ def "test attempt passes string input to stdin" []: nothing -> nothing {
 def "test attempt reports a missing command" []: nothing -> nothing {
   let e = caught { command attempt nu-lib-command-that-does-not-exist }
   assert equal $e.msg "command not found: 'nu-lib-command-that-does-not-exist'" 'the name is reported'
+  assert equal $e.code 'command::attempt::not_found' 'the derived code'
 }
 
 def "test attempt runs the external when a builtin has the same name" []: nothing -> nothing {
