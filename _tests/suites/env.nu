@@ -193,6 +193,13 @@ def "test dotenv strips export and keeps the first equals sign" []: nothing -> n
   }
 }
 
+def "test dotenv expands variables in unquoted and double quoted values" []: nothing -> nothing {
+  $env.SBENV_REF = 'ref'
+  let text: string = "A=$SBENV_REF\nB=\"$SBENV_REF\"\nC='$SBENV_REF'\nD=x$SBENV_NOPE.y\nE=${A}2\nF=\\$SBENV_REF\n"
+  let vars: record = with-dotenv $text {|f| env dotenv $f }
+  assert equal $vars {A: ref B: ref C: '$SBENV_REF' D: 'x.y' E: ref2 F: '\ref'} '$env and earlier keys expand, an undefined name vanishes, single quotes keep the text and a backslash does not'
+}
+
 def "test dotenv of a file without variables is empty" []: nothing -> nothing {
   assert equal (with-dotenv "# only a comment\n\n" {|f| env dotenv $f }) {} 'an empty record'
 }
@@ -250,7 +257,7 @@ def caught [action: closure]: nothing -> record {
 def pinned [case: string]: nothing -> record {
   let json = {|s: string| $s | to json | str substring 1..-2 }
   open --raw ($CORPUS | path join parity.nuon)
-  | str replace --all '<PATH>' (do $json ($env.PATH | str join (char esep)))
+  | str replace --all '<PATH>' (do $json ($env.PATH | str join (char esep))) # nu-lint-ignore: chained_str_transform
   | str replace --all '<PWD>' (do $json $env.PWD)
   | from nuon
   | get $case
@@ -464,6 +471,14 @@ def "test from bash failing function names it" []: nothing -> nothing {
   need-bash
   let err: record = caught {|| 'f() { return 4; }' | env from-bash --execute [f] }
   assert equal $err.msg "function 'f' failed with status 4" 'the function and its status'
+}
+
+def "test from bash return with a status fails like a failing command" []: nothing -> nothing {
+  need-bash
+  let err: record = caught {|| "export SBFB_A=1\nreturn 3" | env from-bash }
+  assert equal $err.details?.code? 'env::from-bash::external_failure' 'a non-zero return is a failure'
+  assert equal $err.msg 'the script failed with status 3' 'with the returned status'
+  assert equal ("export SBFB_A=1\nreturn 0\nexport SBFB_B=2" | env from-bash) {SBFB_A: '1'} 'return 0 ends the script and keeps the variables'
 }
 
 def "test from bash exit raises" []: nothing -> nothing {

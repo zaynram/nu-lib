@@ -21,7 +21,9 @@ use ../error
 # arguments, and ends with `=done`. When the script or a function fails it prints `=error`, `phase=<function>`
 # (empty for the script) and `status=<status>`, and stops. Each phase's stderr starts with a NUL, `=phase`
 # and a NUL. Like upstream, the script text (stdin) is run with `eval` inside a function, with `extglob` on and
-# stdout discarded: `declare`/`local` without `-g` stay local to that function and `return` ends the script.
+# stdout discarded: `declare`/`local` without `-g` stay local to that function and `return` ends the script. The
+# function's status (its last command's, or the `return` status, which leaves the function at once) is checked at
+# the top level, so `return N` with N ≠ 0 fails like a failing last command.
 # The helper's own variables start with `__from_bash_`.
 const HELPER: string = r#'
 shopt -s extglob
@@ -41,10 +43,10 @@ __from_bash_snapshot() {
   return 0
 }
 __from_bash_fail() { printf '=error\0phase=%s\0status=%s\0' "$1" "$2"; exit 1; }
-__from_bash_source() { eval "$(</dev/stdin)" >/dev/null || __from_bash_fail '' "$?"; }
+__from_bash_source() { eval "$(</dev/stdin)" >/dev/null; }
 __from_bash_snapshot
 printf '\0=phase\0' >&2
-__from_bash_source ''
+__from_bash_source '' || __from_bash_fail '' "$?"
 __from_bash_snapshot
 for __from_bash_fn in "$@"; do
   __from_bash_snapshot
@@ -130,9 +132,9 @@ def failure-of [failure: record<phase: string, status: string> stderr: string]: 
 # Run a bash script and return the variables it changes, optionally loading the environment variables.
 #
 # The script is the piped text, `--content`, or the file at `file` (exactly one of them). It runs in a new `bash`
-# that inherits this shell's environment; its stdout is discarded and it fails when its last command fails. It is
-# evaluated inside a bash function: `declare`/`local` without `-g` stay local, `return` ends it early and `exit`
-# is an error.
+# that inherits this shell's environment; its stdout is discarded and it fails when its last command fails or it
+# ends with `return N` (N ≠ 0). It is evaluated inside a bash function: `declare`/`local` without `-g` stay local,
+# `return` (status 0) ends it early and keeps what it set, and `exit` is an error.
 # The script runs in an `||` context, so a `set -e` inside it has no effect (as in bash-env): a failing command
 # that is not the last one is not an error.
 # Exported variables are the `env` changes, unexported ones the `shellvars` changes; a variable the script removes
@@ -196,7 +198,7 @@ export def --env main [
   if ($sections | where mark == '=done' | is-empty) {
     let stderr: string = $res.stderr | text | str replace --all "\u{0}=phase\u{0}" '' | str trim
     error raise $"bash exited with status ($res.exit_code) before the variables were read" --kind external_failure --advice (
-      [$stderr 'a script that calls `exit` ends bash early; `return` ends the script and keeps the variables'] | compact --empty | str join (char newline)
+      [$stderr 'a script that calls `exit` ends bash early; `return` (with status 0) ends the script and keeps the variables'] | compact --empty | str join (char newline)
     )
   }
   # Snapshots in pairs, before and after: the script first, then each function.
