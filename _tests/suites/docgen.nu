@@ -115,27 +115,34 @@ def "test collect-model-is-nuon-serializable" []: nothing -> nothing {
   assert equal ($model | to nuon | from nuon) $model
 }
 
-# The message of the error `action` raises.
-def error-of [action: closure]: nothing -> string {
-  try { do $action; '' } catch {|e| $e.msg }
+# The details of the error `action` raises, or null when it raised nothing.
+def caught [action: closure]: nothing -> oneof<nothing, record> {
+  try { do $action | ignore; null } catch {|e| $e.details }
 }
 
 def "test collect-raises-on-broken-module" []: nothing -> nothing {
-  let msg = error-of { collect ($FX | path join broken) }
+  let e = caught { collect ($FX | path join broken) }
   let use = $"use ($FX | path join broken | to nuon)"
-  assert str contains $msg $"docgen: failed to collect after `($use)`" 'names the failing import'
-  assert str contains $msg 'nu::parser::unclosed_delimiter' "carries the child's stderr"
+  assert equal $e.msg $"the module could not be collected after `($use)`" 'names the failing import'
+  assert equal $e.code 'docgen::introspect::external_failure' 'the child interpreter failed'
+  assert str contains $e.help 'nu::parser::unclosed_delimiter' "the help carries the child's stderr"
 }
 
 def "test collect-raises-on-missing-target" []: nothing -> nothing {
   let target = $FX | path join nonexistent
-  assert equal (error-of { collect $target }) $"docgen: target does not exist: ($target)" 'a missing path'
+  let e = caught { collect $target }
+  assert equal $e.msg $"target '($target)' does not exist" 'a missing path'
+  assert equal $e.code 'docgen::resolve::not_found' 'the derived code names the resolving helper'
   let use = $"use ('zz-no-such-module' | to nuon)"
-  assert str contains (error-of { collect zz-no-such-module }) $"docgen: failed to collect after `($use)`" 'an unknown name'
+  let unknown = caught { collect zz-no-such-module }
+  assert equal $unknown.msg $"the module could not be collected after `($use)`" 'an unknown name fails in the child'
+  assert str contains $unknown.help 'module_not_found' "the child's error is the help"
 }
 
 def "test collect-requires-a-target" []: nothing -> nothing {
-  assert equal (error-of { collect }) 'docgen collect: at least one module target is required' 'no targets'
+  let e = caught { collect }
+  assert equal $e.msg 'at least one module target is required' 'no targets'
+  assert equal $e.code 'docgen::collect::invalid_argument' 'the derived code'
 }
 
 def "test main-delegates-to-collect" []: nothing -> nothing {

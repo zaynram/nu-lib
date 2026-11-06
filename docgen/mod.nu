@@ -17,26 +17,31 @@
 
 # nu-lint-ignore-file: add_doc_comment_exported_fn
 
+use error
+
 # The introspection program run inside the child interpreter. %USE% (one or
 # more import statements), %WHERE% (the root module predicate) and %PATH%
 # (the submodule chain to descend) are substituted by `introspect`; nuon on
 # stdout is the only output. Exports are joined by declaration id, which
 # is why each submodule needs a child of its own: a submodule's declarations
-# are visible to `scope` only once it is imported itself.
+# are visible to `scope` only once it is imported itself. The child imports
+# this library's `error` module (its root heads the include path) to raise
+# its own failures, which reach the caller as the text of its stderr.
 
 const ROOT: path = path self .. | path expand --strict
 const CHILD_SCRIPT = r#'
+use error
 %USE%
 let found = scope modules | where %WHERE%
 if ($found | is-empty) {
-  error make --unspanned 'docgen: module imported but not found in scope'
+  error raise 'the module was imported but is not in scope' --kind not_found
 }
 # descend by name: a re-exported module (`export use`) never appears in
 # `scope modules` on its own, only under its parent
 let module = %PATH% | reduce --fold ($found | first) {|name, parent|
   let sub = $parent.submodules | where name == $name
   if ($sub | is-empty) {
-    error make --unspanned $"docgen: submodule ($name) not found under ($parent.name)"
+    error raise $"no submodule named '($name)' under '($parent.name)'" --kind not_found
   }
   $sub | first
 }
@@ -82,8 +87,8 @@ def resolve [target: string]: nothing -> record<use: string, where: string> {
   if not $is_path {
     return {use: $target, where: $"name == ($target | to nuon)"}
   }
-  let full: path = try { locate $target | path expand --strict } catch {
-    error make --unspanned $"docgen: target does not exist: ($target)"
+  let full: path = try { locate $target | path expand --strict } catch {|e|
+    $e | error raise $"target '($target)' does not exist" --kind not_found
   }
   let file: path = match ($full | path type) {
     dir => ($full | path join mod.nu)
@@ -136,7 +141,7 @@ def introspect [ctx: record]: nothing -> record {
   let out = ^$nu.current-exe --no-config-file --include-path=(include-dirs | str join (char esep)) --commands $script
     | complete
   if $out.exit_code != 0 {
-    error make --unspanned $"docgen: failed to collect after `($ctx.uses | last)`:\n($out.stderr | str trim)"
+    error raise $"the module could not be collected after `($ctx.uses | last)`" --kind external_failure --advice ($out.stderr | str trim)
   }
   $out.stdout | from nuon
 }
@@ -248,7 +253,7 @@ export def collect [
   ...targets: string # module names or paths (directory, mod.nu, or file.nu)
 ]: nothing -> table {
   if ($targets | is-empty) {
-    error make --unspanned 'docgen collect: at least one module target is required'
+    error raise 'at least one module target is required' --kind invalid_argument --advice 'give a module name, or the path of a module directory, its mod.nu, or a single-file module'
   }
   $targets | each {|target|
     let t = resolve $target
