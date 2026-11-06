@@ -56,7 +56,9 @@ or a new external dependency.
     `[key value]` pairs (null to drop, then `compact`) and finishing with `into record`. It is the fastest option.
   - `transpose k v` when the entries need table verbs (`where`, `sort-by`, `group-by`, multi-step `update`), then
     `transpose --header-row --as-record` back. Clearer for multi-step reshaping, roughly 2–7× slower than `items`.
-  - `into record` takes a list of `[key value]` pairs; given a table it returns the table's *last row*.
+  - `into record` turns a list of `[key value]` pairs into a record. Given a table it *merges the rows* (union of
+    columns, later rows win), which exists so a single-row table such as `"k=v" | parse "{key}={value}"` becomes a
+    record; it is not a key/value conversion for `[[k v]; …]` tables.
   - `rotate` is a matrix rotation for tables: on a record it puts values before keys (`rotate key value` labels
     them backwards) and `--ccw` reverses the order. Use `transpose` for records.
 - Measure before arguing about speed: `timeit { … }` for one run, `use std/bench; bench {…} {…} -n 10` for mean

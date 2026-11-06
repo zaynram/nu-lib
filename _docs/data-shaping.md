@@ -29,5 +29,8 @@ Semantics checked alongside (same nightly):
 
 - `{a: 1, b: 2} | rotate` → `[[column0 column1]; [1 a] [2 b]]` (values first); `rotate key value` names the
   value column `key`; `rotate --ccw` gives keys first but in reverse order (`b`, then `a`).
-- `[[a 1] [b 2]] | into record` → `{a: 1, b: 2}`; `[[k v]; [a 1] [b 2]] | into record` → `{k: b, v: 2}` (last row).
+- `[[a 1] [b 2]] | into record` → `{a: 1, b: 2}` (pairs). On a table `into record` merges the rows, later rows
+  winning: `[{a: 1} {b: 2}] | into record` → `{a: 1, b: 2}`, `[[k v]; [a 1] [b 2]] | into record` → `{k: b, v: 2}`.
+  The intent is collapsing a single-row table, e.g. `"k=v" | parse "{key}={value}" | into record` →
+  `{key: k, value: v}`.
 - `[[k v]; [a 1] [b 2]] | transpose --header-row --as-record` → `{a: 1, b: 2}`.
