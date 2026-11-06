@@ -13,54 +13,63 @@ const BUMPABLE: list<string> = [csv html json md kdl msgpack ndnuon nuon text to
 
 # ——— aliases ——————————————————————————————————————————————————————————————————
 
+# Hide the `__workspace__` overlay (an error unless the user's config created it).
 export alias deactivate = overlay hide __workspace__
+# Leave and re-enter the current directory, re-running `env_change.PWD` hooks.
 export alias reactivate = do --env { let cwd: path = pwd; cd $nu.temp-dir; cd $cwd }
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
+# The file's extension, or an error when the file does not exist or `save` cannot write its format.
 def ensure-bumpable []: path -> oneof<string, error> {
-  let ext: string = path parse | get $.extension
-  if not ($in | path exists) { error make --unspanned $"file not found: '($in)'" }
-  if $BUMPABLE not-has $ext { error make --unspanned $"unsupported file extension: '($ext)'" }
+  let file: path = $in
+  if not ($file | path exists) { error make --unspanned {msg: $"file not found: '($file)'"} }
+  let ext: string = $file | path parse | get $.extension
+  if $BUMPABLE not-has $ext { error make --unspanned {msg: $"unsupported file extension: '($ext)'"} }
   return $ext
 }
 
-# Bump the version for the server and update the relevant files.
+# Bump the version stored in one or more files, and write the new version back.
 #
-# This function will re-format files into Nushell's native serialization format for the file type.
-# ---
+# Each input row names a file and the cell-path of its version string. The file is re-serialized in Nushell's
+# format for its extension (`save`); `.toml` files are then formatted with `tombi` and `.json` files with
+# `dprint`, when installed (their failures are ignored). `prev` and `curr` are semver values (`into string` them
+# to serialize).
+@category system
 export def bump [
   target: string@$LEVEL = 'patch'
   # The level to bump in the version
   --spec (-s): string
-  # An exact string to set as the current version
+  # An exact version to set instead of bumping (must be valid semver)
   --meta (-m): string
   # Build metadata to set instead of preserving the existing
   --test (-t)
   # Return the version bump data without writing anything to disk
   --skip (-S) = true
-  # Skip missing files and files with unsupported formats (instead of raising an error)
+  # Return missing files and unsupported formats with null `prev`/`curr` (the default); `--skip=false` raises
   --keep-order (-k)
   # Mapped to the same flag on `par-each`
 ]: table<file: path, cell: cell-path> -> table<file: path, cell: cell-path, prev: any, curr: any> {
-  par-each --keep-order=$keep_order {|row|
-    let type: string = try { get $.file | ensure-bumpable } catch {|err|
+  let rows: table = $in
+  let wanted: any = $spec | if $in != null { into semver }
+  $rows | par-each --keep-order=$keep_order {|row|
+    let type: string = try { $row.file | ensure-bumpable } catch {|err|
       if $skip { return {...$row prev: null curr: null} }
-      error make $err.details
+      error make --unspanned {msg: $err.msg}
     }
-    let data: record = open $row.file
+    let data: any = open $row.file
     let curr = $data
-      | try { get $row.cell } catch { error make $"invalid version cell path: ($row.cell)" }
+      | try { get $row.cell } catch { error make --unspanned {msg: $"invalid version cell path: ($row.cell)"} }
       | into semver
-    let next = $spec | default (
+    let next = $wanted | default (
         $curr | semver bump --build-metadata=$meta --loose --preserve-build-metadata $target
       )
     if not $test and ($curr != $next) {
       $data | update $row.cell ($next | into string) | save --force $row.file
       match $type {
-        toml => {|| tombi format $row.file out+err> (null-device) }
-        json => {|| dprint fmt $row.file out+err> (null-device) }
-      } | do --ignore-errors $in
+        toml => { do --ignore-errors { tombi format $row.file out+err> (null-device) } }
+        json => { do --ignore-errors { dprint fmt $row.file out+err> (null-device) } }
+      }
     }
     return {...$row prev: $curr curr: $next}
   }
