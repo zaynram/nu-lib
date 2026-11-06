@@ -83,8 +83,10 @@ def "test log lives in the cache dir" []: nothing -> nothing {
   assert equal $pman.LOG.upgrade ($nu.cache-dir | path join update_results.nuon) 'the upgrade log path'
 }
 
-def "test the nightly installer is re-exported" []: nothing -> nothing {
-  assert ('pman get-latest-nightly-build' in (scope aliases | get name)) 'from the vendored nightly-toolkit'
+def "test bump nu is exported" []: nothing -> nothing {
+  let names: list<string> = scope commands | get name | where $it starts-with 'pman '
+  assert ('pman bump-nu' in $names) 'the nightly installer'
+  assert not ($names | any { $in =~ 'nightly' }) "the submodule's helpers stay private"
 }
 
 # ——— history ——————————————————————————————————————————————————————————————————
@@ -221,9 +223,10 @@ def "test upgrade async returns the job" []: nothing -> nothing {
 
 # ——— reload-plugins ———————————————————————————————————————————————————————————
 
-# Shadow the plugin commands (definitions made before `use pman` are seen by it) and `cargo`.
+# Shadow the plugin commands (definitions made before `use pman` are seen by it) and `cargo`. `plugin list` takes
+# the flags `bump-nu` passes it, so that pman still parses.
 const PLUGIN_STUBS: string = '
-def "plugin list" [] { [[name filename version]; [sbbroken /x/nu_plugin_sbbroken 0.1] [sbgood /x/nu_plugin_sbgood 0.2]] }
+def "plugin list" [--registry --plugin-config: path] { [[name filename version]; [sbbroken /x/nu_plugin_sbbroken 0.1] [sbgood /x/nu_plugin_sbgood 0.2]] }
 def "plugin stop" [name: string] { print $"STOP ($name)" }
 def "plugin rm" [name: string] { print $"RM ($name)" }
 def "plugin add" [file: path] { if $file =~ broken { error make --unspanned {msg: boom} } else { print $"ADD ($file)" } }

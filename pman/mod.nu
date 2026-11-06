@@ -1,10 +1,9 @@
 # Package management for the system and provisioned tooling: upgrades, apt, plugins and the Nushell binary.
 #
-# `get-latest-nightly-build` comes from the vendored `nightly-toolkit` module (it downloads and installs the
-# latest Nushell nightly).
+# `bump-nu` (in `nightly.nu`) installs the latest Nushell nightly build.
 
 use conf/machine.nu [ machine-config ]
-export use ../nightly-toolkit get-latest-nightly-build
+export use nightly.nu [ bump-nu ]
 
 # Ephemeral log file holding the output of the latest run.
 export const LOG: record = {
@@ -36,6 +35,8 @@ alias apt-get = sudo apt-get
 # Runs every argument set of `REGISTRY` (merged with the piped record, whose entries win) for each binary on
 # PATH, after putting the user scope's binary directories on PATH. Results are saved to `LOG.upgrade` and
 # returned as `{<binary>: [{output, success}]}`; a missing binary or malformed arguments become a failed entry.
+# When a `cargo` run leaves the running `nu` without a nightly build, `bump-nu --yes` reinstalls the latest nightly
+# (its failure is ignored).
 # With `--async`, a background job runs the upgrade when the last one is over a day old, and the job's record
 # is returned.
 @category system
@@ -83,7 +84,7 @@ export def upgrade [
             } | select $.output $.success
           if $name == cargo and (^$nu.current-exe --version) !~ 'nightly' {
             # `cargo install-update --all` may overwrite a nightly build
-            try { get-latest-nightly-build | ignore --stdout --stderr }
+            try { bump-nu --yes | ignore --stdout --stderr }
           }
           return $out
         }
@@ -165,10 +166,6 @@ export def --env reload-plugins [
     }
   }
 }
-
-# Update the Nushell binary and reload all plugin binaries.
-@category system
-export def --env bump-nu []: nothing -> nothing { get-latest-nightly-build; reload-plugins }
 
 # ——— completions ——————————————————————————————————————————————————————————————
 
