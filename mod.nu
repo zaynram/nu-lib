@@ -23,6 +23,7 @@ export module link
 export module reload
 export module edit
 export module path
+export module session
 
 # ——— interfaces —————————————————————————————————————————————————————————————
 
