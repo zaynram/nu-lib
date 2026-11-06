@@ -195,9 +195,9 @@ def "test dotenv strips export and keeps the first equals sign" []: nothing -> n
 
 def "test dotenv expands variables in unquoted and double quoted values" []: nothing -> nothing {
   $env.SBENV_REF = 'ref'
-  let text: string = "A=$SBENV_REF\nB=\"$SBENV_REF\"\nC='$SBENV_REF'\nD=x$SBENV_NOPE.y\nE=${A}2\nF=\\$SBENV_REF\n"
+  let text: string = "A=$SBENV_REF\nB=\"$SBENV_REF\"\nC='$SBENV_REF'\nD=x$SBENV_NOPE.y\nE=${A}2\nF=\\$SBENV_REF\nG=\"\\$SBENV_REF\"\n"
   let vars: record = with-dotenv $text {|f| env dotenv $f }
-  assert equal $vars {A: ref B: ref C: '$SBENV_REF' D: 'x.y' E: ref2 F: '\ref'} '$env and earlier keys expand, an undefined name vanishes, single quotes keep the text and a backslash does not'
+  assert equal $vars {A: ref B: ref C: '$SBENV_REF' D: 'x.y' E: ref2 F: '\ref' G: '$SBENV_REF'} '$env and earlier keys expand, an undefined name vanishes, single quotes keep the text, an unquoted backslash does not escape and a double-quoted `\$` does'
 }
 
 def "test dotenv of a file without variables is empty" []: nothing -> nothing {
@@ -443,6 +443,26 @@ def "test from bash works under nounset" []: nothing -> nothing {
   assert equal [$out.env $out.fn.g.env] [{SBFB_U: '1'} {SBFB_G: '1'}] 'variables are read'
 }
 
+def "test from bash never reports the shell option variables" []: nothing -> nothing {
+  # `set -u` changes SHELLOPTS, `set -o posix` sets POSIXLY_CORRECT and `shopt` changes BASHOPTS: they are bash's
+  # options, not the script's variables, and a loaded SHELLOPTS would turn its options on in every later bash.
+  need-bash
+  assert equal ("set -u\nexport SBFB_U=1" | env from-bash --return preserve) {env: {SBFB_U: '1'} shellvars: {}} 'SHELLOPTS is not a shell variable change'
+  assert equal ("set -o posix\nshopt -s nullglob\nexport SBFB_P=1" | env from-bash --return preserve) {env: {SBFB_P: '1'} shellvars: {}} 'nor are POSIXLY_CORRECT and BASHOPTS'
+  let exported: record = with-env {SHELLOPTS: 'braceexpand:hashall'} { "set -e\nexport SBFB_E=1" | env from-bash --return preserve }
+  assert equal $exported {env: {SBFB_E: '1'} shellvars: {}} 'an exported SHELLOPTS is not an environment change either'
+}
+
+def "test from bash survives functions named like the builtins the helper uses" []: nothing -> nothing {
+  # The helper calls its builtins through `builtin`: a `read` function used to hang the snapshot loop and a `printf`
+  # function broke the NUL protocol ("bash exited with status 0 before the variables were read").
+  need-bash
+  let shadows: string = [printf read local set continue return exit] | each { $"($in)\(\) { :; }" } | str join (char newline)
+  let out: record = $"($shadows)\nexport SBFB_B=1\nSBFB_S=2\nf\(\) { export SBFB_F=3; }" | env from-bash --execute [f]
+  assert equal ($out | reject fn) {env: {SBFB_B: '1'} shellvars: {SBFB_S: '2'}} 'the script is read'
+  assert equal $out.fn.f.env {SBFB_F: '3'} 'and so is a function run after it'
+}
+
 def "test from bash reads the environment after PATH loses env" []: nothing -> nothing {
   # bash-env-json 0.10.1 ran `env` through PATH, so a script that replaced PATH returned no environment changes.
   need-bash
@@ -450,6 +470,7 @@ def "test from bash reads the environment after PATH loses env" []: nothing -> n
 }
 
 def "test from bash needs neither jq nor more than bash and env" []: nothing -> nothing {
+  need-posix
   need-bash
   let out: record = with-sandbox {|ctx|
     let bin: path = $ctx.code | path join bin

@@ -130,7 +130,9 @@ export alias rm = hide-env
 # (also trailing comments) are skipped, one pair of matching quotes around a value is removed, and a malformed line
 # (no `=`, an unbalanced quote) is an error. In unquoted and double-quoted values `$NAME` and `${NAME}` expand to
 # an earlier key of the file or else to `$env` (names ignore case); an undefined name expands to nothing (`p$ss` is
-# `p`; `${NAME:-word}` gives `word`). Single quotes keep a value literal (a `\$` does not). Returns a record of the
+# `p`; `${NAME:-word}` gives `word`). Single quotes keep a value literal. Unquoted, a backslash does not escape `$`
+# (`A=\$X` is a backslash and the expansion of `X`); in double quotes `\$` keeps the dollar literal (`A="\$X"` is
+# `$X`). Returns a record of the
 # variables, or a `key`/`value` table with `--no-transpose`; `--load` loads them with `load-env`, which converts
 # PATH and every variable with an `ENV_CONVERSIONS` entry.
 export def --env dotenv [

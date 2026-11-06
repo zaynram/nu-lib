@@ -24,42 +24,47 @@ use ../error
 # stdout discarded: `declare`/`local` without `-g` stay local to that function and `return` ends the script. The
 # function's status (its last command's, or the `return` status, which leaves the function at once) is checked at
 # the top level, so `return N` with N ≠ 0 fails like a failing last command.
-# The helper's own variables start with `__from_bash_`.
+# The helper's own variables start with `__from_bash_`, and it calls bash's builtins through `builtin`: a script
+# that defines a function named `printf`, `read`, `local`, `set`, `continue`, `return` or `exit` would otherwise
+# replace them in the snapshots taken after it (a `read` function hung the snapshot loop; `env` is run by path).
 const HELPER: string = r#'
-shopt -s extglob
-__from_bash_env=$(type -P env) || { printf 'bash: env: command not found\n' >&2; exit 127; }
+builtin shopt -s extglob
+__from_bash_env=$(builtin type -P env) || { builtin printf 'bash: env: command not found\n' >&2; builtin exit 127; }
 __from_bash_snapshot() {
-  printf '=env\0'
+  builtin printf '=env\0'
   "$__from_bash_env" -0
-  printf '=set\0'
-  local __from_bash_line __from_bash_name
-  while IFS= read -r __from_bash_line; do
+  builtin printf '=set\0'
+  builtin local __from_bash_line __from_bash_name
+  while IFS= builtin read -r __from_bash_line; do
     __from_bash_name=${__from_bash_line%%=*}
     case $__from_bash_name in
-      '' | [!a-zA-Z_]* | *[!a-zA-Z_0-9]* | "$__from_bash_line") continue ;;
+      '' | [!a-zA-Z_]* | *[!a-zA-Z_0-9]* | "$__from_bash_line") builtin continue ;;
     esac
-    if [[ -v $__from_bash_name ]]; then printf '%s=%s\0' "$__from_bash_name" "${!__from_bash_name}"; fi
-  done < <(set -o posix; set)
-  return 0
+    if [[ -v $__from_bash_name ]]; then builtin printf '%s=%s\0' "$__from_bash_name" "${!__from_bash_name}"; fi
+  done < <(builtin set -o posix; builtin set)
+  builtin return 0
 }
-__from_bash_fail() { printf '=error\0phase=%s\0status=%s\0' "$1" "$2"; exit 1; }
-__from_bash_source() { eval "$(</dev/stdin)" >/dev/null; }
+__from_bash_fail() { builtin printf '=error\0phase=%s\0status=%s\0' "$1" "$2"; builtin exit 1; }
+__from_bash_source() { builtin eval "$(</dev/stdin)" >/dev/null; }
 __from_bash_snapshot
-printf '\0=phase\0' >&2
+builtin printf '\0=phase\0' >&2
 __from_bash_source '' || __from_bash_fail '' "$?"
 __from_bash_snapshot
 for __from_bash_fn in "$@"; do
   __from_bash_snapshot
-  printf '\0=phase\0' >&2
+  builtin printf '\0=phase\0' >&2
   "$__from_bash_fn" >/dev/null || __from_bash_fail "$__from_bash_fn" "$?"
   __from_bash_snapshot
 done
-printf '=done\0'
+builtin printf '=done\0'
 '#
 
 const PREFIX: string = '__from_bash_'
-# Shell variables bash changes by itself between snapshots; never reported as shell variables (as upstream).
-const INHIBITED: list<string> = [BASH_LINENO COLUMNS LINES]
+# Variables bash manages by itself, never reported as the script's changes: BASH_LINENO, COLUMNS and LINES change
+# between snapshots (as upstream); SHELLOPTS, BASHOPTS and POSIXLY_CORRECT hold bash's own options, which a `set -e`,
+# `set -o posix` or `shopt` in the script changes, and which `--load` would otherwise hand to every later bash (an
+# exported SHELLOPTS turns its options on at startup).
+const INHIBITED: list<string> = [BASH_LINENO COLUMNS LINES SHELLOPTS BASHOPTS POSIXLY_CORRECT]
 # Variables Nushell manages itself (a `cd` in the script sets PWD/OLDPWD): returned, never loaded.
 const UNLOADABLE: list<string> = [PWD OLDPWD FILE_PWD CURRENT_FILE]
 const RETURN: list<string> = [merge env shellvars preserve]
@@ -74,21 +79,21 @@ def to-vars []: list<string> -> record {
   | default --empty {}
 }
 
-# The shell variables of a snapshot: the set variables that are not exported, minus the inhibited ones.
+# The shell variables of a snapshot: the set variables that are not exported.
 def shellvars [snapshot: record<env: record, set: record>]: nothing -> record {
-  $snapshot.set
-  | record each {|name value| if ($snapshot.env has $name) or $name in $INHIBITED { null } else { {$name: $value} } }
+  $snapshot.set | record each {|name value| if $snapshot.env has $name { null } else { {$name: $value} } }
 }
 
 # The changes from `before` to `after` for one kind of variable: new and changed values, and null for the
 # variables that are no longer set at all (`set` holds every variable set afterwards, exported or not, so an
-# unexported variable is not reported as removed from the environment). Exported functions are left out.
+# unexported variable is not reported as removed from the environment). Exported functions and the inhibited
+# variables are left out.
 def changes [before: record after: record set: record]: nothing -> record {
   let changed: list = $after | items {|name value|
-    if ($name starts-with BASH_FUNC_) or ($before | get --optional $name) == $value { null } else { {$name: $value} }
+    if ($name starts-with BASH_FUNC_) or $name in $INHIBITED or ($before | get --optional $name) == $value { null } else { {$name: $value} }
   }
   let removed: list = $before | items {|name _|
-    if ($name starts-with BASH_FUNC_) or ($set has $name) { null } else { {$name: null} }
+    if ($name starts-with BASH_FUNC_) or $name in $INHIBITED or ($set has $name) { null } else { {$name: null} }
   }
   $changed ++ $removed | compact | into record
 }
@@ -138,7 +143,8 @@ def failure-of [failure: record<phase: string, status: string> stderr: string]: 
 # The script runs in an `||` context, so a `set -e` inside it has no effect (as in bash-env): a failing command
 # that is not the last one is not an error.
 # Exported variables are the `env` changes, unexported ones the `shellvars` changes; a variable the script removes
-# is null. Values are always strings, as bash has no types (an array gives its first element). `--return merge`
+# is null; bash's own option variables (SHELLOPTS, BASHOPTS, POSIXLY_CORRECT) are never reported. Values are always
+# strings, as bash has no types (an array gives its first element). `--return merge`
 # (the default) returns both in one record (`env` wins), with null and empty values dropped unless `--keep-empty`;
 # `preserve` returns `{env shellvars}` unchanged, plus `fn: {<function>: {env shellvars}}` with `--execute`, whose
 # functions run in order after the script, each compared with the state just before it. `--load` loads the
