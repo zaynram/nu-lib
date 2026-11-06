@@ -9,6 +9,7 @@
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
+use error
 use validate
 
 # ——— constants ————————————————————————————————————————————————————————————————
@@ -59,10 +60,8 @@ type MachineConfig = oneof<UserMachineConfig, VendorMachineConfig>
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
-# Raise a `conf::machine::<kind>` error.
-def fail [kind: string message: string --advice: string]: nothing -> error {
-  error make --unspanned ({msg: $message code: $'conf::machine::($kind)' help: $advice} | compact --empty)
-}
+# Errors are raised where they occur so that their codes name the command (`conf::machine::load::invalid_argument`,
+# see _docs/errors.md); _docs/machine-config.md lists them.
 
 # The override file to use: `--file`, else `$env.NU_MACHINE_CONFIG` (a path; empty means none), else `machine.nuon`
 # or `machine.nu` in Nushell's config directory (both present is a conflict). Null when there is none.
@@ -70,7 +69,11 @@ def override-path [file: oneof<nothing, path>]: nothing -> oneof<nothing, path> 
   let named: oneof<nothing, string> = $file | default $env.NU_MACHINE_CONFIG?
   if $named == '' { return null }
   if $named != null {
-    if not ($named | path exists) { fail not_found $"machine configuration file not found: '($named)'" }
+    if not ($named | path exists) {
+      error raise $"machine configuration file not found: '($named)'" --kind not_found --advice (
+        'the file is named by --file or $env.NU_MACHINE_CONFIG; an empty NU_MACHINE_CONFIG means no file'
+      )
+    }
     return ($named | path expand)
   }
   let found: list<path> = $FORMS
@@ -80,7 +83,7 @@ def override-path [file: oneof<nothing, path>]: nothing -> oneof<nothing, path> 
     [] => null
     [$one] => $one
     [$static $script] => {
-      fail conflict $"conflicting machine configuration files: '($static)' and '($script)'" --advice (
+      error raise $"conflicting machine configuration files: '($static)' and '($script)'" --kind conflict --advice (
         'keep one: machine.nuon for literal values, machine.nu when values must be computed'
       )
     }
@@ -94,7 +97,7 @@ def load [file: path]: nothing -> record {
   let value: any = match ($file | path parse | get extension) {
     nuon => {
       try { open $file } catch {|e|
-        fail invalid_argument $"machine configuration file is not valid nuon: '($file)'" --advice $e.msg
+        $e | error raise $"machine configuration file is not valid nuon: '($file)'" --kind invalid_argument
       }
     }
     nu => {
@@ -103,17 +106,21 @@ def load [file: path]: nothing -> record {
       }
       let stderr: string = $child.stderr | str trim
       if $child.exit_code != 0 {
-        fail external_failure $"machine configuration script failed \(exit ($child.exit_code)): '($file)'" --advice $stderr
+        error raise $"machine configuration script failed \(exit ($child.exit_code)): '($file)'" --kind external_failure --advice $stderr
       }
       if $stderr != '' { print --stderr $stderr }
       try { $child.stdout | from nuon } catch {|e|
-        fail invalid_argument $"machine configuration script printed something other than its record: '($file)'" --advice $e.msg
+        $e | error raise $"machine configuration script printed something other than its record: '($file)'" --kind invalid_argument --advice (
+          'the script must print nothing on stdout; report on stderr with `print --stderr`'
+        )
       }
     }
-    _ => { fail invalid_argument $"unsupported machine configuration file \(expected .nuon or .nu): '($file)'" }
+    _ => {
+      error raise $"unsupported machine configuration file \(expected .nuon or .nu): '($file)'" --kind invalid_argument
+    }
   }
   if ($value | describe) !~ '^record' {
-    fail invalid_argument $"machine configuration must be a record, not ($value | describe): '($file)'"
+    error raise $"machine configuration must be a record, not ($value | describe): '($file)'" --kind invalid_argument
   }
   $value
 }
@@ -140,7 +147,7 @@ def check [source: string]: record -> record {
     | into record
   let failures: table = $value | validate rules (rules) --strict --colors=false --return=table
   if $failures != [] {
-    fail invalid_argument $"invalid machine configuration \(($source)): ($failures.0.hint)" --advice (
+    error raise $"invalid machine configuration \(($source)): ($failures.0.hint)" --kind invalid_argument --advice (
       $failures | each {|f| $"($f.rule): ($f.hint)" } | str join (char newline)
     )
   }
@@ -176,12 +183,12 @@ def main [
   # Print the lookup target and which override file was used
 ]: nothing -> oneof<MachineConfig, error> {
   if $DEFAULT not-has $mode {
-    fail invalid_argument $"unsupported mode: '($mode)' \(expected one of: ($MODE | str join ', '))"
+    error raise $"unsupported mode: '($mode)'" --kind invalid_argument --advice $"expected one of: ($MODE | str join ', ')"
   }
   if $strategy != null and $strategy not-in $STRATEGY {
-    fail invalid_argument $"unsupported strategy: '($strategy)' \(expected one of: ($STRATEGY | str join ', '))"
+    error raise $"unsupported strategy: '($strategy)'" --kind invalid_argument --advice $"expected one of: ($STRATEGY | str join ', ')"
   }
-  if $file != null and $no_file { fail invalid_argument '--file and --no-file are exclusive' }
+  if $file != null and $no_file { error raise '--file and --no-file are exclusive' --kind invalid_argument }
   let path: oneof<nothing, path> = if $no_file { null } else { override-path $file }
   let override: record = if $path == null { {} } else { load $path | check $path }
   let with: record = $with | default {} | check '--with'

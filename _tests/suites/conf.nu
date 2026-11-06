@@ -48,10 +48,10 @@ def override [ctx: record name: path ...lines: string]: nothing -> path {
   $file
 }
 
-# The error `action` raises, as `{msg code help}`; fails when it raises nothing.
+# The error `action` raises, as `{msg code help inner}`; fails when it raises nothing.
 def caught [action: closure]: nothing -> record {
   try { do $action; error make --unspanned {msg: 'sbconf: nothing was raised' code: 'sbconf::nothing'} } catch {|e|
-    {msg: $e.msg code: $e.details?.code? help: $e.details?.help?}
+    {msg: $e.msg code: $e.details?.code? help: $e.details?.help? inner: ($e.details?.inner? | default [])}
   }
 }
 
@@ -158,7 +158,7 @@ def "test machine config file strategy is the default and the flag wins" []: not
     assert equal (conf machine-config --file $file --strategy overwrite).modules [/sbmods] '--strategy overrides it'
     let bad: path = override $ctx bad.nuon '{strategy: sideways}'
     let err: record = caught {|| conf machine-config --file $bad }
-    assert equal $err.code conf::machine::invalid_argument 'an unknown strategy in the file is invalid'
+    assert equal $err.code conf::machine::check::invalid_argument 'an unknown strategy in the file is invalid'
     assert ($err.msg =~ 'strategy') $'the key is named: ($err.msg)'
   }
 }
@@ -207,7 +207,7 @@ def "test machine config env names the override file" []: nothing -> nothing {
     let other: path = override $ctx other.nuon '{user: {state: /sbother}}'
     assert equal (with-env {NU_MACHINE_CONFIG: $file} { conf machine-config --file $other }).state /sbother '--file beats it'
     let missing: record = caught {|| with-env {NU_MACHINE_CONFIG: '/sbconf/none.nuon'} { conf machine-config } }
-    assert equal $missing.code conf::machine::not_found 'a named file must exist'
+    assert equal $missing.code conf::machine::override-path::not_found 'a named file must exist'
     assert ($missing.msg =~ '/sbconf/none.nuon') $'the path is named: ($missing.msg)'
   }
 }
@@ -235,7 +235,7 @@ def "test machine config both files is a conflict" []: nothing -> nothing {
     'def main []: nothing -> record { {user: {state: "/sbscript"}} }' | save --force ($dir | path join machine.nu)
     let res: record = child $ctx 'conf machine-config'
     assert ($res.exit_code != 0) 'the conflict is an error for an explicit call'
-    assert ($res.stderr =~ 'conf::machine::conflict') $'the conflict code: ($res.stderr)'
+    assert ($res.stderr =~ 'conf::machine::override-path::conflict') $'the conflict code: ($res.stderr)'
     assert ($res.stderr =~ 'machine.nuon' and $res.stderr =~ 'machine.nu\b') $'both files are named: ($res.stderr)'
     assert equal (value $ctx 'conf machine-config' --vars {NU_MACHINE_CONFIG: ($dir | path join machine.nu)}).state /sbscript 'naming one resolves it'
   }
@@ -259,7 +259,7 @@ def "test machine config invalid shape names the file and every violation" []: n
   with-sandbox {|ctx|
     let file: path = override $ctx machine.nuon '{user: {home: 5 typo: 1} extra: 2}'
     let err: record = caught {|| conf machine-config --file $file }
-    assert equal $err.code conf::machine::invalid_argument 'the invalid_argument code'
+    assert equal $err.code conf::machine::check::invalid_argument 'the validation code'
     assert ($err.msg =~ $file) $'the file is named: ($err.msg)'
     assert ($err.msg =~ '\$\.user\.home has type int; expected string') $'the first failure is the message: ($err.msg)'
     assert ($err.help =~ 'foreign-key: .*\$\.user\.typo') $'undeclared keys are listed: ($err.help)'
@@ -273,15 +273,16 @@ def "test machine config a file that is not a record is invalid" []: nothing -> 
   with-sandbox {|ctx|
     let list: path = override $ctx machine.nuon '[1 2]'
     let err: record = caught {|| conf machine-config --file $list }
-    assert equal $err.code conf::machine::invalid_argument 'the invalid_argument code'
+    assert equal $err.code conf::machine::load::invalid_argument 'the load code'
     assert ($err.msg =~ 'must be a record, not list') $'the shape is named: ($err.msg)'
     let broken: path = override $ctx broken.nuon '{user: '
     let malformed: record = caught {|| conf machine-config --file $broken }
-    assert equal $malformed.code conf::machine::invalid_argument 'malformed nuon is invalid'
+    assert equal $malformed.code conf::machine::load::invalid_argument 'malformed nuon is invalid'
     assert ($malformed.msg =~ 'not valid nuon') $'the cause is named: ($malformed.msg)'
+    assert ($malformed.inner | is-not-empty) 'the parse error is the inner error'
     let other: path = override $ctx machine.toml 'a = 1'
     let unsupported: record = caught {|| conf machine-config --file $other }
-    assert equal $unsupported.code conf::machine::invalid_argument 'other extensions are invalid'
+    assert equal $unsupported.code conf::machine::load::invalid_argument 'other extensions are invalid'
     assert ($unsupported.msg =~ 'expected .nuon or .nu') $'the supported forms are named: ($unsupported.msg)'
   }
 }
@@ -290,7 +291,7 @@ def "test machine config a failing script is an external failure with its stderr
   with-sandbox {|ctx|
     let file: path = override $ctx machine.nu 'def main []: nothing -> record { ls /sbnone/zz | first | {} }'
     let err: record = caught {|| conf machine-config --file $file }
-    assert equal $err.code conf::machine::external_failure 'the external_failure code'
+    assert equal $err.code conf::machine::load::external_failure 'the external_failure code'
     assert ($err.msg =~ $file) $'the script is named: ($err.msg)'
     assert ($err.help =~ '/sbnone/zz') $'the child stderr is the advice: ($err.help)'
   }
@@ -300,11 +301,11 @@ def "test machine config a script that does not return a record is invalid" []: 
   with-sandbox {|ctx|
     let list: path = override $ctx machine.nu 'def main []: nothing -> list { [1 2] }'
     let err: record = caught {|| conf machine-config --file $list }
-    assert equal $err.code conf::machine::invalid_argument 'the invalid_argument code'
+    assert equal $err.code conf::machine::load::invalid_argument 'the load code'
     assert ($err.msg =~ 'must be a record, not list') $'the shape is named: ($err.msg)'
     let noisy: path = override $ctx noisy.nu 'def main []: nothing -> record { print junk; {user: {state: "/sbstate"}} }'
     let printed: record = caught {|| conf machine-config --file $noisy }
-    assert equal $printed.code conf::machine::invalid_argument 'stdout other than the record is invalid'
+    assert equal $printed.code conf::machine::load::invalid_argument 'stdout other than the record is invalid'
     assert ($printed.msg =~ 'printed something other than its record') $'the cause is named: ($printed.msg)'
   }
 }
@@ -325,7 +326,7 @@ def "test machine config with beats the file" []: nothing -> nothing {
 
 def "test machine config with is validated" []: nothing -> nothing {
   let err: record = caught {|| conf machine-config --no-file --with {modules: [/sbwith]} }
-  assert equal $err.code conf::machine::invalid_argument 'the same shape as the file'
+  assert equal $err.code conf::machine::check::invalid_argument 'the same shape as the file'
   assert ($err.msg =~ '--with' and $err.msg =~ '\$\.modules') $'the source and the key are named: ($err.msg)'
 }
 
@@ -377,7 +378,7 @@ def "test example script without a profile fails naming it" []: nothing -> nothi
   need-bash
   with-sandbox {|ctx|
     let err: record = at-home $ctx {WORK: /sbwork} {|| caught {|| conf machine-config --file $EXAMPLE } }
-    assert equal $err.code conf::machine::external_failure 'a failing script fails machine-config'
+    assert equal $err.code conf::machine::load::external_failure 'a failing script fails machine-config'
     assert ($err.help =~ '\.profile') $'the missing profile is reported: ($err.help)'
   }
 }
@@ -387,7 +388,7 @@ def "test example script without WORK fails naming it" []: nothing -> nothing {
   with-sandbox {|ctx|
     profile $ctx 'export XDG_DATA_DIR="$HOME/d"'
     let err: record = at-home $ctx {} {|| caught {|| conf machine-config --file $EXAMPLE } }
-    assert equal $err.code conf::machine::external_failure 'a failing script fails machine-config'
+    assert equal $err.code conf::machine::load::external_failure 'a failing script fails machine-config'
     assert ($err.help =~ 'WORK is not set') $'the cause is reported: ($err.help)'
   }
 }
@@ -521,14 +522,18 @@ def "test dir changes directory" []: nothing -> nothing {
 }
 
 def "test dir unknown target raises" []: nothing -> nothing {
-  let err: record = try { conf dir nope --return; {} } catch {|e| $e }
-  assert ($err.msg =~ "no directory named 'nope'") $'unknown targets raise: ($err.msg?)'
+  let err: record = caught {|| conf dir nope --return }
+  assert ($err.msg =~ "no directory named 'nope'") $'unknown targets raise: ($err.msg)'
+  assert equal $err.code conf::dir::not_found 'the dir code'
+  assert ($err.help =~ 'modules') $'the advice lists the directories: ($err.help)'
 }
 
 def "test dir list target needs return" []: nothing -> nothing {
   assert equal (conf dir modules --return) (conf machine-config).modules 'a list is returned with --return'
-  let err: record = try { conf dir modules; {} } catch {|e| $e }
-  assert ($err.msg =~ 'list of directories') $'navigating to a list raises clearly: ($err.msg?)'
+  let err: record = caught {|| conf dir modules }
+  assert ($err.msg =~ 'list of directories') $'navigating to a list raises clearly: ($err.msg)'
+  assert equal $err.code conf::dir::invalid_argument 'the dir code'
+  assert ($err.help =~ '--return') $'the advice names the flag: ($err.help)'
 }
 
 # ——— conf auto ————————————————————————————————————————————————————————————————
@@ -547,6 +552,18 @@ def "test auto vendor return uses the vendor dir" []: nothing -> nothing {
   with-sandbox {|ctx|
     let dir: path = value $ctx 'conf auto --vendor --return'
     assert equal $dir ($ctx.data | path join nushell vendor autoload) 'the vendor autoload directory'
+  }
+}
+
+def "test auto raises when the autoload directory cannot be created" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    # a file where the autoload directory should be: `mkdir` fails
+    mkdir ($ctx.config | path join nushell)
+    'not a directory' | save ($ctx.config | path join nushell autoload)
+    let res: record = child $ctx 'conf auto --return'
+    assert ($res.exit_code != 0) 'the failure is an error'
+    assert ($res.stderr =~ 'conf::auto::io') $'the io code: ($res.stderr)'
+    assert ($res.stderr =~ 'could not create or enter the autoload directory') $'the message names the directory: ($res.stderr)'
   }
 }
 
@@ -586,18 +603,19 @@ def "test find path joins under the target" []: nothing -> nothing {
 
 def "test find unknown target raises and creates nothing" []: nothing -> nothing {
   with-config {|cfg|
-    let err: record = try { conf find typo --return; {} } catch {|e| $e }
-    assert ($err.msg =~ 'typo') $'an unknown target raises: ($err.msg?)'
-    assert equal $err.details?.code? config::find::unresolved_target 'the find error code'
+    let err: record = caught {|| conf find typo --return }
+    assert ($err.msg =~ 'typo') $'an unknown target raises: ($err.msg)'
+    assert equal $err.code conf::find::not_found 'the find error code'
     assert not ($cfg | path join typo | path exists) 'no directory is created for a typo'
   }
 }
 
 def "test find empty directory raises" []: nothing -> nothing {
   with-config {|cfg|
-    let err: record = try { conf find empty --return; {} } catch {|e| $e }
-    assert ($err.msg =~ 'no config files found') $'an empty directory raises: ($err.msg?)'
-    assert equal $err.details?.code? config::find::unresolved_target 'the find error code'
+    let err: record = caught {|| conf find empty --return }
+    assert ($err.msg =~ 'no config files found') $'an empty directory raises: ($err.msg)'
+    assert equal $err.code conf::find::not_found 'the find error code'
+    assert ($err.help =~ '--path') $'the advice names the flag: ($err.help)'
   }
 }
 
@@ -656,9 +674,11 @@ def "test prompt rejects a missing or unknown config" []: nothing -> nothing {
     let stub: string = posh-stub $ctx
     let missing: record = child $ctx $'($stub)conf prompt --config /sbconf/none.yaml'
     assert ($missing.stderr =~ 'file not found') $'a missing config raises: ($missing.stderr)'
+    assert ($missing.stderr =~ 'conf::prompt::not_found') $'the not_found code: ($missing.stderr)'
     let txt: path = $ctx.code | path join theme.txt
     'x' | save $txt
     let unknown: record = child $ctx $'($stub)conf prompt --config ($txt)'
     assert ($unknown.stderr =~ 'unexpected configuration file format') $'an unknown format raises: ($unknown.stderr)'
+    assert ($unknown.stderr =~ 'conf::prompt::invalid_argument') $'the invalid_argument code: ($unknown.stderr)'
   }
 }

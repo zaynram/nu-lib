@@ -18,10 +18,11 @@ In order of precedence:
    from Nushell, `NU_MACHINE_CONFIG= nu` from bash) runs on the plain defaults.
 3. Otherwise `machine.nuon` or `machine.nu` in Nushell's config directory (`$nu.default-config-dir`:
    `~/.config/nushell` on Linux, `~\AppData\Roaming\nushell` on Windows). When both exist the lookup fails with
-   `conf::machine::conflict`; keep one.
+   `conf::machine::override-path::conflict`; keep one.
 
-A file named by `--file` or `NU_MACHINE_CONFIG` must exist (`conf::machine::not_found`) and must end in `.nuon` or
-`.nu` (`conf::machine::invalid_argument`). Nothing is cached: every `machine-config` call reads the file again.
+A file named by `--file` or `NU_MACHINE_CONFIG` must exist (`conf::machine::override-path::not_found`) and must end in
+`.nuon` or `.nu` (`conf::machine::load::invalid_argument`). Nothing is cached: every `machine-config` call reads the
+file again.
 `conf machine-config --verbose` prints the lookup (`mode`, `host`, `os`, `strategy`) and `override = <path>` or
 `override = none`.
 
@@ -66,8 +67,8 @@ is the library root. Only the returned record crosses the boundary, as nuon, so:
   `#!/usr/bin/env -S nu --stdin` is only needed to run the script by hand with input;
 - the child has `NU_MACHINE_CONFIG` set to the empty string, so `conf machine-config` inside the script (directly, or
   through `use conf`'s environment block) returns the defaults instead of running the script again;
-- a non-zero exit is `conf::machine::external_failure` with the child's stderr as advice; output that is not a record
-  (or not nuon) is `conf::machine::invalid_argument`.
+- a non-zero exit is `conf::machine::load::external_failure` with the child's stderr as advice; output that is not a
+  record (or not nuon) is `conf::machine::load::invalid_argument`.
 
 To try a script by hand: `nu --no-config-file -I <library root> -c 'run ~/.config/nushell/machine.nu'`, or
 `conf machine-config --file <script> --verbose`.
@@ -85,8 +86,8 @@ Every key is optional. Paths are strings; list keys are lists of strings.
 | `vendor.plugins` | list of strings | Vendor plugin directories |
 
 The record is validated with `validate rules --strict`: an undeclared key (at the root or inside `user`/`vendor`), a
-wrong type or an unknown `strategy` fails with `conf::machine::invalid_argument`. The message names the file and the
-first violation; the advice lists every violation (`<rule>: <hint>`). A `null` value is the same as leaving the key
+wrong type or an unknown `strategy` fails with `conf::machine::check::invalid_argument`. The message names the file
+and the first violation; the advice lists every violation (`<rule>: <hint>`). A `null` value is the same as leaving the key
 out. The `--with` record has the same shape and is validated the same way (the message says `--with`).
 
 ## Precedence and strategy
@@ -107,12 +108,17 @@ vendor `binaries`: `/usr/bin`, or the Windows Apps directory). The file is not k
 
 ## Errors
 
+The codes are derived from the raise site (`_docs/errors.md`): `conf::machine` is the module, the next segment the
+command that raised (none for `machine-config` itself), the last the kind.
+
 | Code | When | Message / advice |
 |---|---|---|
-| `conf::machine::conflict` | both `machine.nuon` and `machine.nu` exist in the config directory | names both files |
-| `conf::machine::not_found` | the file named by `--file` or `NU_MACHINE_CONFIG` does not exist | names the path |
-| `conf::machine::invalid_argument` | unknown mode or strategy; `--file` with `--no-file`; unsupported extension; malformed nuon; not a record; a shape violation (file or `--with`) | names the file; advice lists the violations |
-| `conf::machine::external_failure` | the script exited non-zero | names the script; advice is its stderr |
+| `conf::machine::invalid_argument` | unknown mode or strategy; `--file` with `--no-file` | names the value; advice lists the accepted ones |
+| `conf::machine::override-path::conflict` | both `machine.nuon` and `machine.nu` exist in the config directory | names both files |
+| `conf::machine::override-path::not_found` | the file named by `--file` or `NU_MACHINE_CONFIG` does not exist | names the path |
+| `conf::machine::load::invalid_argument` | unsupported extension; malformed nuon; not a record; the script printed something other than its record | names the file; a parse error is the inner error |
+| `conf::machine::load::external_failure` | the script exited non-zero | names the script; advice is its stderr |
+| `conf::machine::check::invalid_argument` | a shape violation (file or `--with`) | names the file (or `--with`) and the first violation; advice lists every violation |
 
 A failing override fails `conf machine-config` and every explicit `conf` call that resolves the machine
 configuration. `use conf` is the exception: its environment block runs at every shell start (the owner's `env.nu`),

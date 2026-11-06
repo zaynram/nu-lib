@@ -89,7 +89,7 @@ def scope [vendor: bool]: nothing -> record {
 # Open a resolved file in the editor, or return its expanded path.
 def submit [target: oneof<nothing, string> --return]: oneof<nothing, path> -> oneof<nothing, path> {
   let p: oneof<nothing, path> = $in
-  if ($p | is-empty) { error raise --code=config::unresolved_target $"no items found for target: '($target)'" }
+  if ($p | is-empty) { error raise $"no items found for target '($target)'" --kind not_found }
   $p | path expand | if $return { } else { editor }
 }
 
@@ -134,10 +134,12 @@ export def --env dir [
   if $target == null { return $s }
   let p: oneof<path, list<path>> = $s
     | get --ignore-case --optional $target
-    | default { error raise --code=config::dir::unresolved_target $"no directory named '($target)'" }
+    | default {
+      error raise $"no directory named '($target)'" --kind not_found --advice $"directories: ($s | columns | str join ', ')"
+    }
   if $return { return $p }
   if ($p | describe) =~ '^list' {
-    error raise --code=config::dir::ambiguous_target $"'($target)' is a list of directories: use --return"
+    error raise $"'($target)' is a list of directories" --kind invalid_argument --advice 'pass --return to get the list instead of navigating'
   }
   cd $p
 }
@@ -150,8 +152,8 @@ export def auto [
   --return (-r) # Return the resolved path instead of opening it
 ]: nothing -> oneof<nothing, path, table> {
   let dir: path = (scope $vendor).autoload
-  try { mkdir $dir; cd $dir } catch {
-    error raise --code=config::auto::internal_error "could not resolve autoload directory"
+  try { mkdir $dir; cd $dir } catch {|e|
+    $e | error raise $"could not create or enter the autoload directory '($dir)'" --kind io
   }
   match {t: $target g: $return} {
     {t: null g: true} => { return $dir }
@@ -172,15 +174,16 @@ export def find [
   --return (-r) # Return the constructed path instead of opening it
 ]: nothing -> oneof<nothing, path, table> {
   let item: path =  config-dir | if $target != null { path join $target } else { }
+  # The arm receives the match input (the path), which `error raise` does not take: hence `null |`.
   $item | match ($in | path type) {
     file => { submit $target --return=$return | return $in }
     dir => { cd $in }
-    _ => { null | error raise --code=config::find::unresolved_target $"no config directory or file named '($target)'" }
+    _ => { null | error raise $"no config directory or file named '($target)'" --kind not_found }
   }
   if $path != null { $path } else {
     let files: list = try { xglob **/* --no-dir } | default []
     match ($files | length) {
-      0 => { error raise --code=config::find::unresolved_target $"no config files found for '($target)'" }
+      0 => { error raise $"no config files found for '($target)'" --kind not_found --advice 'pass --path to name a file to create' }
       1 => { $files | first }
       _ => { $files | path truncate --root . | path select }
     }
@@ -197,16 +200,15 @@ const PROMPT_EXT: string = '^.+[.]{1}(toml|yaml|yml|json|jsonc)$'
 export def prompt [
   --config (-c): path # Prompt configuration file (defaults to `$env.POSH_CONFIG` if set)
 ]: nothing -> nothing {
-  $config | default --empty $env.posh_config!? | if $in == null {
+  let cfg: oneof<nothing, path> = $config | default --empty $env.posh_config!?
+  if $cfg == null {
     oh-my-posh init nu
-  } else if ($in | path type) != file {
-    let msg: string = $"file not found: '($in)'"
-    error raise --code=config::prompt::unresolved_config $msg
-  } else if $in !~ $PROMPT_EXT {
-    let msg: string = $"unexpected configuration file format: '($in)'"
-    error raise --code=config::prompt::unknown_configuration_format $msg
+  } else if ($cfg | path type) != file {
+    error raise $"prompt configuration file not found: '($cfg)'" --kind not_found
+  } else if $cfg !~ $PROMPT_EXT {
+    error raise $"unexpected configuration file format: '($cfg)'" --kind invalid_argument --advice 'oh-my-posh reads toml, yaml, yml, json and jsonc files'
   } else {
-    oh-my-posh init nu --config=($in)
+    oh-my-posh init nu --config=($cfg)
   }
   let src: path = (scope true).autoload | path join oh-my-posh.nu
   if ($src | path exists) {
