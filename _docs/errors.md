@@ -99,6 +99,23 @@ The vocabulary is fixed (`$error.KINDS`); choose the kind by what the caller can
 | `io` | A filesystem or network operation failed (read, write, download). |
 | `internal` | A bug or unexpected state in the library itself; the default kind. |
 
+## Pipeline input at the raise site
+
+`error raise` takes pipeline input (an error record becomes the new error's `inner`). A raise that is the *first
+command of a block that receives pipeline input* therefore gets that input: a list or string is rejected with
+"Input type not supported", and a record silently becomes `inner`. Bind the input first and raise after:
+
+```nushell
+def "env has" [name: string]: record -> bool {
+  let input = $in
+  if $name == '' { error raise 'a variable name is required' --kind invalid_argument }
+  …
+}
+```
+
+The same holds inside `catch {|e| … }` closures, whose `$in` is the caught error: a raise there chains it as
+`inner`, which is usually what you want.
+
 ## Message style
 
 - Start lowercase, no trailing period: `no config directory named 'tools'`.
