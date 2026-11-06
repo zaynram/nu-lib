@@ -6,6 +6,7 @@
 
 use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
 use hook with
+use error
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -39,8 +40,13 @@ alias kind-to-table-name = do {|k: string| return $"proj_kind_($k | str trim)" }
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
-# Automatically perform a scan when the module is used
-export-env { use std/dirs; scan }
+# Automatically perform a scan when the module is used.
+# Without `$env.WORK` there is no workspace to scan, so the scan is skipped: importing the module never fails,
+# and the commands that need the workspace raise an error naming the variable instead.
+export-env {
+  use std/dirs
+  if (has-workspace) { scan | ignore }
+}
 
 # ——— type-aliases —————————————————————————————————————————————————————————————
 
@@ -59,7 +65,7 @@ export module test {
   export def --env before [kind: string = 'test']: list<ProjectInfo> -> nothing {
     let t: string = kind-to-table-name $kind
     $env.project_testing = {kind: $kind table: $t}
-    $in | par-each {|proj| kv set --universal --table=$t $proj.name }
+    $in | par-each {|proj| kv set --universal --table=$t $proj.name } | ignore
   }
 
   # Cleanup fixture for projects registered with `test before`.
@@ -69,7 +75,7 @@ export module test {
     if $env not-has project_testing or $env.project_testing!? != {kind: $kind table: $t} {
       error make --unspanned $"project test fixture is inactive for kind: '($kind)'"
     } else {
-      kv list --universal --table=$t | get $.key | par-each {|k| kv drop --universal --table=$t $k }
+      kv list --universal --table=$t | get $.key | par-each {|k| kv drop --universal --table=$t $k } | ignore
       hide-env project_testing
     }
   }
@@ -77,9 +83,13 @@ export module test {
 
 # Scan for repositories for each kind and initialize their data tables.
 # ---
+# Returns the scan metadata `{found added start end elapsed}` for the scanned kinds (the cached record of the
+# last scan when it is younger than 24 hours and neither `--force` nor `--reset` is given); `--prune` prints the
+# number of removed projects and returns nothing. Scanning needs `$env.WORK` (the workspace root).
 # Notes:
 # - Projects can be saved under custom names with `$env.project_aliases!`
-#   - Entries map a dirname or absolute path (key) to the prerred name (value)
+#   - Entries map a dirname or absolute path (key) to the preferred name (value)
+# - Directories can be excluded per kind with glob patterns in `$env.project_exclude!` (e.g. `{src: ['**/tmp*']}`)
 @category productivity
 @example 'scan for projects' { proj scan }
 @example 'scan for projects with aliased names' { with-env {project_aliases: {foo: bar abc: xyz}} { proj scan } }
@@ -91,7 +101,7 @@ export def scan [
   --prune (-p)
   # Only remove missing directories from the registry (no additions)
   --reset (-r)
-  # Clear all existing project data (including metadata) prior to scanning
+  # Clear the existing data of the scanned kinds (all metadata when every kind is scanned) prior to scanning
 ]: nothing -> oneof<ScanMetadata, nothing> {
   drop-meta flat_list # drop cached list whenever scan runs in case of changes
   if $prune { prune-missing-dirs | return }
@@ -99,9 +109,13 @@ export def scan [
     get-meta last_scan
     | if $in != null and (date now) - $in.start < $TTL { return $in }
   }
-  if $reset { reset-table proj }
+  let unknown: list<string> = $kinds | where {|k| $KIND not-has $k }
+  if $unknown != [] { error make --unspanned $"unknown kind: '($unknown | first)'" }
+  let work: path = workspace
+  let scanned: list<string> = $KIND | columns | where $it in $kinds
+  if $reset { reset-meta ...$scanned }
   let start: datetime = date now
-  let out: record = $KIND | columns | intersect $kinds | par-each {|k|
+  $scanned | par-each {|k|
     let table: string = kind-to-table-name $k
     let exclude: list<string> = $env.project_exclude!?
       | default {}
@@ -110,8 +124,8 @@ export def scan [
       | append '**/.*'
     # Run synchronously so we're not deleting new additions
     if $reset { reset-table $table }
-    # Collect only the immediate children, exluding tooling files
-    glob --no-file --no-symlink ($env.work! | path join $k *) --exclude=$exclude
+    # Collect only the immediate children, excluding tooling files
+    glob --no-file --no-symlink ($work | path join $k *) --exclude=$exclude
     | intake-kind --reset=$reset $k $table
   } | record-scan-metadata $start
 }
@@ -127,14 +141,14 @@ export def kind [
     string if $KIND not-has $kind => { error make --unspanned $"unknown kind: '($kind)'" }
     string => {
       name: $kind
-      root: ($env.work! | path join $kind)
+      root: (workspace | path join $kind)
       description: ($KIND | get $kind)
       projects: (list-kind --insert=true $kind)
     }
     nothing if not $all => { error make --unspanned 'a kind must be provided without `--all`' }
     nothing => (
       $KIND | transpose name description
-      | insert $.root {|row| $env.work! | path join $row.name }
+      | insert $.root {|row| workspace | path join $row.name }
       | insert $.projects {|row| list-kind --insert=false $row.name }
     )
   }
@@ -171,7 +185,8 @@ export def list [
 }
 
 # Pick a project.
-# If only one project matches the query, it will be pushed with `dirs add`.
+# If only one project matches the query it is chosen, otherwise a fuzzy picker opens. The chosen project is
+# pushed with `dirs add` (unless it is the current directory), or used for `--exec`/`--boot`.
 @example 'choose from all projects' { proj }
 @example 'jump straight to a unique match' { proj daisy-th }
 @category productivity
@@ -185,7 +200,7 @@ export def --env main [
   --boot (-b)
   # Enter a `zellij` session for the project (creating if not existing)
   --exec (-x): closure
-  # Run a closure from the project root of the first project to match the `query`
+  # Run a closure from the project root (with the `zellij::pwd::auto-switch` hook disabled, if registered)
 ]: nothing -> oneof<nothing, any> {
   if $scan { scan }
   list --kind=$kind --long
@@ -233,33 +248,37 @@ def is-existing-session []: ProjectInfo -> bool {
   $sessions has $proj.name or $sessions has ($proj.path | path basename)
 }
 
+# Rename registered projects whose directory has an alias in `$env.project_aliases!` (see `scan`).
+# Aliases match by absolute path first, then by directory name, exactly as on intake.
 def deduplicate []: nothing -> nothing {
   let map: record = $env.project_aliases!? | default {}
-  $KIND | columns | par-each {|kind|
+  if $map == {} { return }
+  for kind in ($KIND | columns) {
     let t: string = kind-to-table-name $kind
-    let q: table<name: string, path: path> = kv list --universal --table=$t
+    let q: list<record> = kv list --universal --table=$t
       | get $.value?
       | compact
-      | where path in $map and name != ($map | get $it.path)
-      | select $.name $.path
+      | each {|it| {name: $it.name alias: ($map | alias-for $it.path)} }
+      | where alias != null and name != alias
     for row in $q {
-      let a: string = $map | get $row.path
       kv drop --universal --table=$t $row.name
-      | if (kv get --universal --table=$t $a) == null {
-        update $.name $a | kv set --universal --table=$t $a
+      | if (kv get --universal --table=$t $row.alias) == null {
+        update $.name $row.alias | kv set --universal --table=$t $row.alias
       }
     }
   }
+}
+
+# The alias configured for a project directory in the input map: by absolute path first, then by name.
+def alias-for [root: path]: record -> oneof<nothing, string> {
+  get --ignore-case --optional $root ($root | path basename) | compact | first
 }
 
 def intake-kind [kind: string table: string --reset]: list<path> -> record<found: int, added: int> {
   let map: record = $env.project_aliases!? | default {}
   $in | par-each {|root|
     let base: string = $root | path basename
-    let name: string = $map
-      | get --ignore-case --optional $root $base
-      | compact | first | default $base
-    let curr: oneof<nothing, ProjectInfo> = kv get --universal --table=$table $name
+    let name: string = $map | alias-for $root | default $base
     if not $reset and (kv get --universal --table=$table $name) != null {
       # Skip projects already registered to avoid duplicate entries
       return false
@@ -290,15 +309,18 @@ def intake-kind [kind: string table: string --reset]: list<path> -> record<found
   | set-meta --return=input $'($kind)_count' $in.found
 }
 
+# Apply aliases, then store the totals of the scanned kinds as `last_scan`; `total_count` covers every kind.
 def record-scan-metadata [
   start: datetime
-]: table<found: int, added: int> -> oneof<ScanMetadata, record> {
-  let totals: record = math sum
+]: list<record<found: int, added: int>> -> record {
+  let totals: record = reduce --fold {found: 0 added: 0} {|it acc|
+    {found: ($acc.found + $it.found) added: ($acc.added + $it.added)}
+  }
+  deduplicate
   let end: datetime = date now
-  job spawn --description=deduplicate-projects --auto-kill { deduplicate }
-  $totals | set-meta --return=input total_count $in.found
-  | set-meta --return=value last_scan {
-    ...$in
+  $KIND | columns | each {|k| get-meta $'($k)_count' | default 0 } | math sum | set-meta total_count
+  set-meta --return=value last_scan {
+    ...$totals
     start: $start
     end: $end
     elapsed: ($end - $start | format duration ms) # format for readability
@@ -310,16 +332,11 @@ def prune-missing-dirs []: nothing -> nothing {
     | default { error make --unspanned {msg: 'no metadata found' help: 'run a scan first'} }
   $KIND | columns | par-each {|k|
     let table: string = kind-to-table-name $k
-    let label: string = $"($k)_count"
-    let queue: table = kv list --universal --table=$table
-    let count: int = $queue | length
-    let remaining: int = $queue
-      | where not ($it.value.path | path exists) # keep missing
-      | get $.key # unwrap keys
-      | par-each { kv drop --universal --table=$table $in }
-      | compact # only count non-`null` dropped values
-      | $count - ($in | length)
-    set-meta --return=value $label $remaining
+    # Rows without a value are placeholders that concurrent `kv` writers can leave behind, not projects.
+    let queue: list<record> = kv list --universal --table=$table | where value != null
+    let missing: list<string> = $queue | where not ($it.value.path | path exists) | get $.key
+    for key in $missing { kv drop --universal --table=$table $key | ignore }
+    set-meta --return=value $"($k)_count" (($queue | length) - ($missing | length))
   } | math sum
   | set-meta --return=input total_count
   | print $"removed ($total - $in) projects"
@@ -338,6 +355,27 @@ def reset-table [table: string]: nothing -> nothing {
   for key in (kv list --universal --table=$table).key {
     kv drop --universal --table=$table $key
   }
+}
+
+# Clear the metadata of the given kinds (counts and labels); all metadata when every kind is given.
+def reset-meta [...kinds: string]: nothing -> nothing {
+  if ($KIND | columns | all {|k| $k in $kinds }) { reset-table proj; return }
+  for key in (list-meta | get $.key) {
+    if ($kinds | any {|k| $key == $'($k)_count' or ($key | str starts-with $'($k)(char psep)') }) {
+      drop-meta $key | ignore
+    }
+  }
+}
+
+# Whether `$env.WORK` (any case) names a workspace.
+def has-workspace []: nothing -> bool { $env.work!? | is-not-empty }
+
+# The workspace root, `$env.WORK`; raises an error naming the variable when it is unset or empty.
+def workspace []: nothing -> path {
+  if not (has-workspace) {
+    error raise --code=proj::workspace::unset 'WORK is not set' --advice 'set $env.WORK to the workspace root (the directory that holds src, txt, dev and ext)'
+  }
+  $env.work!
 }
 
 def display-label [it: record<name: string, kind: string>]: nothing -> string {
