@@ -4,6 +4,7 @@
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
+use error
 use std/util null-device
 
 # ——— constants ————————————————————————————————————————————————————————————————
@@ -23,9 +24,11 @@ export alias reactivate = do --env { let cwd: path = pwd; cd $nu.temp-dir; cd $c
 # The file's extension, or an error when the file does not exist or `save` cannot write its format.
 def ensure-bumpable []: path -> oneof<string, error> {
   let file: path = $in
-  if not ($file | path exists) { error make --unspanned {msg: $"file not found: '($file)'"} }
+  if not ($file | path exists) { error raise $"file not found: '($file)'" --kind not_found }
   let ext: string = $file | path parse | get $.extension
-  if $BUMPABLE not-has $ext { error make --unspanned {msg: $"unsupported file extension: '($ext)'"} }
+  if $BUMPABLE not-has $ext {
+    error raise $"unsupported file extension: '($ext)'" --kind unsupported --advice $"`save` writes: ($BUMPABLE | str join ', ')"
+  }
   return $ext
 }
 
@@ -53,13 +56,12 @@ export def bump [
   let rows: table = $in
   let wanted: any = $spec | if $in != null { into semver }
   $rows | par-each --keep-order=$keep_order {|row|
-    let type: string = try { $row.file | ensure-bumpable } catch {|err|
-      if $skip { return {...$row prev: null curr: null} }
-      error make --unspanned {msg: $err.msg}
-    }
+    # without `--skip`, the error of `ensure-bumpable` is the caller's
+    let type: oneof<nothing, string> = if $skip { try { $row.file | ensure-bumpable } catch { null } } else { $row.file | ensure-bumpable }
+    if $type == null { return {...$row prev: null curr: null} }
     let data: any = open $row.file
     let curr = $data
-      | try { get $row.cell } catch { error make --unspanned {msg: $"invalid version cell path: ($row.cell)"} }
+      | try { get $row.cell } catch {|e| $e | error raise $"no version at '($row.cell)' in '($row.file)'" --kind not_found }
       | into semver
     let next = $wanted | default (
         $curr | semver bump --build-metadata=$meta --loose --preserve-build-metadata $target

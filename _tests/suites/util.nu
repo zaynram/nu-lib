@@ -190,16 +190,22 @@ def "test bump raises for missing files without skip" []: nothing -> nothing {
     let gone = $ctx.code | path join gone.yaml
     let e = caught { [[file cell]; [$gone $.version]] | util workspace bump --skip=false }
     assert equal $e.msg $"file not found: '($gone)'" 'the message names the file'
+    assert equal $e.code 'util::workspace::ensure-bumpable::not_found' 'the derived code names the submodule and the helper that checks'
     'version = 1' | save ($ctx.code | path join notes.ini)
     let e = caught { [[file cell]; [($ctx.code | path join notes.ini) $.version]] | util workspace bump --skip=false }
     assert equal $e.msg "unsupported file extension: 'ini'" 'the extension is named'
+    assert equal $e.code 'util::workspace::ensure-bumpable::unsupported' 'an unsupported format'
+    assert str contains $e.help 'toml' 'the advice lists the formats'
   }
 }
 
 def "test bump raises for an invalid cell path" []: nothing -> nothing {
   with-sandbox {|ctx|
     let files = seed $ctx.code | first 1 | update cell $.nope
-    assert equal (caught { $files | util workspace bump --test }).msg 'invalid version cell path: $.nope' 'the path is named'
+    let e = caught { $files | util workspace bump --test }
+    assert equal $e.msg $"no version at '$.nope' in '($files.0?.file?)'" 'the path and the file are named'
+    assert equal $e.code 'util::workspace::bump::not_found' 'the derived code'
+    assert equal ($e.inner | length) 1 'the cause (the failed `get`) is the inner error'
   }
 }
 
