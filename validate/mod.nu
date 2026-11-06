@@ -23,6 +23,8 @@ const TABLE_TYPE: string = '^(table|list<record[<>])'
 # Rule types `--strict` scans for undeclared keys: records and the table types.
 const CONTAINER_TYPE: string = '^(record|table|list<record[<>])'
 const RETURNS: list<string> = [one input nothing table]
+# Tables with more rows than this are judged with `par-each`.
+const PARALLEL_ROWS: int = 64
 
 const RULE_PRESETS: record = {
   any-const: {
@@ -150,7 +152,7 @@ def evaluate-single-rule [
       | if $in != [] { return $in.0 }
     }
   } else {
-    $rows | enumerate | par-each --keep-order {|row|
+    let judge: closure = {|row|
       let at: cell-path = [...$rule.through $row.index ...$rule.rest]
         | compact --empty
         | into cell-path
@@ -160,6 +162,12 @@ def evaluate-single-rule [
         at: $at
         result: (if $reached == null { [] } else { $reached.value | verdicts $at $rule })
       }
+    }
+    # `par-each` costs about a millisecond to start; it only pays off for long tables
+    if ($rows | length) > $PARALLEL_ROWS {
+      $rows | enumerate | par-each --keep-order $judge
+    } else {
+      $rows | enumerate | each $judge
     }
   }
 }
@@ -269,12 +277,12 @@ export def rules [
   let rules: table = $rules | default any $.type
   let tables: list<string> = $rules
     | where type =~ $TABLE_TYPE
-    | par-each --keep-order {|| get $.path | split cell-path | get $.value | append '' | str join . }
+    | each {|| get $.path | split cell-path | get $.value | append '' | str join . }
 
   # Everything a rule needs is derived once here, so the loops below run without closures.
   # ponytail: derived again on every call; take a list of records as input when a caller validates many at once
   let rows: list<record> = $rules
-    | par-each --keep-order {|row|
+    | each {|row|
       let members: table = $row.path | split cell-path | update optional true
       let repr: string = $members.value | str join .
       # ponytail: a path crosses at most one declared table; nest deeper when a schema needs it
@@ -295,7 +303,7 @@ export def rules [
   # The declared containers above a rule, as paths into what the rule reads (the document, or a row of the table
   # it runs through): when one of them is absent, the rule is not judged there.
   let boxes: table = $rows | where type =~ $CONTAINER_TYPE
-  let rows: list<record> = $rows | par-each --keep-order {|row|
+  let rows: list<record> = $rows | each {|row|
     let above: table = $boxes | where ($row.repr | str starts-with $'($it.repr).')
     $row | insert guards (if $row.through == null {
       $above | where through == null | get whole
@@ -510,7 +518,7 @@ def verdicts [
   if not $judged_out and ($rule | columns | any ($it =~ '^(min-|max-|enum|pattern|const|dynamic)')) {
     if $i { $x | enumerate | update $.index {|row| $at | cell-path join $row.index } | rename --column={index: at item: value} }
     | default [[at value]; [$at $x]]
-    | par-each --keep-order {|p|
+    | each {|p|
       let type: string = $p.value | describe
       let text: bool = $type =~ '^(string|list<string>)$' or $rule.type? == string
       let iter: bool = is-iterable $type

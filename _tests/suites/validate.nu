@@ -523,3 +523,10 @@ def "test dynamic rule msg and help aliases" []: nothing -> nothing {
   let rules = [{path: $.a type: int dynamic: {x: {|v| {reason: 'only reason'} }}}]
   assert equal ({a: 1} | validate rules $rules | get hint) ['only reason'] 'the hint defaults to the reason'
 }
+
+def "test long tables report rows in order" []: nothing -> nothing {
+  # long enough to be judged in parallel
+  let rows = 0..199 | each {|i| if $i mod 7 == 0 { {n: $i} } else { {n: ($i | into string)} } }
+  let found = {t: $rows} | validate rules [{path: $.t type: table} {path: $.t.n type: string}]
+  assert equal ($found | get path) (0..199 | where $it mod 7 == 0 | each {|i| [t $i n] | into cell-path }) 'every failing row, in row order'
+}
