@@ -45,7 +45,11 @@ or a new external dependency.
   input/output signature. `@category` attributes group commands for `help`.
 - Cell paths are written with the `$.` prefix (`get $.name`, `insert $.role …`). The `!` suffix means
   case-insensitive access and `?` means optional.
-- Errors with stable identities use `error raise --code=<module>::<context>::<kind>` from the `error` module.
+- Errors are raised with `error raise <message> --kind <kind> [--advice <text>]` from the `error` module; the code
+  `<namespace>::<command>::<kind>` is derived from the raise site (`_docs/errors.md`). Write the message literal at
+  the raise site (lowercase start, no trailing period, values in single quotes), pick a kind from the fixed
+  vocabulary, and put remedies in `--advice`. `--code` overrides derivation only for a message that cannot be
+  written at the raise site.
 - Lint with `nu-lint <file>` (owner config at `~/.config/nu-lint.toml`); file- or line-level suppressions use
   `# nu-lint-ignore-file: <rule>` / `# nu-lint-ignore: <rule>`.
 - Format with `topiary`. It refuses files that contain `type` declarations: comment the typedefs out before
