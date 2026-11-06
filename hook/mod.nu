@@ -1,5 +1,6 @@
 # Utility module for working with Nushell hooks.
 
+use error
 use std/util structure
 use std/iter flat-map
 use completion "into completions"
@@ -34,10 +35,11 @@ export-env {
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
+# No `def` precedes this raise, so its code has no command segment (`hook::not_found`), as a raise in `main` would.
 alias validate-target = do --capture-errors {||
   let key: cell-path;
   if ($env.config.hooks | get --optional --ignore-case $key) != null { return }
-  error make --unspanned $'hook not found: ($key)'
+  error raise $"no hook configured at '($key)'" --kind not_found
 }
 
 alias hook-getter = do --capture-errors {|target: cell-path|
@@ -150,7 +152,7 @@ export def is-enabled [
   } else if $name != null {
     not (list $name --strict=$strict | get $.0?.disabled!? | default false)
   } else {
-    error make --unspanned {msg: 'a ref or --name is required' help: "pass the hook's cell-path or its --name"}
+    error raise 'a ref or --name is required' --kind invalid_argument --advice "pass the hook's cell-path or its --name"
   }
 }
 
@@ -173,13 +175,14 @@ export def with [
   # Throw an error if the hook cannot be resolved
 ]: oneof<nothing, record> -> oneof<nothing, any, error> {
   let vars: record = default {}
-  if $name == null and $hook == null { error make --unspanned 'either a name or reference is required' }
+  if $name == null and $hook == null { error raise 'either a name or reference is required' --kind invalid_argument }
   let ref: oneof<nothing, cell-path> = $hook
     | default (if $name != null { list $name --strict=$strict | get $.0?.ref })
   if $ref != null and ($env.config.hooks | get --optional --ignore-case $ref) != null {
     edit $ref --update=$modification | ignore
   } else if $strict {
-    error make --unspanned $'invalid hook reference: ($ref)'
+    let target: string = if $hook != null { $"at '($hook)'" } else { $"named '($name)'" }
+    error raise $"no hook ($target)" --kind not_found
   }
   if $root != null and ($root | path type) == dir { cd $root }
   with-env $vars $closure
@@ -208,19 +211,15 @@ export def show [
   --raw (-r)
   # Disable serialization of closures (useful for manual testing; otherwise use `hook test`)
 ]: nothing -> oneof<nothing, HookType> {
-  flatten-hooks --only=$ref
-  | if $raw { } else {
-    let stringify: closure = {|| if $in == null { } else { to nuon --serialize --raw-strings | str trim --char='"' } }
-    $in | each {|| upsert code $stringify | upsert condition $stringify }
-  } | if $in == [] and $strict {
-    error make {
-      msg: 'no hook exists at the provided reference'
-      code: 'internal::hook::invalid_cell-path_reference'
-      label: {text: reference span: (metadata $ref).span}
+  let found: list = flatten-hooks --only=$ref
+    | if $raw { } else {
+      let stringify: closure = {|| if $in == null { } else { to nuon --serialize --raw-strings | str trim --char='"' } }
+      $in | each {|| upsert code $stringify | upsert condition $stringify }
     }
-  } else {
-    get $.0? | if $cell == null { } else { get --optional=(not $strict) $cell }
-  } | default $default
+  if $found == [] and $strict {
+    error raise $"no hook at '($ref)'" --kind not_found --labels [{text: reference span: (metadata $ref).span}] | do $in
+  }
+  $found | get $.0? | if $cell == null { } else { get --optional=(not $strict) $cell } | default $default
 }
 
 # Retrieve one or more hooks by name, as a table.
@@ -231,13 +230,12 @@ export def list [
   --strict (-s)
   # Throw an error if the named hook(s) cannot be found
 ]: nothing -> oneof<list<any>, list<HookType>> {
-  flatten-hooks --include=$names | if $in != [] or not $strict { } else {
-    error make {
-      msg: 'no hook exists with the provided name(s)'
-      code: 'internal::hook::unresolved_name'
-      label: {text: 'name(s)' span: (metadata $names).span}
-    }
+  let found: list = flatten-hooks --include=$names
+  if $found == [] and $strict {
+    let listed: string = $names | each {|n| $"'($n)'" } | str join ', '
+    error raise $"no hook named ($listed)" --kind not_found --labels [{text: 'name(s)' span: (metadata $names).span}] | do $in
   }
+  $found
 }
 
 # Interact with properties of configured hooks.
@@ -251,9 +249,9 @@ export def --env edit [
   # An update record to merge into an existing hook record
 ]: nothing -> oneof<HookData, CodeType> {
   if $overwrite == null and $update == null {
-    error make --unspanned 'no overwrite value or update record was given'
+    error raise 'no overwrite value or update record was given' --kind invalid_argument --advice 'pass --overwrite or --update'
   } else if ($env.config.hooks | get --optional --ignore-case $ref) == null {
-    error make --unspanned $'invalid hook reference: ($ref)'
+    error raise $"no hook at '($ref)'" --kind not_found
   } else {
     # `update` calls a closure argument, so the overwrite value is wrapped: a closure is stored, not its result.
     let value: closure = if $overwrite != null { {|| $overwrite } } else { {|| merge $update } }
@@ -288,11 +286,8 @@ export def --wrapped test [
   if $condition { $.condition } else { $.code }
   | show --raw $ref $in
   | default {
-    error make {
-      msg: $'no hook (if $condition { "condition" } else { "code" }) exists at the provided reference'
-      code: 'internal::hook::invalid_cell-path_reference'
-      label: {text: reference span: (metadata $ref).span}
-    }
+    let part: string = if $condition { 'condition' } else { 'code' }
+    error raise $"no hook ($part) at '($ref)'" --kind not_found --labels [{text: reference span: (metadata $ref).span}] | do $in
   }
   | let h: oneof<string, closure>
   | match ($in | describe) {

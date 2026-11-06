@@ -19,6 +19,11 @@ def names [type: cell-path]: nothing -> list<string> {
   hook $type | each {|h| match ($h | describe) { $d if $d starts-with record => ($h.name? | default '') _ => '' } }
 }
 
+# The details of the error raised by `action`, or null when it raised nothing.
+def caught [action: closure]: nothing -> oneof<nothing, record> {
+  try { do $action | ignore; null } catch {|e| $e.details }
+}
+
 # ——— export-env ———————————————————————————————————————————————————————————————
 
 def "test import provides the list and record defaults" []: nothing -> nothing {
@@ -42,8 +47,9 @@ def "test main accepts a dotted text target" []: nothing -> nothing {
 }
 
 def "test main raises for an unknown type" []: nothing -> nothing {
-  let msg: string = try { hook nope; 'no error' } catch {|e| $e.msg }
-  assert equal $msg 'hook not found: $.nope' 'names the target'
+  let e = caught { hook nope }
+  assert equal $e.msg "no hook configured at '$.nope'" 'names the target'
+  assert equal $e.code 'hook::not_found' 'raised outside any def, so the code has no command segment, like main'
   assert error { hook env_change.NOPE } 'an unknown env_change variable too'
 }
 
@@ -53,7 +59,7 @@ def "test is enabled by reference" []: nothing -> nothing {
   assert (hook is-enabled $.pre_prompt.1) 'a hook without disabled is enabled'
   assert not (hook is-enabled $.pre_execution.0) 'disabled: true'
   assert (hook is-enabled $.pre_prompt.9) 'a missing hook counts as enabled'
-  assert error { hook is-enabled $.pre_prompt.9 --strict } 'unless --strict'
+  assert equal (caught { hook is-enabled $.pre_prompt.9 --strict }).code 'hook::show::not_found' 'unless --strict: the lookup raises'
 }
 
 def "test is enabled by name" []: nothing -> nothing {
@@ -64,8 +70,10 @@ def "test is enabled by name" []: nothing -> nothing {
 }
 
 def "test is enabled needs a reference or a name" []: nothing -> nothing {
-  let msg: string = try { hook is-enabled; 'no error' } catch {|e| $e.msg }
-  assert equal $msg 'a ref or --name is required' 'H4'
+  let e = caught { hook is-enabled }
+  assert equal $e.msg 'a ref or --name is required' 'H4'
+  assert equal $e.code 'hook::is-enabled::invalid_argument' 'the derived code'
+  assert str contains $e.help 'cell-path' 'the advice says what to pass'
 }
 
 # ——— with —————————————————————————————————————————————————————————————————————
@@ -100,13 +108,17 @@ def "test with runs the closure when the hook does not resolve" []: nothing -> n
 }
 
 def "test with strict raises when the hook does not resolve" []: nothing -> nothing {
-  assert error { hook with --name=nope --strict {disabled: true} {|| 'ran' } } 'missing name'
-  assert error { hook with --hook=$.pre_prompt.9 --strict {disabled: true} {|| 'ran' } } 'missing reference'
+  let name = caught { hook with --name=nope --strict {disabled: true} {|| 'ran' } }
+  assert equal $name.code 'hook::list::not_found' 'a missing name fails in the lookup by name'
+  let ref = caught { hook with --hook=$.pre_prompt.9 --strict {disabled: true} {|| 'ran' } }
+  assert equal $ref.msg "no hook at '$.pre_prompt.9'" 'a missing reference is named'
+  assert equal $ref.code 'hook::with::not_found' 'the derived code'
 }
 
 def "test with needs a name or a reference" []: nothing -> nothing {
-  let msg: string = try { hook with {disabled: true} {|| 'ran' }; 'no error' } catch {|e| $e.msg }
-  assert equal $msg 'either a name or reference is required' 'the error'
+  let e = caught { hook with {disabled: true} {|| 'ran' } }
+  assert equal $e.msg 'either a name or reference is required' 'the error'
+  assert equal $e.code 'hook::with::invalid_argument' 'the derived code'
 }
 
 # ——— reference, show, list ————————————————————————————————————————————————————
@@ -131,7 +143,10 @@ def "test show selects a cell and defaults" []: nothing -> nothing {
   assert equal (hook show $.pre_prompt.9) null 'a missing hook is null'
   assert equal (hook show $.pre_prompt.9 --default=x) x 'or the default'
   assert equal (hook show $.pre_prompt.1 $.nope --default=x) x 'a missing field too'
-  assert error { hook show $.pre_prompt.9 --strict } 'strict'
+  let e = caught { hook show $.pre_prompt.9 --strict }
+  assert equal $e.msg "no hook at '$.pre_prompt.9'" 'strict raises'
+  assert equal $e.code 'hook::show::not_found' 'the derived code'
+  assert equal ($e.labels | get text) [reference] 'the reference is labelled'
 }
 
 def "test list flattens the enabled hooks" []: nothing -> nothing {
@@ -143,7 +158,10 @@ def "test list flattens the enabled hooks" []: nothing -> nothing {
 def "test list by name includes disabled hooks" []: nothing -> nothing {
   assert equal (hook list off named | get name | sort) [named off] 'named hooks, disabled or not'
   assert equal (hook list nope) [] 'nothing for an unknown name'
-  assert error { hook list nope --strict } 'unless --strict'
+  let e = caught { hook list nope other --strict }
+  assert equal $e.msg "no hook named 'nope', 'other'" 'unless --strict: every name is listed'
+  assert equal $e.code 'hook::list::not_found' 'the derived code'
+  assert equal ($e.labels | get text) ['name(s)'] 'the names are labelled'
 }
 
 # ——— edit, del ————————————————————————————————————————————————————————————————
@@ -168,11 +186,13 @@ def "test edit overwrite stores text and records" []: nothing -> nothing {
 }
 
 def "test edit errors" []: nothing -> nothing {
-  let none: string = try { hook edit $.pre_prompt.0; 'no error' } catch {|e| $e.msg }
-  assert equal $none 'no overwrite value or update record was given' 'no flag'
-  let missing: string = try { hook edit $.pre_prompt.9 --update {disabled: true}; 'no error' } catch {|e| $e.msg }
-  assert equal $missing 'invalid hook reference: $.pre_prompt.9' 'missing reference'
-  assert error { hook edit $.pre_prompt.9 --overwrite 'x' } 'overwrite needs an existing hook too'
+  let none = caught { hook edit $.pre_prompt.0 }
+  assert equal $none.msg 'no overwrite value or update record was given' 'no flag'
+  assert equal $none.code 'hook::edit::invalid_argument' 'the derived code'
+  let missing = caught { hook edit $.pre_prompt.9 --update {disabled: true} }
+  assert equal $missing.msg "no hook at '$.pre_prompt.9'" 'missing reference'
+  assert equal $missing.code 'hook::edit::not_found' 'the derived code'
+  assert equal (caught { hook edit $.pre_prompt.9 --overwrite 'x' }).code 'hook::edit::not_found' 'overwrite needs an existing hook too'
 }
 
 def "test del removes a hook" []: nothing -> nothing {
@@ -201,10 +221,12 @@ def "test test runs text code in a child interpreter" []: nothing -> nothing {
 }
 
 def "test test raises without code or condition" []: nothing -> nothing {
-  let msg: string = try { hook test $.pre_prompt.9; 'no error' } catch {|e| $e.msg }
-  assert equal $msg 'no hook code exists at the provided reference' 'missing code'
-  let cond: string = try { hook test $.pre_prompt.1 --condition; 'no error' } catch {|e| $e.msg }
-  assert equal $cond 'no hook condition exists at the provided reference' 'missing condition'
+  let code = caught { hook test $.pre_prompt.9 }
+  assert equal $code.msg "no hook code at '$.pre_prompt.9'" 'missing code'
+  assert equal $code.code 'hook::test::not_found' 'the derived code'
+  assert equal ($code.labels | get text) [reference] 'the reference is labelled'
+  let cond = caught { hook test $.pre_prompt.1 --condition }
+  assert equal $cond.msg "no hook condition at '$.pre_prompt.1'" 'missing condition'
 }
 
 # ——— add ——————————————————————————————————————————————————————————————————————
