@@ -20,9 +20,10 @@ use types "cell-path join"
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
-# Rule types whose rows are judged one by one: `table`, and lists of records (`list<record>`, `list<record<…>>`).
+# A type alternative whose rows are judged one by one: `table`, and lists of records (`list<record>`,
+# `list<record<…>>`). Matched per alternative of a rule type (`is-table-type`), so `nothing|table` counts too.
 const TABLE_TYPE: string = '^(table|list<record[<>])'
-# Rule types `--strict` scans for undeclared keys: records and the table types.
+# A type alternative `--strict` scans for undeclared keys: records and the table types (`is-container-type`).
 const CONTAINER_TYPE: string = '^(record|table|list<record[<>])'
 const RETURNS: list<string> = [one input nothing table]
 # Tables with more rows than this are judged with `par-each`.
@@ -227,7 +228,8 @@ def foreign-keys [names: list<string> at: cell-path]: any -> list<record> {
 # - `path`: Single cell-path indicating the rule's target (e.g. `$.x.y`)
 # - `type`: Nushell type declaration as a string (default `any`): a `describe` name (`int`, `string`, ...), `any`,
 #   `number` (int or float), `record`, `table`, `list<inner>`, or alternatives joined by `|` (`string|datetime`,
-#   `list<int|string>`). `table` also accepts a list of records, and an empty list fits every list type.
+#   `list<int|string>`). `table` also accepts a list of records, and an empty list fits every list type. A rule
+#   is a `record`/`table` rule (see NOTES) when any of its alternatives is one (`nothing|table`).
 # - `required`: Boolean indicating if the target of this rule is mandatory (omission treated as non-required)
 # - `enum`: List of allowed values for the target (e.g. `[red green blue]`); each element of a list is judged
 # - `const`: The target must equal this value exactly. When the target is a list and the constant is not, every
@@ -278,7 +280,7 @@ export def rules [
   --colors (-c): oneof<nothing, bool>
   # Use ANSI styles in failure reasons and hints (default: `style colors`, i.e. `config use-colors`); `false`
   # strips them and `true` keeps them without a terminal, also with `--return=one`. The `--errors` help is plain
-  # text either way
+  # text either way. The flag takes a value (`--colors=true`/`--colors=false`): a bare `--colors` is an error
 ]: record -> oneof<nothing, table<path: cell-path, rule: string, reason: string, hint: string, data: any>, record> {
   let data: record;
   let colors: bool = $colors | default { style colors }
@@ -290,7 +292,7 @@ export def rules [
   let bail: bool = $return == 'one'
   let rules: table = $rules | default any $.type
   let tables: list<string> = $rules
-    | where type =~ $TABLE_TYPE
+    | where ($it.type | is-table-type)
     | each {|| get $.path | split cell-path | get $.value | append '' | str join . }
 
   # Everything a rule needs is derived once here, so the loops below run without closures.
@@ -316,7 +318,7 @@ export def rules [
     }
   # The declared containers above a rule, as paths into what the rule reads (the document, or a row of the table
   # it runs through): when one of them is absent, the rule is not judged there.
-  let boxes: table = $rows | where type =~ $CONTAINER_TYPE
+  let boxes: table = $rows | where ($it.type | is-container-type)
   let rows: list<record> = $rows | each {|row|
     let above: table = $boxes | where ($row.repr | str starts-with $'($it.repr).')
     $row | insert guards (if $row.through == null {
@@ -348,33 +350,42 @@ export def rules [
     return null
   }
 
-  # For non-`bail` mode, we reduce rule rows down into results
-
-  let result: record = $rows
-    | reduce --fold={found: [] dead: []} {|it acc|
-      if $acc.dead != [] and ($acc.dead | under $it.at) { return $acc }
-      let container: bool = $it.through == null and $it.type =~ $CONTAINER_TYPE
-      let inter: table = $data | evaluate-single-rule $it | append []
-      let verdicts: table = $inter.result | flatten --all
+  # For non-`bail` mode, every rule is judged and its failures are collected, in rule order.
+  # The container rules are judged first: a container that is absent, or fails its own rule, is dead, and no later
+  # rule at or under its path is judged (the bail loop above gets the same effect by stopping at the first failure).
+  # Only a container that is not under a declared table can be dead: one under a table is judged row by row, and
+  # `reach-in-row` skips what lies under it in the rows where it is absent or mistyped.
+  let indexed: table = $rows | enumerate
+  let judged: table = $indexed
+    | where $it.item.through == null and ($it.item.type | is-container-type)
+    | each {|r|
       # a container rule yields one row; `$inter.item` is that row's value as a one-element column
-      if $container and ($inter.item.0? == null or $verdicts != []) {
-        {dead: [...$acc.dead $it.at] found: [...$acc.found ...$verdicts]}
-      } else if $verdicts != [] {
-        $acc | update $.found [...$in.found ...$verdicts]
-      } | default $acc
+      let inter: table = $data | evaluate-single-rule $r.item | append []
+      let verdicts: table = $inter.result | flatten --all
+      {index: $r.index at: $r.item.at verdicts: $verdicts dead: ($inter.item.0? == null or $verdicts != [])}
+    }
+  let dead: list<cell-path> = $judged | where dead | get at
+  let verdicts: table = $indexed
+    | where {|r|
+      let before: list<cell-path> = $judged | where $it.dead and $it.index < $r.index | get at
+      $before == [] or not ($before | under $r.item.at)
+    }
+    | each --flatten {|r|
+      let box: oneof<nothing, record> = $judged | where index == $r.index | get $.0?
+      if $box != null { $box.verdicts } else { $data | evaluate-single-rule $r.item | append [] | get result | flatten --all }
     }
 
   let found: table = if $strict {
     # A container with no declared children is open; one that failed, or sits under one that did, cannot be scanned.
     containers $rows
-    | where {|box| not ($result.dead != [] and ($result.dead | under $box.at)) }
+    | where {|box| not ($dead != [] and ($dead | under $box.at)) }
     | each --flatten {|box|
       let names: list<string> = $rows | where parent == $box.repr | get leaf
       if $names == [] { [] } else {
         $data | places $box | each --flatten {|place| $place.value | foreign-keys $names $place.at }
       }
     }
-  } | prepend $result.found
+  } | prepend $verdicts
     | compact --empty
 
   $found | if $in == [] {
@@ -432,13 +443,19 @@ def alternatives []: string -> list<string> {
   } | get parts
 }
 
+# Does a rule type name a table (`table`, `list<record>`, `list<record<…>>`) in any of its alternatives (`nothing|table`)?
+def is-table-type []: string -> bool { alternatives | any ($it =~ $TABLE_TYPE) }
+
+# Does a rule type name a container (a record or a table) in any of its alternatives (`nothing|record`)?
+def is-container-type []: string -> bool { alternatives | any ($it =~ $CONTAINER_TYPE) }
+
 # The containers `--strict` scans for undeclared keys: the root, then every declared record or table, in rule order.
 # `repr` is the dotted path the children's `parent` column uses; `whole` reads the container out of the data, and
 # `through`/`head`/`tail`/`rest` locate it in the rows of a declared table it sits under (see `places`).
 def containers [rows: table]: nothing -> table<at: cell-path, whole: cell-path, repr: string> {
   [
     {at: $. whole: $. repr: '' through: null head: $. tail: $. rest: []}
-    ...($rows | where type =~ $CONTAINER_TYPE | select $.at $.whole $.repr $.through $.head $.tail $.rest)
+    ...($rows | where ($it.type | is-container-type) | select $.at $.whole $.repr $.through $.head $.tail $.rest)
   ]
 }
 

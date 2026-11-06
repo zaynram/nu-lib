@@ -56,11 +56,9 @@ def "test mandatory-rule-evaluation" []: nothing -> nothing {
 def "test typecheck-rule-evaluation" []: nothing -> nothing {
   let hints: list = $GOOD | update doc.slug 5 | update doc.date 7 | reject doc.rows | hints
   assert length $hints 2 'type mismatches are reported'
-  assert compare {|a b|
-    $a | zip $b | all {|x| $x.0? =~ $x.1? }
-  } $hints [
-    'has type int; expected string'
-    'has type int; expected string|datetime'
+  assert equal $hints [
+    '$.doc.slug has type int; expected string'
+    '$.doc.date has type int; expected string|datetime'
   ] 'simple type mismatches are reported in order'
   let hints: list = $GOOD | update doc.tags [1.2] | hints
   assert greater ($hints | length) 0 'element type mismatches are detected'
@@ -133,7 +131,7 @@ def "test return-one-bails-on-the-first-failure" []: nothing -> nothing {
 
 def "test validation-with-errors" []: nothing -> nothing {
   assert equal ($GOOD | validate rules $RULES --errors) $GOOD 'a valid record passes through'
-  let raised = try { $GOOD | update version '2.0' | update doc.slug 9 | validate rules --errors $RULES --errors | ignore; null } catch {|e| $e.details.help }
+  let raised = try { $GOOD | update version '2.0' | update doc.slug 9 | validate rules --errors $RULES | ignore; null } catch {|e| $e.details.help }
   assert str contains $raised "version is `2.0`, which is not one of [1.0]" 'first reason in help text'
   assert str contains $raised "doc.slug has type int; expected string" 'second reason in help text'
 }
@@ -308,6 +306,23 @@ def "test table type accepts a list of records only" []: nothing -> nothing {
 def "test record type" []: nothing -> nothing {
   assert equal ({r: {x: 1}} | validate rules [{path: $.r type: record}]) {r: {x: 1}} 'a record'
   assert equal ({r: [{x: 1}]} | validate rules [{path: $.r type: record}] | get rule) [typecheck] 'a table is not a record'
+}
+
+def "test container types count in every position of a union" []: nothing -> nothing {
+  # `nothing|table` used to be judged as a scalar rule: `$.t.n` was typechecked on the whole column and valid rows failed
+  for type in ['table|nothing' 'nothing|table'] {
+    let rules = [{path: $.t type: $type} {path: $.t.n type: int}]
+    assert equal ({t: [{n: 1}]} | validate rules $rules) {t: [{n: 1}]} $'valid rows pass under ($type)'
+    assert equal ({t: [{n: 1}]} | validate rules $rules --return=one) null $'also when bailing, under ($type)'
+    assert equal ({t: [{n: x}]} | validate rules $rules | get path) [$.t.0.n] $'rows are judged one by one under ($type)'
+    assert equal ({} | validate rules $rules) {} $'an absent optional table passes under ($type)'
+  }
+  for type in ['record|nothing' 'nothing|record'] {
+    let rules = [{path: $.r type: $type} {path: $.r.q type: int required: true}]
+    assert equal ({} | validate rules $rules) {} $'the children of an absent container are not judged under ($type)'
+    assert equal ({r: {q: 1 z: 2}} | validate rules $rules --strict | get path) [$.r.z] $'strict scans the container under ($type)'
+    assert equal ({r: {q: 1 z: 2}} | validate rules $rules --strict --return=one | get path) $.r.z $'also when bailing, under ($type)'
+  }
 }
 
 # ——— validate rules: list<record> tables ——————————————————————————————————————
