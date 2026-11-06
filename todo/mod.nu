@@ -33,7 +33,7 @@ export def list [
   --parent: string@_tasks # Subtasks of this task (id or exact content)
   --filter (-f): string # Raw Todoist filter query (combined with `--label` by `td` as `(filter) & (labels)`)
   --completed (-c) # Completed tasks instead of open ones (only `--project` and `--since` apply)
-  --since: datetime # With `--completed`: lower bound (default: today; at most three months back)
+  --since: datetime # Requires `--completed`: lower bound (default: today; at most three months back)
 ]: nothing -> table<id: string, content: string, description: string, labels: list<string>, project: string, parent: oneof<nothing, string>, due: oneof<nothing, datetime>, priority: int, url: string> {
   let open_only: list<string> = {label: $label parent: $parent filter: $filter} | transpose flag value
     | where value != null | get flag
@@ -41,6 +41,12 @@ export def list [
     error make --unspanned {
       msg: $"`--completed` cannot be combined with ($open_only | each { $'`--($in)`' } | str join ', ')"
       help: '`td completed list` filters only by `--project` and `--since`'
+    }
+  }
+  if not $completed and $since != null {
+    error make --unspanned {
+      msg: '`--since` requires `--completed`'
+      help: 'open tasks have no completion date to filter by; add `--completed` to list completed tasks'
     }
   }
   if $completed {

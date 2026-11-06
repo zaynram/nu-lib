@@ -187,6 +187,13 @@ def "test list completed refuses open task filters" []: record -> nothing {
   assert equal (calls $t) [] 'td is not called'
 }
 
+def "test list since without completed raises" []: record -> nothing {
+  let t = $in
+  let msg: string = try { todo list --since 2026-11-01; 'no error' } catch {|e| $e.msg }
+  assert equal $msg '`--since` requires `--completed`' 'the flag would be ignored (D9)'
+  assert equal (calls $t) [] 'td is not called'
+}
+
 def "test a failing json read raises with td output" []: record -> nothing {
   let t = $in
   fail $t task-list 1 '{"error":"INVALID_PRIORITY"}'
