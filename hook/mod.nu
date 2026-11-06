@@ -249,7 +249,7 @@ export def --env edit [
   # Value to replace the referenced hook with
   --update: record
   # An update record to merge into an existing hook record
-]: nothing -> HookType {
+]: nothing -> oneof<HookData, CodeType> {
   if $overwrite == null and $update == null {
     error make --unspanned 'no overwrite value or update record was given'
   } else if ($env.config.hooks | get --optional --ignore-case $ref) == null {
@@ -317,11 +317,11 @@ export def --env add [
   # Insert before this index (negative counts from the end; the default appends). `display_output` and
   # `command_not_found` hold a single value: the (last) new value replaces it and the index does not apply.
   --dedupe (-d)
-  # Check for the existence of the hooks and only add them if not found
+  # Skip hook records whose name is already registered (enabled or disabled)
 ]: oneof<nothing, list<HookType>> -> nothing {
   let hooks: list = if $value != null { append $value } else { } | match $in {
       [_ ..] if $dedupe => {
-        let names: list<string> = ignore | _hook-names | get $.completions.value
+        let names: list<string> = flatten-hooks {|| true } | get $.name
         $in | where ($it | describe) !~ ^record or $it.name? not-in $names
       }
       [_ ..] => { }
