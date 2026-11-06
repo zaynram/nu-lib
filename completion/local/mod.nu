@@ -139,18 +139,17 @@ export use carapace-complete
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 # The external completer `set-completer` installs, with `default` as its fallback.
+# `carapace-complete` recomputes `runtime-env` (~5 ms, every command in scope) on each completion: that is never
+# stale, whereas a cached snapshot keyed on `scope commands | length` cost more to check (~7 ms) than the recompute
+# it saved, and missed a command set that changed without changing its count.
 def completer [default: oneof<nothing, closure>]: nothing -> closure {
-  # `runtime-env` walks every command in scope (~6 ms); it is computed once here and reused while the number of
-  # commands in scope is unchanged, so a keystroke does not pay for it.
-  let snapshot: record = {count: (scope commands | length) env: (carapace-complete runtime-env)}
   {|buffer: string, place?: record|
     let spans: list<string> = if $place == null { $buffer } else { $place.command | str join (char sp) }
       | into spans --unalias
-    let runtime: record = if (scope commands | length) == $snapshot.count { $snapshot.env } else { carapace-complete runtime-env }
     $spans | match $spans.0? {
       null => { [] }
       $0 if ($env.fish_commands? | default $FISH) has $0 => { fish-complete ($spans | str join (char sp)) }
-      $0 => { carapace-complete $0 --runtime-env $runtime }
+      $0 => { carapace-complete $0 }
     } | if $in == [] and [$env.config.completions.external.completer? null] not-has $default {
       do --ignore-errors $default $buffer | default []
     } else { }
@@ -177,11 +176,12 @@ export def --env set-completer [
   # this is intentional so that an empty list is treated as "don't use fish completions"
   if $env.fish_commands? == null { $env.fish_commands = $FISH }
   let current: oneof<nothing, closure> = $env.config.completions.external.completer?
-  # closures compare equal when they come from the same literal: this recognizes any completer `completer` built
-  let installed: bool = $current != null and $current == (completer null)
-  if $installed and $default == null { return }
   let fallback: oneof<nothing, closure> = if $default != null { $default } else { $current }
-  $env.config.completions.external.completer = completer $fallback
+  let built: closure = completer $fallback
+  # closures compare equal when they come from the same literal: this recognizes any completer `completer` built
+  let installed: bool = $current != null and $current == $built
+  if $installed and $default == null { return }
+  $env.config.completions.external.completer = $built
 }
 
 # Complete a command using the configured external custom completer (installing it for this call if unset).

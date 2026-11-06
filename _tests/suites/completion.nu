@@ -82,7 +82,7 @@ def "test options merge over defaults and null restores the default" []: nothing
 
 def "test a long list keeps its order" []: nothing -> nothing {
   let big = 1..500 | each { $"w($in)" }
-  assert equal ($big | completion into completions {sort: false} | get completions) $big 'order survives the parallel formatter'
+  assert equal ($big | completion into completions {sort: false} | get completions) $big 'order survives the per-element formatter'
 }
 
 def "test generic types reach the text fallback" []: nothing -> nothing {
