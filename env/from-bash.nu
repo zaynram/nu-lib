@@ -63,8 +63,11 @@ const PREFIX: string = '__from_bash_'
 # Variables bash manages by itself, never reported as the script's changes: BASH_LINENO, COLUMNS and LINES change
 # between snapshots (as upstream); SHELLOPTS, BASHOPTS and POSIXLY_CORRECT hold bash's own options, which a `set -e`,
 # `set -o posix` or `shopt` in the script changes, and which `--load` would otherwise hand to every later bash (an
-# exported SHELLOPTS turns its options on at startup).
-const INHIBITED: list<string> = [BASH_LINENO COLUMNS LINES SHELLOPTS BASHOPTS POSIXLY_CORRECT]
+# exported SHELLOPTS turns its options on at startup); the dynamic variables (RANDOM, SRANDOM, SECONDS, LINENO,
+# EPOCHSECONDS, EPOCHREALTIME) are listed by `set` once a script has referenced them.
+const INHIBITED: list<string> = [
+  BASH_LINENO COLUMNS LINES SHELLOPTS BASHOPTS POSIXLY_CORRECT RANDOM SRANDOM SECONDS LINENO EPOCHSECONDS EPOCHREALTIME
+]
 # Variables Nushell manages itself (a `cd` in the script sets PWD/OLDPWD): returned, never loaded.
 const UNLOADABLE: list<string> = [PWD OLDPWD FILE_PWD CURRENT_FILE]
 const RETURN: list<string> = [merge env shellvars preserve]
@@ -143,7 +146,8 @@ def failure-of [failure: record<phase: string, status: string> stderr: string]: 
 # The script runs in an `||` context, so a `set -e` inside it has no effect (as in bash-env): a failing command
 # that is not the last one is not an error.
 # Exported variables are the `env` changes, unexported ones the `shellvars` changes; a variable the script removes
-# is null; bash's own option variables (SHELLOPTS, BASHOPTS, POSIXLY_CORRECT) are never reported. Values are always
+# is null; bash's own option variables (SHELLOPTS, BASHOPTS, POSIXLY_CORRECT) and its dynamic variables (RANDOM,
+# SRANDOM, SECONDS, LINENO, EPOCHSECONDS, EPOCHREALTIME) are never reported. Values are always
 # strings, as bash has no types (an array gives its first element). `--return merge`
 # (the default) returns both in one record (`env` wins), with null and empty values dropped unless `--keep-empty`;
 # `preserve` returns `{env shellvars}` unchanged, plus `fn: {<function>: {env shellvars}}` with `--execute`, whose

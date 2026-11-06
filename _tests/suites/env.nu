@@ -216,6 +216,7 @@ def "test dotenv of a missing file raises" []: nothing -> nothing {
 }
 
 def "test dotenv of an unreadable file raises with the cause" []: nothing -> nothing {
+  need-posix
   if (is-admin) { skip 'root can read a file without permissions' }
   with-sandbox {|ctx|
     let file: path = $ctx.code | path join locked.env
@@ -446,6 +447,13 @@ def "test from bash works under nounset" []: nothing -> nothing {
   assert equal [$out.env $out.fn.g.env] [{SBFB_U: '1'} {SBFB_G: '1'}] 'variables are read'
 }
 
+def "test from bash never reports its dynamic variables" []: nothing -> nothing {
+  # `set` lists RANDOM and the other dynamic variables once a script has referenced them.
+  need-bash
+  let out: record = r#'x=$RANDOM; y=$SECONDS; z=$LINENO; w=$EPOCHSECONDS; v=$EPOCHREALTIME; u=$SRANDOM'# | env from-bash --return shellvars
+  assert equal ($out | columns | sort) [u v w x y z] 'only the assigned variables'
+}
+
 def "test from bash never reports the shell option variables" []: nothing -> nothing {
   # `set -u` changes SHELLOPTS, `set -o posix` sets POSIXLY_CORRECT and `shopt` changes BASHOPTS: they are bash's
   # options, not the script's variables, and a loaded SHELLOPTS would turn its options on in every later bash.
@@ -575,12 +583,77 @@ def "test parse reads a directory in lexical order with later files winning" []:
   }
 }
 
-def "test parse dispatches bash scripts by extension, basename, shebang and lines" []: nothing -> nothing {
+def "test parse dispatches bash scripts by extension, basename, shebang and content" []: nothing -> nothing {
   need-bash
   with-sandbox {|ctx|
-    let dir = env-dir $ctx {'c.sh': "export C=$(echo hi)\n" '.profile': "export P=1\n" 'script': "#!/bin/bash\nexport S=2\n" 'mixed': "if true; then export M=3; fi\n"}
-    let files = [c.sh .profile script mixed] | each {|f| $dir | path join $f }
-    assert equal (env parse ...$files) {C: hi P: '1' S: '2' M: '3'} 'every bash route'
+    let dir = env-dir $ctx {
+      'c.sh': "export C=$(echo hi)\n"
+      '.profile': "export P=1\n"
+      'script': "#!/bin/bash\nexport S=2\n"
+      'mixed': "if true; then export M=3; fi\n"
+      'shellish': "export X=$(echo s)\n"
+    }
+    let files = [c.sh .profile script mixed shellish] | each {|f| $dir | path join $f }
+    assert equal (env parse ...$files) {C: hi P: '1' S: '2' M: '3' X: s} 'every bash route: a shell value in an unnamed file too'
+  }
+}
+
+def "test parse runs envrc in bash" []: nothing -> nothing {
+  need-bash
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {'.envrc': "export SBENV_RC=$(echo rc)\n"}
+    assert equal (env parse ($dir | path join .envrc)) {SBENV_RC: rc} "direnv's file is a bash script, whatever the .env prefix says"
+  }
+}
+
+def "test parse reads the exported changes of bash files" []: nothing -> nothing {
+  need-bash
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {
+      '10-a.env': "SBENV_A=1\nSBENV_B=2\nSBENV_C=3\n"
+      '20-b.sh': "cd /\nSBENV_U=unexported\nexport SBENV_D=$(echo d)\nunset SBENV_A\nexport SBENV_B=\n"
+    }
+    let pwd = $env.PWD
+    let vars = env parse --load $dir
+    assert equal $vars {SBENV_B: '' SBENV_C: '3' SBENV_D: d} 'exported changes only: an unset variable is removed, an emptied one stays, no PWD and no shell variable'
+    assert equal [$env.PWD $env.SBENV_D? $env.SBENV_B? $env.SBENV_A?] [$pwd d '' null] '--load loads them and leaves the directory alone'
+  }
+}
+
+def "test parse skips shell-looking comments and takes quoted values spanning lines" []: nothing -> nothing {
+  let text = "# PATH=~/bin\nA=1 # tilde =~ regex\nB=\"first\nsecond\"\nC=3\n"
+  assert equal (with-dotenv $text {|f| env parse $f }) {A: '1' B: "first\nsecond" C: '3'} 'comments are not checked for shell syntax; a quoted value may span lines'
+}
+
+def "test parse judges shell values by their quoting" []: nothing -> nothing {
+  let literal = "Q=\"~/x\"\nS='$(x) `y`'\nR=a~b\n"
+  assert equal (with-dotenv $literal {|f| env parse $f }) {Q: '~/x' S: '$(x) `y`' R: 'a~b'} 'a quoted ~, a single-quoted $(…) or backtick and a ~ inside a value are literal to a shell too'
+  for case in [[text key]; ["T=~/y\n" T] ["U=\"a $(x) b\"\n" U] ["V=a `b` c\n" V] ["W=$((1+2))\n" W]] {
+    # caught inside the sandbox: `with-sandbox` rethrows without the details
+    let e = with-dotenv $case.text {|f| caught {|| env parse $f } }
+    assert str contains $e.msg $"the value of '($case.key)' needs a shell" $'the key is named for ($case.text | str trim)'
+    assert equal $e.details?.code? 'env::parse::read-file::invalid_argument' 'the code'
+  }
+}
+
+def "test parse keeps keys with dots and dashes" []: nothing -> nothing {
+  assert equal (with-dotenv "a.b=1\nc-d=2\n" {|f| env parse $f }) {'a.b': '1' 'c-d': '2'} 'the key class is the one of from dotenv'
+}
+
+def "test parse follows symlinks to files and to directories" []: nothing -> nothing {
+  need-posix
+  with-sandbox {|ctx|
+    let dir = env-dir $ctx {'10-real.conf': "A=1\n"}
+    let other = $ctx.code | path join other
+    mkdir $other
+    "B=2\n" | save ($other | path join b.env)
+    ^ln -s ($other | path join b.env) ($dir | path join 20-link.env)
+    ^ln -s $other ($dir | path join 30-dir.env)
+    ^ln -s ($dir | path join nowhere.env) ($dir | path join 40-dangling.env)
+    assert equal (env parse $dir) {A: '1' B: '2'} 'a linked file is read; a link to a directory and a dangling link are skipped'
+    let link = $ctx.code | path join envlink
+    ^ln -s $dir $link
+    assert equal (env parse $link) {A: '1' B: '2'} 'a link to a directory is read as a directory'
   }
 }
 
@@ -599,7 +672,7 @@ def "test parse names the first line a dotenv file cannot hold" []: nothing -> n
     assert equal $e1.details?.code? 'env::parse::read-file::invalid_argument' 'the code'
     assert str contains ($e1.details?.help? | default '') 'from-bash' 'the remedy'
     let e2 = try { env parse ($dir | path join shell.env); {} } catch {|e| $e }
-    assert str contains $e2.msg 'line 1 needs a shell: X=$(hostname)' 'a value only a shell gives meaning to'
+    assert str contains $e2.msg "the value of 'X' needs a shell" 'a value only a shell gives meaning to names its key'
   }
 }
 
