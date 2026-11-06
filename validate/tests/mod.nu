@@ -4,4 +4,8 @@
 # `skip [reason]` would otherwise shadow the builtin `skip` inside modules parsed after it.
 export use (path self ..)
 export use std/assert
-export use nupm+/test skip
+export use test skip
+export-env {
+  const root = path self ../.. | path expand
+  use test register; register $root
+}
