@@ -1,4 +1,9 @@
 # Named alarms that run a callback after a delay or at a given time.
+#
+# Alarms belong to this session: each one is a background job, and its record lives in the in-memory `kv`
+# store (table `alarms`), so other shells do not see it and it ends with the session. An expired alarm runs
+# its callback, notifies (see `set --notify`; the default prints its text) and forgets itself. This module is
+# abstract; `alarm/local` makes a `tui` dialog the default notification.
 
 # nu-lint cannot parse the `job spawn` closure below, so its unused-symbol rules misfire here.
 # nu-lint-ignore-file: unused_parameter, unused_variable
@@ -20,13 +25,17 @@ alias list-alarms = kv list --table=alarms
 
 # ——— definitions —————————————————————————————————————————————————————————————
 
-# Set an alarm.
+# Set an alarm; returns its record `{id description expires_at on_expires}`.
+#
+# `when` is a delay, a datetime, or a human string such as 'in 2 hours'. On expiry the alarm runs `--then`,
+# notifies with its text `alarm('<name>', time=<HH:MM:SS>)`, and then forgets itself (its name is free again).
 @category productivity
 export def set [
   name: string@$EMPTY # Descriptor for this alarm
   when: oneof<duration, datetime, string>@_suggest-when # When the timer will expire
-  --then (-t): closure # Closure to run once the timer expires
-  --silent (-s) # Disable default alarm expiration behavior (`clear -k` + print message)
+  --then (-t): closure # Closure to run once the timer expires; its output is printed unless `--silent`
+  --silent (-s) # Expire quietly: no notification, and the callback's output is discarded
+  --notify (-n): closure # Called with the alarm's text as its argument on expiry; default: print the text
 ]: nothing -> record {
   if (get-alarm $name) != null { error make $'an alarm named ($name) is already set' }
   let now = date now
@@ -38,14 +47,17 @@ export def set [
     _ => { error make $'received invalid type for `when` argument' }
   } | $in + $now
   let text: string = $"alarm\('($name)', time=($time | format date %T))"
+  # Not `default`: it would call a closure argument to compute the default.
+  let notify: closure = if $notify != null { $notify } else { {|text: string| print $text } }
   let item: record = job spawn --description=$desc {||
-    while (date now) < $time { sleep 1sec }
-    if $then != null { do --ignore-errors $then | if not $silent { print } }
-    if not $silent {
-      tui label --status $text
-      | tui button 'dismiss' {|| drop-alarm $name; {action: quit} }
-      | tui run --size=[60 1]
+    loop {
+      let left: duration = $time - (date now)
+      if $left <= 0sec { break }
+      sleep ([$left 1sec] | math min)
     }
+    if $then != null { do --ignore-errors $then | if not $silent { print } }
+    if not $silent { try { do $notify $text | ignore } }
+    drop-alarm $name | ignore
   } | {id: $in description: $desc expires_at: $time on_expires: (if $then == null { null } else { view source $then })}
   set-alarm --return=value $name $item
 }
@@ -61,11 +73,11 @@ export def unset [
   drop-alarm $name | ignore
 }
 
-# List the set alarms.
+# List the set alarms: `{key id description expires_at on_expires}` rows, `key` being the alarm's name.
 @category productivity
 export def list [
   regex: string = .+ # Regex to filter alarm names by
-]: nothing -> table { list-alarms | where key =~ $regex | flatten --all | rename --column={key: name description: desc} }
+]: nothing -> table { list-alarms | where key =~ $regex | flatten --all }
 
 # Show information about an alarm, if it exists.
 @category productivity
@@ -82,7 +94,7 @@ export def show [
   }
 }
 
-# Set an alarm to print a message to the terminal.
+# List the alarms, or show one by name.
 @category productivity
 export def main [
   name?: string # Name of the alarm to set or check
