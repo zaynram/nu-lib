@@ -2,10 +2,9 @@
 #
 # Modules are exposed under their own names (`pman upgrade`, `conf vars`, `mods edit`, ...); `windows` and
 # `completion` are flattened (`win env`, `into completions`, ...). Modules that mix abstract and
-# configuration-dependent commands are exposed through their full `<module>/local` variant, as bare names. The
-# `local …`-prefixed forms live in the sibling `local.nu` (`use <library root>/local.nu`), deliberately outside
-# this barrel: a prefixed name and its bare twin are one declaration (hiding either hides both), so keeping them
-# out of `*` is the only way to keep them out of completions.
+# configuration-dependent commands are exposed through their full `<module>/local` variant, as bare names; nothing
+# exposes `local …`-prefixed forms (a prefixed name and its bare twin would be one declaration, so they could not be
+# hidden separately and would clutter completions).
 #
 # `export use` does not run a module's `export-env`, so the environment set-up the surface needs is triggered by
 # the `export-env` at the end, which loads only those blocks (see `loaders.nu`).
