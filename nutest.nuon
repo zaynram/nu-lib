@@ -5,6 +5,8 @@
   lib-dirs: [.]
   # Every test child gets a throwaway HOME/XDG tree: no suite can touch real kv stores, caches or credentials.
   sandbox: true
+  # No test child may run longer than this: children are detached from the terminal, so a hung one would stall the run.
+  timeout: 120sec
   # Opt-in switches for suites that can reach real services (they also need --no-sandbox).
   passthrough: [TODO_TEST_LIVE TODO_TEST_WRITE]
 }

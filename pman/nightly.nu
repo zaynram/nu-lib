@@ -10,7 +10,8 @@
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
-use std/log
+use log
+use style
 use error
 use reload
 
@@ -140,7 +141,7 @@ def pick-build [
 ]: nothing -> record {
   let archives: table = $builds | where ext != msi
   if $target == null {
-    $archives | input list --display target $'(ansi cyan)Choose a build(ansi reset)'
+    $archives | input list --display target ('Choose a build' | style paint cyan)
     | default { error raise 'no build chosen: nothing was installed' --kind invalid_argument }
   } else {
     let ext: string = if $target =~ windows { 'zip' } else { 'tar.gz' }

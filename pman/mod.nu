@@ -7,6 +7,7 @@
 
 use conf/machine.nu [ machine-config ]
 use error
+use style
 export use nightly.nu [ bump-nu ]
 
 # Ephemeral log file holding the output of the latest run.
@@ -188,9 +189,9 @@ export def --env reload-plugins [
     try { plugin stop $row.name; plugin rm $row.name }
     try {
       plugin add $row.filename
-      print $'(ansi green)added ($row.name)(ansi rst)'
+      print ($'added ($row.name)' | style paint green)
     } catch {|e|
-      print --stderr $'(ansi red)could not re-add ($row.name) from ($row.filename): ($e.msg)(ansi rst)'
+      print --stderr ($'could not re-add ($row.name) from ($row.filename): ($e.msg)' | style paint red)
     }
   }
 }
