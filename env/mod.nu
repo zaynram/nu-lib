@@ -14,13 +14,16 @@ def _keys []: nothing -> oneof<list, record> {
 }
 
 # Get one or more environment variable values.
+#
+# One name returns its value, several return a list of values, none returns `$env` without the prompt and
+# config variables. The boolean flags take a value (`--optional=false`), since they default to true.
 export def main [
   ...names: cell-path@_keys
   # Variable names to retrieve value(s) for
   --optional (-o) = true
-  # Don't throw an error if the variable is not found
+  # Return null instead of raising an error when a variable is not found
   --ignore-case (-i) = true
-  # Retrieve the value with case-insensitive name matching
+  # Match variable names case-insensitively
   --exclude (-e): list<cell-path> = [
     $.config!
     $.env_conversions!
@@ -39,13 +42,17 @@ export def main [
   ]
   # Variables to exclude when no `names` are given
 ]: nothing -> oneof<nothing, string, record, any> {
-  if $names == [] { return ($env | reject ...$exclude) }
+  if $names == [] { return ($env | reject --optional ...$exclude) }
   let name: cell-path = $names | first
   let rest: list = $names | skip
+  # `get a ...[]` returns a one-element list, so a single name is looked up on its own.
+  if $rest == [] { return ($env | get --optional=($optional) --ignore-case=($ignore_case) $name) }
   $env | get --optional=($optional) --ignore-case=($ignore_case) $name ...$rest
 }
 
-# Set an environment variable.
+# Set environment variables from the piped record, then `--merge`, then `name`/`value` (later ones win).
+#
+# Returns the record that was loaded, or prints `(no changes)` and returns nothing when there was nothing to set.
 export def --env add [
   name?: string@_keys
   # Name of the variable to set the value of
@@ -54,24 +61,19 @@ export def --env add [
   --merge: record = {}
   # Mapping of variables to load in the process environment
   --conversions (-c): table<name: string, to_string: closure, from_string: closure>
-  # Conversions to add to the `$env.ENV_CONVERSIONS` record
+  # Conversions to add to `$env.ENV_CONVERSIONS` (they replace existing ones of the same name)
   --default (-d)
-  # Only set values for variables missing or `null` from the process env
+  # Only set variables that are missing from the process env or set to `null` there
 ]: oneof<nothing, record> -> oneof<record, nothing> {
-  let e: record = default {}
+  let vars: record = default {}
     | merge $merge
     | if $name != null { upsert $name $value } else { }
-    | if $default {
-      transpose name value
-      | where not (has $it.name) or value == null
-      | transpose --ignore-titles --as-record --header-row
-    } else { }
-    | if ($conversions | is-empty) { } else {
-      upsert $.ENV_CONVERSIONS {
-        ...($in | default {} | reject --optional $conversions.name)
-        ...($conversions | each { [$in.name $in] } | into record)
-        ...($env.ENV_CONVERSIONS | reject --optional ...$conversions.name)
-      }
+  let added: record = $conversions | default [] | each {|c| {$c.name: ($c | select to_string from_string)} } | into record
+  let e: record = if $default {
+      $vars | reject ...($vars | columns | where {|k| null | has --nullable=false $k })
+    } else { $vars }
+    | if $added == {} { } else {
+      upsert $.ENV_CONVERSIONS {|| $env.ENV_CONVERSIONS? | default {} | merge ($in | default {}) | merge $added }
     }
   if ($e | is-not-empty) { load-env $e }
   return ($e | default --empty { print '(no changes)' })
@@ -89,13 +91,13 @@ export def sel [
   $env | select --optional=($optional) --ignore-case=($ignore_case) ...$names
 }
 
-# Test for the existence of variables
+# Test for the existence of variables: one name returns a bool, several (or a piped list) a list of bools.
 export def has [
   ...names: string@_keys
   --nullable (-n) = true
-  # If `False`, treat existing variables set to `null` as missing
+  # Count variables set to `null` as existing (`--nullable=false` treats them as missing)
   --ignore-case (-i) = true
-  # Check for variable existence without case sensitivity
+  # Match variable names case-insensitively
 ]: [
   nothing -> oneof<nothing, bool, list<string>>
   list<string> -> list<bool>
@@ -105,9 +107,10 @@ export def has [
     1 if ($names | is-not-empty) => { first }
     _ => { }
   } | each {|k|
-    ($env has $k) and $nullable or (
-      $env | get --optional --ignore-case=($ignore_case) $k
-    ) != null
+    let key: oneof<nothing, string> = $env | columns | where {|c|
+      if $ignore_case { ($c | str lowercase) == ($k | str lowercase) } else { $c == $k }
+    } | get 0?
+    $key != null and ($nullable or ($env | get $key) != null)
   }
 }
 
@@ -115,20 +118,30 @@ export def has [
 export alias rm = hide-env
 
 # Parse variables from a `.env` file, optionally loading them.
+#
+# Every `KEY=value` line is a variable (the value is everything after the first `=`); blank lines and `#` comment
+# lines are skipped, and one pair of matching quotes around a value is removed. Returns a record of the variables,
+# or a `key`/`value` table with `--no-transpose`.
 export def --env dotenv [
   dotenv_path: path@_dotenv_files = .env
   --load (-l) # Load the variables into the process environment
-  --no-transpose (-n) # Return the variables as a table
-]: nothing -> oneof<table<key: string, value: any>, record> {
+  --no-transpose (-n) # Return the variables as a table instead of a record
+]: nothing -> oneof<table<key: string, value: string>, record> {
   if not ($dotenv_path | path exists) { error make --unspanned $"unable to resolve path: '($dotenv_path)'" }
-  try {
-    open --raw $dotenv_path | lines | parse '{key}={value}'
+  let vars: table<key: string, value: string> = try {
+    open --raw $dotenv_path
+    | lines
+    | str trim
+    | where $it != '' and $it !~ '^#'
+    | parse '{key}={value}'
+    | update key { str trim }
+    | update value { str trim | str replace --regex `^"(.*)"$|^'(.*)'$` '$1$2' }
   } catch {
     error make --unspanned $"unable to parse variables from '($dotenv_path)'"
-  } | if not $load or $no_transpose { } else {
-    transpose --ignore-titles --header-row --as-record
-    | if $load { let vars: record | load-env; $vars } else { }
   }
+  let record: record = $vars | transpose --ignore-titles --header-row --as-record | default --empty {}
+  if $load { load-env $record }
+  if $no_transpose { $vars } else { $record }
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————
