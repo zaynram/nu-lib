@@ -9,7 +9,9 @@ barrel that re-exports the commonly used modules.
 The library always targets the **latest Nushell nightly**. There is no version pinning: when a nightly changes
 behavior and a module breaks, the module is defective and gets fixed for the current nightly — never guarded by
 version checks. Check `nu --version` before assuming a language behavior; verify semantics empirically
-(`nu --no-config-file -c '…'`) rather than from memory, since nightly semantics drift.
+(`nu --no-config-file -c '…'`) rather than from memory, since nightly semantics drift. The policy is about fixing
+modules, not about running a broken binary: `pman bump-nu` smoke-tests a nightly before installing it and keeps the
+previous binary for `--rollback`.
 
 ## Module resolution
 
