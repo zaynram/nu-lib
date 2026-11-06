@@ -30,6 +30,7 @@ def "after each" []: record -> nothing { rm --recursive --force $in.dir }
 
 # A `td` stub: appends its arguments to `$TD_LOG`, prints `$TD_TASKS` (JSON) for `task list`.
 def stub-td [bin: path]: nothing -> nothing {
+  need-posix
   let td: path = $bin | path join td
   r##'#!/bin/sh
 echo "$*" >> "${TD_LOG:-/dev/null}"
@@ -166,6 +167,18 @@ def "test focus caches matches for an hour" []: record -> nothing {
   assert equal (td-calls $t | length) 2 'an expired match runs todo find again'
 }
 
+def "test focus keeps the stamp of a cached match" []: record -> nothing {
+  let t = $in
+  enter $t
+  track focus --refresh | ignore
+  let key: string = $'($t.name)@($BRANCH)'
+  let stamp: datetime = (date now) - 50min
+  $env.TRACK = $env.TRACK | update $.matches { update $key { update $.at $stamp } }
+  track focus --refresh | ignore
+  assert equal (td-calls $t | length) 1 'a 50 minute old match is still a hit'
+  assert equal ($env.TRACK.matches | get $key | get $.at) $stamp 'the hit keeps the stamp, so the expiry does not slide'
+}
+
 def "test focus refresh re-enables tracking" []: record -> nothing {
   let t = $in
   enter $t
@@ -247,6 +260,7 @@ def "test outside a repository sync does not ask git again" []: record -> nothin
   enter $t
   cd $t.dir
   track focus --refresh | ignore
+  need-posix
   let log: path = $t.dir | path join git.log
   let git: path = $t.bin | path join git
   let real: path = which git | get $.0.path

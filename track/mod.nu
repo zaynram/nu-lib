@@ -42,7 +42,8 @@ export-env {
 # Inside a repository: `{root repo head branch task tags matches}`. Outside one the focus is `{root: null}`
 # (plus the `matches` cache). `head` is the repository's HEAD file, which `sync` reads to notice checkouts
 # without a subprocess. `task` is the matched Todoist task content, or null; `matches` caches each
-# `<repo>@<branch>` match for an hour. A refresh also re-enables tracking after an error (see `sync`).
+# `<repo>@<branch>` match for an hour after `todo find` ran (a hit keeps the entry and its stamp, so hourly
+# refreshes do not postpone the next lookup). A refresh also re-enables tracking after an error (see `sync`).
 @category productivity
 export def --env focus [
   --refresh (-r) # Recompute from the current directory instead of returning the cache
@@ -57,18 +58,20 @@ export def --env focus [
     let head: path = $paths | last | path join HEAD
     let branch: string = read-branch $head
     let key: string = $'($repo)@($branch)'
-    let task: oneof<nothing, string> = match ($matches | get --optional $key) {
-      {at: $a task: $t} if (date now) - $a < $MATCH_TTL => $t
-      _ => (try { todo find $branch --project=$repo | get $.content? })
+    # A hit keeps the cached entry, stamp included: `at` is the time `todo find` ran, never the time of a hit.
+    let cached: oneof<nothing, record> = $matches | get --optional $key
+    let entry: record<task: oneof<nothing, string>, at: datetime> = match $cached {
+      {at: $a} if (date now) - $a < $MATCH_TTL => $cached
+      _ => ({task: (try { todo find $branch --project=$repo | get $.content? }) at: (date now)})
     }
     {
       root: ($paths | first)
       repo: $repo
       head: $head
       branch: $branch
-      task: $task
-      tags: [$'#($repo)' ($task | default $branch)]
-      matches: ($matches | upsert $key {task: $task at: (date now)})
+      task: $entry.task
+      tags: [$'#($repo)' ($entry.task | default $branch)]
+      matches: ($matches | upsert $key $entry)
     }
   }
   $env.TRACK
