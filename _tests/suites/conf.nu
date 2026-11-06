@@ -4,7 +4,7 @@
 # sandboxed HOME/XDG directories. Anything that writes files (a fake `~/.profile`, autoload directories, the
 # prompt script) runs in a `sandboxed` grandchild whose HOME and XDG directories point into a `with-sandbox`
 # tree, so the real home is never touched even with `--no-sandbox`. The ZR-XPS14 host branch is exercised by
-# overriding `--host`; it sources `~/.profile` through the vendored `bash-env` (needs `bash` and `jq`).
+# overriding `--host`; it sources `~/.profile` through `env from-bash` (needs `bash`).
 # nu-lint-ignore-file: missing_output_type
 # (helpers return whatever the child or the closure produced)
 use conf
@@ -30,8 +30,8 @@ def value [ctx: record code: string --vars: record = {} --prelude: string = 'use
   $res.value
 }
 
-def need-bash-env []: nothing -> nothing {
-  for bin in [bash jq] { if (which $bin | is-empty) { skip $'`($bin)` is needed by bash-env' } }
+def need-bash []: nothing -> nothing {
+  if (which bash | is-empty) { skip '`bash` is needed to read ~/.profile' }
 }
 
 # Write a fake `~/.profile` into the sandbox home.
@@ -111,7 +111,7 @@ def "test machine config verbose prints the target and is kept by with" []: noth
 }
 
 def "test machine config host branch reads the profile" []: nothing -> nothing {
-  need-bash-env
+  need-bash
   with-sandbox {|ctx|
     profile $ctx 'export XDG_DATA_DIR="$HOME/d"' 'export XDG_CONFIG_DIR="$HOME/c"' 'export XDG_DOWNLOAD_DIR="$HOME/dl"' 'export PATH="/sbconf/profile/bin:$PATH"'
     let mc: record = value $ctx 'conf machine-config --host ZR-XPS14 --os linux' --vars {WORK: /sbwork}
@@ -128,7 +128,7 @@ def "test machine config host branch reads the profile" []: nothing -> nothing {
 }
 
 def "test machine config host branch takes only the PATH entries of the profile" []: nothing -> nothing {
-  need-bash-env
+  need-bash
   with-sandbox {|ctx|
     profile $ctx 'export PATH="/a:$PATH"'
     let path: list<string> = $env.PATH | prepend /sbconf/inherited
@@ -139,7 +139,7 @@ def "test machine config host branch takes only the PATH entries of the profile"
 }
 
 def "test machine config host branch takes WORK from the profile" []: nothing -> nothing {
-  need-bash-env
+  need-bash
   with-sandbox {|ctx|
     profile $ctx 'export WORK=/sbprofile-work'
     let mc: record = value $ctx 'conf machine-config --host ZR-XPS14 --os linux'
@@ -148,7 +148,7 @@ def "test machine config host branch takes WORK from the profile" []: nothing ->
 }
 
 def "test machine config host branch without a profile falls back" []: nothing -> nothing {
-  need-bash-env
+  need-bash
   with-sandbox {|ctx|
     let res: record = child $ctx 'conf machine-config --host ZR-XPS14 --os linux' --vars {WORK: /sbwork}
     assert ($res.stderr =~ '\.profile') $'the missing profile is reported: ($res.stderr)'
@@ -157,7 +157,7 @@ def "test machine config host branch without a profile falls back" []: nothing -
 }
 
 def "test machine config strategy combines lists" []: nothing -> nothing {
-  need-bash-env
+  need-bash
   with-sandbox {|ctx|
     profile $ctx 'export WORK=/sbwork'
     let defaults: list = value $ctx 'conf machine-config --host other | get modules'
