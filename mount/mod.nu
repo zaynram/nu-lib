@@ -1,5 +1,9 @@
 # Create and remove filesystem mounts: an sshfs mount of a remote device (e.g. one running Termux) or a bind mount.
 
+# ——— imports ——————————————————————————————————————————————————————————————————
+
+use error
+
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 def format-remote-options []: record<user: string, ipv4: string, auth: path> -> list<string> {
@@ -20,10 +24,7 @@ export def is-mounted []: path -> bool {
   } else if (which findmnt | is-not-empty) {
     (^findmnt --noheadings --mountpoint $target | complete).exit_code == 0
   } else {
-    error make --unspanned {
-      msg: 'cannot check mount points: neither `mountpoint` nor `findmnt` is installed'
-      code: 'filesystem::mount::missing_dependency'
-    }
+    error raise 'cannot check mount points: neither `mountpoint` nor `findmnt` is installed' --kind missing_dependency --advice 'install util-linux'
   }
 }
 
@@ -57,19 +58,19 @@ export def main [
   let result: record = match $target {
     _ if ($mount | is-mounted) => { return }
     {port: $p} => (^sshfs -p $p $mount -o ...($target | format-remote-options) | complete)
-    $x if ($x | is-empty) => { error make --unspanned 'no source or remote configuration was provided' }
-    _ if not (is-admin) => { error make --unspanned 'missing required permissions; rerun with `sudo`' }
+    $x if ($x | is-empty) => {
+      error raise 'no source or remote configuration was provided' --kind invalid_argument --advice 'pass --source for a bind mount, or --remote (or pipe the record) for an sshfs mount'
+    }
+    _ if not (is-admin) => { error raise 'a bind mount needs root privileges' --kind unsupported --advice 'rerun with `sudo`' }
     $s => (^mount --mkdir --bind $s $mount | complete)
   }
   if $result.exit_code != 0 {
     try { $mount | unmount --remote=$remote } catch { ignore }
-    error make --unspanned {
-      msg: $"($program) exited with code ($result.exit_code)"
-      code: `filesystem::mount::external_non_zero_exit_code`
-      help: ([$result.stderr? $result.stdout?] | compact | str trim | compact --empty | get --optional 0 | default (
+    error raise $"($program) exited with code ($result.exit_code)" --kind external_failure --advice (
+      [$result.stderr? $result.stdout?] | compact | str trim | compact --empty | get --optional 0 | default (
         if $remote { 'ensure `sshd` is running on the remote host' }
-      ))
-    }
+      )
+    )
   }
   ls --directory $mount | into record
 }

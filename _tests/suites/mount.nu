@@ -79,7 +79,7 @@ def "test is mounted falls back to findmnt" []: nothing -> nothing {
 def "test is mounted without mountpoint or findmnt is an error" []: nothing -> nothing {
   with-sandbox {|ctx|
     let err = try { with-env {PATH: [$ctx.code]} { $ctx.code | mount is-mounted }; null } catch {|e| $e.details }
-    assert equal $err.code? filesystem::mount::missing_dependency 'raises missing_dependency'
+    assert equal $err.code? mount::is-mounted::missing_dependency 'raises missing_dependency'
   } | ignore
 }
 
@@ -119,16 +119,19 @@ def "test mount does nothing when already mounted" []: nothing -> nothing {
 
 def "test mount needs a source or a remote" []: nothing -> nothing {
   with-stubs {|t|
-    let err = try { mount $t.dir; null } catch {|e| $e.msg }
-    assert equal $err 'no source or remote configuration was provided' 'error message'
+    let err = try { mount $t.dir; null } catch {|e| $e }
+    assert equal $err.msg 'no source or remote configuration was provided' 'error message'
+    assert equal $err.details?.code? mount::invalid_argument 'the code (main has no command segment)'
   }
 }
 
 def "test a bind mount requires root" []: nothing -> nothing {
   if (is-admin) { skip 'running as root' }
   with-stubs {|t|
-    let err = try { mount $t.dir --source /tmp; null } catch {|e| $e.msg }
-    assert str contains $err 'missing required permissions' 'error message'
+    let err = try { mount $t.dir --source /tmp; null } catch {|e| $e }
+    assert equal $err.msg 'a bind mount needs root privileges' 'error message'
+    assert equal $err.details?.code? mount::unsupported 'the code'
+    assert str contains ($err.details?.help? | default '') 'sudo' 'the remedy is the advice'
     assert equal (calls $t.log) [] 'mount is not run'
   }
 }
@@ -165,7 +168,7 @@ def "test a failed sshfs raises its error output" []: nothing -> nothing {
   with-stubs --sshfs="echo 'connection refused' >&2; exit 1" {|t|
     let err = try { mount $t.dir --remote $REMOTE; null } catch {|e| $e.details }
     assert equal $err.msg 'sshfs exited with code 1' 'names the program and exit code'
-    assert equal $err.code? filesystem::mount::external_non_zero_exit_code 'error code'
+    assert equal $err.code? mount::external_failure 'error code'
     assert equal $err.help? 'connection refused' 'the stderr is the help'
   }
 }
