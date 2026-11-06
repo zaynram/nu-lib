@@ -214,7 +214,7 @@ def "test string regex is unanchored" []: nothing -> nothing {
 def "test string failure details" []: nothing -> nothing {
   let e = caught { do ('x!' | validate string '^\w+$') }
   assert equal $e.msg 'the provided string is invalid' 'default message'
-  assert equal $e.code 'internal::validate::string_unmatched_regex' 'default code'
+  assert equal $e.code 'validate::string::invalid_argument' "the default code is what derivation would give; it is passed because the message is the caller's"
   assert equal ($e.labels | get text) [string regex] 'the input and the regex are labelled'
   assert equal $e.help null 'no help without --instruct'
   assert equal $e.inner [] 'no inner errors by default'
@@ -242,7 +242,7 @@ def "test string without regex or enum" []: nothing -> nothing {
 }
 
 def "test string custom error fields" []: nothing -> nothing {
-  let e = caught { do ('q' | validate string a --message 'bad q' --code 'my::code' --instruct 'use a' --inner [{msg: 'why'}]) }
+  let e = caught { do ('q' | validate string a --message 'bad q' --code 'my::code' --instruct 'use a' --inner {msg: 'why'}) }
   assert equal $e.msg 'bad q' '--message'
   assert equal $e.code 'my::code' '--code'
   assert equal $e.help 'use a' '--instruct is the help'
@@ -376,7 +376,7 @@ def "test null list elements" []: nothing -> nothing {
 def "test return rejects unknown values" []: nothing -> nothing {
   let e = caught { {a: 1} | validate rules [{path: $.a type: int}] --return=bogus }
   assert equal $e.msg "invalid --return value 'bogus'" 'the value is named'
-  assert equal $e.code 'validate::rules::invalid_return' 'a stable code'
+  assert equal $e.code 'validate::rules::invalid_argument' 'the derived code'
   assert str contains ($e.labels.0?.text? | default '') 'one, input, nothing, table' 'the label lists the valid values'
   assert ((caught { {a: x} | validate rules [{path: $.a type: int}] --return=bogus }) != null) 'also when validation fails'
 }
@@ -405,7 +405,7 @@ def "test errors help lines are aligned" []: nothing -> nothing {
   assert equal ($help | length) 11 'one line per failure'
   assert equal ($help | each { str index-of ':' } | uniq | length) 1 'the colons line up'
   assert ($help.0? | default '' | str starts-with '[0] : ') 'single-digit indexes are padded'
-  assert equal (caught { {} | validate rules $rules --errors }).code 'validate::rules::validation_failed' 'a stable code'
+  assert equal (caught { {} | validate rules $rules --errors }).code 'validate::rules::invalid_argument' 'the derived code: the data is the bad argument'
 }
 
 def "test return one overrides errors" []: nothing -> nothing {

@@ -3,7 +3,7 @@
 # nu-lint-ignore-file: do_not_compare_booleans, never_space_split, missing_in_type, list_param_to_variadic
 
 # `validate string` returns a closure intentionally (its labels carry spans, which only mean something in the caller's scope):
-# - Calling `error make` from a nested scope causes error duplication as it propagates upwards.
+# - Raising from a nested scope causes error duplication as the error propagates upwards.
 # - Returning raw details records would require each consumer to typecheck the return value
 # - Closure values allow for ergonomic usage - `... | validate string <regex> | do $in`
 # - Validation error reporting can be handled in a single line, with re-assignment support for valid items.
@@ -13,6 +13,7 @@
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
+use error
 use std-rfc/str align
 use types "cell-path join"
 
@@ -105,12 +106,12 @@ export def string [
   # List of valid values to test for membership with the input value (`$enum has $in`)
   --message: string = 'the provided string is invalid'
   # Error message for validation failures
-  --code: string = 'internal::validate::string_unmatched_regex'
+  --code: string = 'validate::string::invalid_argument'
   # Error code for validation failures
   --labels: table<text: string, span: record> = []
   # Error labels for validation errors; the input and regex pattern will be included if this is empty
-  --inner: list<record> = []
-  # Inner error(s) to include in the error details for validation errors
+  --inner: oneof<nothing, error, record>
+  # An inner error (a caught error, or an error record) to include in the error details for validation errors
   --instruct: string
   # Requirement description or other helpful information for additional context
 ]: string -> closure {
@@ -118,7 +119,9 @@ export def string [
     let value: record = metadata | {text: string span: $in.span}
     let check: record = if $regex != null { {text: regex span: (metadata $regex).span} } else { {text: enum span: (metadata $enum).span} }
     let labels: table<text: string, span: record> = $labels | default --empty [$value $check]
-    {|| error make ({msg: $message code: $code labels: $labels inner: $inner help: $instruct} | compact --empty) }
+    # The message is the caller's `--message`, whose span lies at the call site, so the code is the caller's `--code`
+    # rather than derived here; with labels, `error raise` returns the closure that raises.
+    $inner | error raise $message --kind invalid_argument --code $code --labels $labels --advice $instruct
   }
 }
 
@@ -232,9 +235,9 @@ def foreign-keys [names: list<string> at: cell-path]: any -> list<record> {
 #   - The closure is passed the value as pipeline input and first positional, and its cell-path as the second
 #   - Lists and tables are iterated: the closure sees one element (one row) at a time, with the element's path
 #   - It passes by returning nothing (or any non-record value)
-#   - It fails by raising (`error make {msg help}` -> `reason`, `hint`) or by returning a record with `reason`
-#     (or `msg`) and optionally `hint` (or `help`); every other field of a returned record is kept as `data` on
-#     the failure row. Raising cannot carry data.
+#   - It fails by raising (the error's `msg` is the `reason`, its `help` the `hint`) or by returning a record with
+#     `reason` (or `msg`) and optionally `hint` (or `help`); every other field of a returned record is kept as
+#     `data` on the failure row. Raising cannot carry data.
 #   - `{at}` and `{<data field>}` in its reason and hint are filled in; any other `{...}` is kept as written.
 #
 # NOTES:
@@ -271,11 +274,9 @@ export def rules [
 ]: record -> oneof<nothing, table<path: cell-path, rule: string, reason: string, hint: string, data: any>, record> {
   let data: record;
   if $return not-in $RETURNS {
-    error make {
-      msg: $"invalid --return value '($return)'"
-      code: 'validate::rules::invalid_return'
-      label: {text: $"expected one of ($RETURNS | str join ', ')" span: (metadata $return).span}
-    }
+    error raise $"invalid --return value '($return)'" --kind invalid_argument --labels [
+      {text: $"expected one of ($RETURNS | str join ', ')" span: (metadata $return).span}
+    ] | do $in
   }
   let bail: bool = $return == 'one'
   let rules: table = $rules | default any $.type
@@ -372,16 +373,13 @@ export def rules [
   } else {
     styled --colors=$colors
   } | if $errors {
-    enumerate
-    | flatten item
-    | str trim
-    | format pattern "[{index}]: {hint}"
-    | align ':'
-    | error make --unspanned {
-      msg: 'validation completed with errors'
-      code: 'validate::rules::validation_failed'
-      help: $in
-    }
+    let help: string = $in
+      | enumerate
+      | flatten item
+      | str trim
+      | format pattern "[{index}]: {hint}"
+      | align ':'
+    error raise 'validation completed with errors' --kind invalid_argument --advice $help
   } else {
     return $in
   }
@@ -454,10 +452,13 @@ def failure [
   --data: any
   # Structured payload a dynamic rule attached to its failure (a record), returned as-is in the `data` column; null otherwise
 ]: nothing -> record<path: cell-path, rule: string, hint: string, reason: string, data: any> {
+  # Only a preset name or `--custom` templates reach here; anything else is a defect in this module.
   let preset: record = $custom | default ($RULE_PRESETS | get --ignore-case --optional $rule)
-    | default {|| error make --unspanned 'custom templates are required when not using a rule preset' }
+    | default { error raise $"'($rule)' is not a rule preset and no custom templates were given" --kind internal }
     | compact --empty
     | default false syntax
+  let missing: list<string> = [reason hint] | where $preset not-has $it
+  if $missing != [] { error raise $"the rule '($rule)' has no ($missing | str join ' or ') template" --kind internal }
   let fields: record = $context
     | if $preset.syntax {
       transpose key value
@@ -466,17 +467,12 @@ def failure [
     } else {
       update $.at ($'($in.at)' | nu-highlight)
     }
-  match $preset {
-    {hint: $h reason: $r} => {
-      path: $context.at
-      rule: $rule
-      hint: ($h | fill-template $fields)
-      reason: ($r | fill-template $fields)
-      data: $data
-    }
-    {hint: _} => { error make --unspanned 'no reason template was provided' }
-    {reason: _} => { error make --unspanned 'no hint template was provided' }
-    _ => { error make --unspanned 'no reason or hint templates were provided' }
+  {
+    path: $context.at
+    rule: $rule
+    hint: ($preset.hint | fill-template $fields)
+    reason: ($preset.reason | fill-template $fields)
+    data: $data
   }
 }
 
@@ -551,8 +547,8 @@ def verdicts [
 }
 
 # A dynamic rule fails in one of two ways, and passes by returning anything else (usually nothing):
-# - raising: `error make {msg: ... help: ...}`; `msg` is the reason, `help` the hint. Nothing else survives a raised
-#   error (LabeledError keeps only its own fields), so this form carries no data.
+# - raising (`error raise <reason> --advice <hint>`): the error's `msg` is the reason, its `help` the hint. Nothing
+#   else survives a raised error (LabeledError keeps only its own fields), so this form carries no data.
 # - returning a record with `reason` (or `msg`): `hint` (or `help`) is the hint and every other field is kept as
 #   `data` on the failure row, also available to the templates (`{at}` is always available).
 # Every named closure of the map runs, in order; each reports at most one failure.
