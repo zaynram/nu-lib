@@ -328,7 +328,9 @@ export def --env add [
       _ => { return null }
     } | compact
   if ($target | hook-type) in [display_output command_not_found] {
-    $env.config.hooks = $env.config.hooks | upsert $target ($hooks | last)
+    # Wrapped: `upsert` would call a closure value instead of storing it.
+    let value: any = $hooks | last
+    $env.config.hooks = $env.config.hooks | upsert $target {|_| $value }
     return
   }
   hook-setter $target | invoke {||
