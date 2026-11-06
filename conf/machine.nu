@@ -63,7 +63,9 @@ type MachineConfig = oneof<UserMachineConfig, VendorMachineConfig>
 #
 # The defaults derive from Nushell's directories; a known host/OS/mode combination merges its own values over
 # them (`--strategy` decides how list values combine). When a host branch fails (e.g. a missing `~/.profile` or
-# an unset variable), the cause is printed on stderr and the defaults are returned. The target can be
+# an unset variable), the cause is printed on stderr and the defaults are returned. The ZR-XPS14 Linux branch
+# sources `~/.profile` with a minimal PATH, so `binaries` gets the PATH entries the profile adds (and that base,
+# `/usr/bin`, `/bin` and the directories of `bash` and `jq`), not the PATH of the calling shell. The target can be
 # overridden with `--host`/`--os`, and `--with` runs the lookup under a temporary environment (handy for tests).
 def main [
   mode: string@$MODE = user
@@ -92,7 +94,12 @@ def main [
   if $verbose { $meta | transpose k v | format pattern '{k} = {v}' | print }
   let branch: oneof<nothing, closure> = match $meta {
     {mode: user host: ZR-XPS14 os: linux} => {||
-      let sourced: record = bash-env --return=merge ($nu.home-dir | path join .profile)
+      # Sourced with a minimal PATH (the system directories and those holding `bash` and `jq`, which bash-env
+      # runs), so the PATH the profile exports holds its own entries, not everything this shell inherited.
+      let base: list<path> = [/usr/bin /bin ...(which bash jq | where type == external | get path | path dirname)]
+      let sourced: record = with-env {PATH: ($base | uniq)} {
+        bash-env --return=merge ($nu.home-dir | path join .profile)
+      }
       let work: oneof<nothing, string> = $env.work!? | default $sourced.WORK?
       if $work == null { error make --unspanned 'WORK is not set (neither in the environment nor by ~/.profile)' }
       let dirs: record = $PROFILE_DIRS

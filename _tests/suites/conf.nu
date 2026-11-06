@@ -127,6 +127,17 @@ def "test machine config host branch reads the profile" []: nothing -> nothing {
   }
 }
 
+def "test machine config host branch takes only the PATH entries of the profile" []: nothing -> nothing {
+  need-bash-env
+  with-sandbox {|ctx|
+    profile $ctx 'export PATH="/a:$PATH"'
+    let path: list<string> = $env.PATH | prepend /sbconf/inherited
+    let mc: record = value $ctx 'conf machine-config --host ZR-XPS14 --os linux' --vars {WORK: /sbwork PATH: $path}
+    assert ('/a' in $mc.binaries) 'the entry the profile adds'
+    assert ('/sbconf/inherited' not-in $mc.binaries) 'not the PATH the shell inherited'
+  }
+}
+
 def "test machine config host branch takes WORK from the profile" []: nothing -> nothing {
   need-bash-env
   with-sandbox {|ctx|
