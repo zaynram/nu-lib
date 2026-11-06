@@ -20,11 +20,11 @@ const CACHE: path = $nu.data-dir | path join windows_env.msgpack
 
 # The cache tests write `$nu.data-dir`, fixed at startup: under `--no-sandbox` that is the user's real data dir.
 def need-sandboxed-data-dir []: nothing -> nothing {
-  if not ($nu.data-dir | str contains 'nutest-sandbox') { skip 'needs a sandboxed data dir (run without --no-sandbox)' }
+  if $nu.data-dir !~ 'nutest-sandbox' { skip 'needs a sandboxed data dir (run without --no-sandbox)' }
 }
 
-# Children must start without the suite's own WINPATH/WSL_DISTRO_NAME (set by `use windows` above): the runner's
-# environment scrub (`hide-env` after a `do --env`) is a no-op inside test children on this nightly.
+# Children must start without the suite's own WINPATH/WSL_DISTRO_NAME (set by `use windows` above). The runner
+# scrubs with `env -i` where an `env` program exists; this is belt and braces for the `hide-env` fallback.
 const PRELUDE: string = 'hide-env --ignore-errors WINPATH WSL_DISTRO_NAME; use windows *'
 
 # Run `body` with stub `wslpath`, `where.exe` and `powershell.exe` first on PATH, an empty WINPATH, and
@@ -32,6 +32,8 @@ const PRELUDE: string = 'hide-env --ignore-errors WINPATH WSL_DISTRO_NAME; use w
 # `/mnt`, `log` collects the stubs' calls.
 def with-win [body: closure]: nothing -> nothing {
   if $nu.os-info.name != linux { skip 'WSL helpers' }
+  # Every case under here may read or write the cache at `$nu.data-dir`: never the user's real one.
+  need-sandboxed-data-dir
   rm --force $CACHE
   with-sandbox {|ctx|
     let stubs: path = $ctx.code | path join stubs
@@ -93,7 +95,7 @@ def "test an existing WINPATH leaves PATH alone" []: nothing -> nothing {
   } | ignore
 }
 
-def "test the distro name defaults to the host name" []: nothing -> nothing {
+def "test the distro name defaults to the first word of the os name" []: nothing -> nothing {
   with-sandbox {|ctx|
     let code: string = '{name: $env.WSL_DISTRO_NAME host: (sys host | get name | split words | first)} | to nuon'
     let r = sandboxed $ctx $code --prelude $PRELUDE --pipe

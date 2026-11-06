@@ -55,7 +55,7 @@ def powershell-path []: nothing -> list<path> {
 # ——— environment ——————————————————————————————————————————————————————————————
 
 # Unless WINPATH exists, move the PATH entries under a Windows drive mount (`/mnt/<letter>/…`) to WINPATH; set
-# WSL_DISTRO_NAME from the host name when it is missing.
+# WSL_DISTRO_NAME to the first word of the OS name (`sys host | get name`, e.g. `Debian`) when it is missing.
 export-env {
   if $env not-has WINPATH {
     $env.PATH
@@ -105,7 +105,7 @@ export def --wrapped "win which" [
   match ($names | length) {
     0 => { return }
     1 => { do $where $names.0 } # nu-lint-ignore: unchecked_cell_path_index
-    _ => { $names | reduce --fold={} {|it acc| upsert $it { do $where $it } } }
+    _ => { $names | each {|n| {$n: (do $where $n)} } | into record }
   }
 }
 
