@@ -143,8 +143,7 @@ def rules []: nothing -> table {
 # Validate an override (a file's record, or `--with`); a null value counts as unset. Fails naming every violation.
 def check [source: string]: record -> record {
   let value: record = $in
-    | items {|key part| {$key: (if ($part | describe) =~ '^record' { $part | compact } else { $part })} }
-    | into record
+    | record each {|key part| {$key: (if ($part | describe) =~ '^record' { $part | compact } else { $part })} }
   let failures: table = $value | validate rules (rules) --strict --colors=false --return=table
   if $failures != [] {
     error raise $"invalid machine configuration \(($source)): ($failures.0.hint)" --kind invalid_argument --advice (
@@ -167,7 +166,7 @@ def check [source: string]: record -> record {
 def main [
   mode: string@$MODE = user
   # The scope to return: user or vendor
-  --host (-h): string
+  --host: string
   # The hostname the configuration is for (defaults to `hostname`); no default depends on it
   --os (-o): string = $nu.os-info.name
   # The OS the defaults are for
@@ -191,7 +190,7 @@ def main [
   if $file != null and $no_file { error raise '--file and --no-file are exclusive' --kind invalid_argument }
   let path: oneof<nothing, path> = if $no_file { null } else { override-path $file }
   let override: record = if $path == null { {} } else { load $path | check $path }
-  let with: record = $with | default {} | check '--with'
+  let with: record = if $with == null { {} } else { $with | check '--with' }
   let strategy: string = $strategy | default $with.strategy? | default $override.strategy? | default 'overwrite'
   if $verbose {
     {mode: $mode host: ($host | default (sys host).hostname) os: $os strategy: $strategy override: ($path | default 'none')}
@@ -205,8 +204,7 @@ def main [
   | if $mode == vendor { update binaries (if $os == windows { $WINDOWS_APPS } else { '/usr/bin' }) } else { }
   | merge deep --strategy=$strategy ($override | get --optional $mode | default {})
   | merge deep --strategy=$strategy ($with | get --optional $mode | default {})
-  | items {|key value| {$key: (if ($value | describe) =~ '^list' { $value | uniq } else { $value })} }
-  | into record
+  | record each {|key value| {$key: (if ($value | describe) =~ '^list' { $value | uniq } else { $value })} }
 }
 
 export alias machine-config = main

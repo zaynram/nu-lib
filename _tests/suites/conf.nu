@@ -255,6 +255,17 @@ def "test a broken override is reported by use conf and the defaults are loaded"
   }
 }
 
+def "test a failing override script is reported with its cause by use conf" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let dir: path = $ctx.config | path join nushell
+    mkdir $dir
+    "def main []: nothing -> record { if true { error make --unspanned {msg: 'SBCONF_CAUSE: the profile is missing'} }; {} }" | save --force ($dir | path join machine.nu)
+    let res: record = child $ctx '$env.NU_PLUGIN_DIRS'
+    assert equal $res.exit_code 0 $'`use conf` survives a failing script: ($res.stderr)'
+    assert ($res.stderr =~ 'SBCONF_CAUSE') $"the script's own message is in the warning: ($res.stderr)"
+  }
+}
+
 def "test machine config invalid shape names the file and every violation" []: nothing -> nothing {
   with-sandbox {|ctx|
     let file: path = override $ctx machine.nuon '{user: {home: 5 typo: 1} extra: 2}'
