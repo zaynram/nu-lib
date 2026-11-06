@@ -57,7 +57,7 @@ def "test typecheck-rule-evaluation" []: nothing -> nothing {
   let hints: list = $GOOD | update doc.slug 5 | update doc.date 7 | reject doc.rows | hints
   assert length $hints 2 'type mismatches are reported'
   assert compare {|a b|
-    $a | zip $b | all {|x| $x.0 =~ $x.1 }
+    $a | zip $b | all {|x| $x.0? =~ $x.1? }
   } $hints [
     'has type int; expected string'
     'has type int; expected string|datetime'
@@ -149,7 +149,7 @@ const DYNAMIC_DOC = {
 }
 
 def "test dynamic-rule-runs-alone" []: nothing -> nothing {
-  let rules = [{path: $.count type: int dynamic: {even: {|v at| if $v mod 2 != 0 { error make --unspanned {msg: 'value is odd' help: $'($at) must be even'} } }}}]
+  let rules = [{path: $.count type: int dynamic: {even: {|v at| if $v mod 2 != 0 { error make --unspanned {msg: 'value is odd' help: $'($at) must be even'} } }}}] # nu-lint-ignore: descriptive_error_messages
   let found = $DYNAMIC_DOC | validate rules $rules
   assert length $found 1 'a rule with only `dynamic` is evaluated'
   assert equal ($found.0? | select path rule reason hint data) {path: $.count rule: even reason: 'value is odd' hint: '$.count must be even' data: null} 'a raised error maps msg to reason and help to hint, with no data'
@@ -425,6 +425,16 @@ def "test errors help lines are aligned" []: nothing -> nothing {
   assert equal ($help | each { str index-of ':' } | uniq | length) 1 'the colons line up'
   assert ($help.0? | default '' | str starts-with '[0] : ') 'single-digit indexes are padded'
   assert equal (caught { {} | validate rules $rules --errors }).code 'validate::rules::invalid_argument' 'the derived code: the data is the bad argument'
+}
+
+def "test errors help carries no styles" []: nothing -> nothing {
+  let rule = [{path: $.a type: int}]
+  $env.config.use_ansi_coloring = true
+  let help: string = (caught { {a: x} | rules $rule --errors }).help
+  assert not ($help =~ '\e\[') 'plain with colours on'
+  assert str contains $help '$.a has type string; expected int' 'the hint text'
+  assert equal (caught { {a: x} | rules $rule --errors --colors=true }).help $help 'and with --colors=true'
+  $env.config.use_ansi_coloring = false
 }
 
 def "test return one overrides errors" []: nothing -> nothing {

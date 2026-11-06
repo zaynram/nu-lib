@@ -277,7 +277,8 @@ export def rules [
   # - `'table'` means return `[]` (empty list; consistent shape)
   --colors (-c): oneof<nothing, bool>
   # Use ANSI styles in failure reasons and hints (default: `style colors`, i.e. `config use-colors`); `false`
-  # strips them and `true` keeps them without a terminal, also with `--return=one`
+  # strips them and `true` keeps them without a terminal, also with `--return=one`. The `--errors` help is plain
+  # text either way
 ]: record -> oneof<nothing, table<path: cell-path, rule: string, reason: string, hint: string, data: any>, record> {
   let data: record;
   let colors: bool = $colors | default { style colors }
@@ -381,7 +382,9 @@ export def rules [
   } else {
     styled --colors=$colors
   } | if $errors {
+    # The advice is plain whatever `--colors` resolved to: error messages never carry ANSI.
     let help: string = $in
+      | styled --colors=false
       | enumerate
       | flatten item
       | str trim
