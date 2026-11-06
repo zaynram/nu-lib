@@ -23,7 +23,8 @@ def with-stubs [body: closure]: nothing -> nothing {
     let stubs: path = $ctx.code | path join stubs
     let log: path = $ctx.code | path join reset.log
     mkdir $stubs
-    stub $stubs reset $"echo \"RESET:$*\" >> '($log)'" | ignore
+    # `tty=` records whether stdin is a terminal: a piped record reaching `reset` shows up as `tty=no`.
+    stub $stubs reset $"echo \"RESET:$* tty=$\([ -t 0 ] && echo yes || echo no\)\" >> '($log)'" | ignore
     let binary: path = stub $ctx.code fresh-nu 'echo "ARGS:$*"; echo "FOO=${FOO-unset}"; echo "PID=${pid-unset}"'
     let path: list<string> = $env.PATH | prepend $stubs
     with-env {PATH: $path} {
@@ -84,14 +85,22 @@ def "test resets the terminal on a terminal" []: nothing -> nothing {
   with-stubs {|t|
     let out = run-tty $t $"reload --binary '($t.binary)' x"
     assert ('ARGS:x' in $out) 'the binary still runs'
-    assert equal (resets $t.log) ['RESET:-w'] 'reset -w'
+    assert equal (resets $t.log) ['RESET:-w tty=yes'] 'reset -w, on the terminal'
+  }
+}
+
+def "test a piped record never reaches reset" []: nothing -> nothing {
+  with-stubs {|t|
+    let out = run-tty $t $"{FOO: hello} | reload --binary '($t.binary)' x"
+    assert ('FOO=hello' in $out) 'the record is loaded into the environment'
+    assert equal (resets $t.log) ['RESET:-w tty=yes'] 'reset keeps the terminal as stdin (a pipe would be SIGPIPE at exec)'
   }
 }
 
 def "test erase restores control characters too" []: nothing -> nothing {
   with-stubs {|t|
     run-tty $t $"reload --erase --binary '($t.binary)'" | ignore
-    assert equal (resets $t.log) ['RESET:-wc'] 'reset -wc'
+    assert equal (resets $t.log) ['RESET:-wc tty=yes'] 'reset -wc'
   }
 }
 
