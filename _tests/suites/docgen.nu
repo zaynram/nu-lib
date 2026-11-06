@@ -158,6 +158,39 @@ def "test collect-treats-dot-targets-and-existing-names-as-paths" []: nothing ->
   assert equal (collect sample) $by_dir 'a bare name that exists on disk is a path'
 }
 
+# A module at `<root>/<rel>` with one command, `name`.
+def write-module [root: path, rel: path, name: string]: nothing -> path {
+  let dir: path = $root | path join $rel
+  mkdir $dir
+  $"# A fixture.\nexport def ($name) []: nothing -> string { 'x' }\n" | save ($dir | path join mod.nu)
+  $dir | path join mod.nu
+}
+
+def "test collect-resolves-missing-slash-targets-through-the-lib-dirs" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let file: path = write-module ($ctx.code | path join lib) zzpkg/sub from-lib
+    $env.NU_LIB_DIRS = [($ctx.code | path join lib)]
+    cd $ctx.code
+    let model = collect zzpkg/sub | first
+    assert equal $model.module.file $file 'found under a lib dir'
+    assert equal $model.commands.name ['sub from-lib'] 'its commands'
+    assert equal (collect zzpkg/sub/mod.nu | first | get module.file) $file 'a mod.nu path too'
+    let root = collect completion/local | first | get module
+    assert equal [$root.name $root.file] [local ($ROOT | path join completion local mod.nu)] 'library modules from outside the repository root'
+  }
+}
+
+def "test collect-prefers-existing-paths-over-the-lib-dirs" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    write-module ($ctx.code | path join lib) zzpkg/sub from-lib | ignore
+    let local: path = write-module ($ctx.code | path join here) zzpkg/sub from-here
+    $env.NU_LIB_DIRS = [($ctx.code | path join lib)]
+    cd ($ctx.code | path join here)
+    let model = collect zzpkg/sub | first
+    assert equal [$model.module.file $model.commands.name] [$local ['sub from-here']] 'the path that exists wins'
+  }
+}
+
 def "test collect-resolves-names-through-the-nupm-modules-directory" []: nothing -> nothing {
   with-sandbox {|ctx|
     let module = $ctx.code | path join modules zz-nupm-fixture

@@ -72,7 +72,8 @@ let carried = $module.commands.decl_id | append $module.aliases.decl_id
 # `scope modules` predicate pinning down the imported module. A target is a
 # path when it contains a path separator, ends in `.nu`, or exists on disk
 # relative to the current directory (so `.` and `..` are paths); anything
-# else is a module name resolved through the child's lib dirs. Paths are
+# else is a module name resolved through the child's lib dirs. A path that
+# does not exist is looked up in the lib dirs too (see `locate`). Paths are
 # expanded here so the predicate can match on the module's file identity,
 # with a bare `mod.nu` target resolved to its parent directory (importing
 # the file directly would name the module `mod`).
@@ -81,7 +82,7 @@ def resolve [target: string]: nothing -> record<use: string, where: string> {
   if not $is_path {
     return {use: $target, where: $"name == ($target | to nuon)"}
   }
-  let full: path = try { $target | path expand --strict } catch {
+  let full: path = try { locate $target | path expand --strict } catch {
     error make --unspanned $"docgen: target does not exist: ($target)"
   }
   let file: path = match ($full | path type) {
@@ -94,6 +95,19 @@ def resolve [target: string]: nothing -> record<use: string, where: string> {
     $file
   }
   {use: $entry, where: $"file == ($file | to nuon)"}
+}
+
+# A path target on disk: as given when it exists (relative to the current
+# directory), else the first lib dir entry it names, as `use` resolves
+# `completion/local`: a module file, or a directory with a `mod.nu`. A target
+# found nowhere is returned unchanged.
+def locate [target: path]: nothing -> path {
+  if ($target | path exists) { return $target }
+  include-dirs
+  | each {|dir| $dir | path join $target }
+  | where {|p| ($p | path type) == file or ($p | path join mod.nu | path exists) }
+  | get --optional 0
+  | default $target
 }
 
 # Library directories the child resolves bare module names against, first
@@ -215,7 +229,9 @@ def normalize []: record -> record {
 # root, the caller's NU_LIB_DIRS and the nupm modules directory) or a
 # filesystem path to a module directory, its mod.nu, or a single-file
 # module; a target containing a path separator, ending in `.nu`, or existing
-# on disk (including `.` and `..`) is a path. The result is one row per
+# on disk (including `.` and `..`) is a path. A path that does not exist from
+# the current directory is looked up under the same lib dirs, so
+# `collect completion/local` works anywhere. The result is one row per
 # target plus one per nested submodule (named by its parent chain, e.g.
 # `nested sub`): the module's own metadata plus normalized tables of
 # its exported commands, aliases, and constants, each sorted for diff-stable
