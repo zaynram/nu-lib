@@ -38,6 +38,7 @@ def with-workspace [body: closure]: nothing -> nothing {
     ] | str join (char newline)) | ignore
     cd $dir
     with-env {PATH: ($env.PATH | prepend $stubs)} {
+      assert equal (which zellij | get $.0.path) ($stubs | path join zellij) 'the stub shadows any real client'
       $env.config.buffer_editor = 'editor'
       do $body {dir: $dir log: $log panes: $panes}
     }
@@ -195,5 +196,18 @@ def "test zellij recognises a pane running the editor" []: nothing -> nothing {
     | to json | save --force $t.panes
     with-env {ZELLIJ: '0'} { edit top.txt }
     assert equal (zellij-calls $t.log | get 1) 'action focus-pane-id terminal_7' 'matched by command'
+  }
+}
+
+def "test zellij matches the editor by program, not by substring" []: nothing -> nothing {
+  with-workspace {|t|
+    # Inside Zellij the editor never runs here (the stub `zellij` takes the `edit`), so its name is free to choose.
+    $env.config.buffer_editor = 'vi'
+    [
+      {id: 5 is_plugin: false is_suppressed: false title: dev pane_command: 'vite dev'}
+      {id: 8 is_plugin: false is_suppressed: false title: work pane_command: '/usr/bin/vi notes.md'}
+    ] | to json | save --force $t.panes
+    with-env {ZELLIJ: '0'} { edit top.txt }
+    assert equal (zellij-calls $t.log | get 1) 'action focus-pane-id terminal_8' '`vi` is not running in `vite dev`; a full program path counts'
   }
 }

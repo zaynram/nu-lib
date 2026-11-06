@@ -65,17 +65,18 @@ def get-editor-pane-id [program: string]: nothing -> oneof<nothing, string> {
   | where {|pane|
     if $pane.is_plugin or $pane.is_suppressed { return false }
     if $pane.title =~ '^(editor$|(E|e)diting:\s)' { return true }
-    $pane.pane_command? | $in != null and $program in $in
+    # the program the pane runs (the command's first word, by basename), not a substring: `vi` is not in `vite dev`
+    ($pane.pane_command? | default '' | split row ' ' | first | path basename) == $program
   } | get --optional $.0.id
   | if $in != null { $"terminal_($in)" }
 }
 
+# Open the items (never none: `main` substitutes the working directory) in the Zellij session.
 def with-zellij [...items: string]: nothing -> nothing {
   let editor: list<string> = get-editor
   # focus an existing editor pane, so that it is the one replaced instead of the current one
   get-editor-pane-id ($editor | first | path basename) | each {|id| ^zellij action focus-pane-id $id }
   match ($items | length) {
-    0 => { error raise 'no paths were provided' --kind invalid_argument }
     1 => { ^zellij edit --in-place --cwd $env.PWD ($items | first) }
     _ => {
       # the same name prefix lets later calls find and replace this pane
