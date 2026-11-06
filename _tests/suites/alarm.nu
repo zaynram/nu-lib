@@ -64,14 +64,16 @@ def "test bare alarm lists and alarm with a name shows" []: nothing -> nothing {
 
 def "test show of an unknown name is null unless errors are asked for" []: nothing -> nothing {
   assert equal (alarm show nope) null 'null by default'
-  let msg: string = try { alarm show nope --errors; 'no error' } catch {|e| $e.msg }
-  assert equal $msg "could not find alarm with name: 'nope'" '--errors raises with the name'
+  let err: record = try { alarm show nope --errors; {} } catch {|e| $e }
+  assert equal $err.msg "no alarm named 'nope'" '--errors raises with the name'
+  assert equal $err.details?.code? alarm::show::not_found 'the code'
 }
 
 def "test a name can only be set once" []: nothing -> nothing {
   alarm set t-one 1hr --silent | ignore
-  let msg: string = try { alarm set t-one 5min --silent; 'no error' } catch {|e| $e.msg }
-  assert equal $msg 'an alarm named t-one is already set' 'the duplicate is refused'
+  let err: record = try { alarm set t-one 5min --silent; {} } catch {|e| $e }
+  assert equal $err.msg "an alarm named 't-one' is already set" 'the duplicate is refused'
+  assert equal $err.details?.code? alarm::set::conflict 'the code'
 }
 
 def "test unset kills the job and forgets the alarm" []: nothing -> nothing {

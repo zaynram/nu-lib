@@ -11,6 +11,7 @@
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use std-rfc/kv [ "kv get" "kv set" "kv drop" "kv list" ]
+use error
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -37,14 +38,16 @@ export def set [
   --silent (-s) # Expire quietly: no notification, and the callback's output is discarded
   --notify (-n): closure # Called with the alarm's text as its argument on expiry; default: print the text
 ]: nothing -> record {
-  if (get-alarm $name) != null { error make $'an alarm named ($name) is already set' }
+  if (get-alarm $name) != null {
+    error raise $"an alarm named '($name)' is already set" --kind conflict --advice 'unset it first, or choose another name'
+  }
   let now = date now
   let desc: string = $"alarm::($name)"
   let time: datetime = match ($when | describe) {
     duration => $when
     datetime => { $when | $in - $now }
     string => { $when | date from-human | $in - $now }
-    _ => { error make $'received invalid type for `when` argument' }
+    _ => { error raise $"unsupported type for 'when': ($when | describe)" --kind invalid_argument }
   } | $in + $now
   let text: string = $"alarm\('($name)', time=($time | format date %T))"
   # Not `default`: it would call a closure argument to compute the default.
@@ -88,7 +91,7 @@ export def show [
   # Throw an error instead of returning `null` if the alarm is not found
 ]: nothing -> oneof<nothing, record> {
   get-alarm $name | match ($in | describe) {
-    nothing if $errors => (error make --unspanned $"could not find alarm with name: '($name)'")
+    nothing if $errors => (error raise $"no alarm named '($name)'" --kind not_found)
     nothing => null
     _ => $in
   }
