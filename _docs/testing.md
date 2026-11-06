@@ -68,6 +68,10 @@ test | where status != ok     # it's just a table
 
 `--depth` limits how deep directories are searched: `1` means only files directly in the directory.
 
+Progress on stderr is coloured only when `config use-colors` says so (`$env.config.use_ansi_coloring`, `NO_COLOR`,
+whether stdout is a terminal), decided once per run. Test children never see a terminal, so inside a test colours
+are off unless the test sets `$env.config.use_ansi_coloring = true` itself (it is a per-process setting).
+
 ## Isolation model
 
 Every discovery and every test runs in a **child interpreter** (`nu --no-config-file`): one per test by default,

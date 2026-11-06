@@ -42,7 +42,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 
 | Module | Notes |
 |---|---|
-| `validate` | Rule engine and string validators. Colored output uses `nu-highlight` only. |
+| `validate` | Rule engine and string validators. Colored output (`nu-highlight`, `style paint`) follows `config use-colors` unless `--colors` says otherwise. |
 | `types` | Cell-path and type helpers. |
 | `error` | `error raise` with coded errors. |
 | `log` | Thin wrappers over `std/log`. |
@@ -77,7 +77,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `time` | `timew` (hermetic with a temp `TIMEWARRIORDB`). |
 | `todo` | `td` CLI, Todoist credentials, network. Parsing/formatting helpers are pure. |
 | `completion/local` | `fish`, `carapace`; mutates `$env.config`; its export-env sets `CARAPACE_*` and the carapace `PATH` entry. `fish-complete parse-output` is pure. `completion/external` is a deprecated shim for it. |
-| `style` (mild) | Reads `$env.config.color_config`; falls back to Nushell's default colors. |
+| `style` (mild) | Reads `$env.config.color_config`; falls back to Nushell's default colors. `colors`/`paint` are the library's colour gate (`config use-colors`), imported by most modules that print. |
 | root `mod.nu` | Aggregates config-dependent modules; parses with only the repository on the lib path; its `export-env` runs the conf/mods/completion/proj/track/windows env blocks as guarded `use` statements. |
 
 ## Splitting mixed modules

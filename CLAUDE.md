@@ -54,6 +54,10 @@ or a new external dependency.
   the raise site (lowercase start, no trailing period, values in single quotes), pick a kind from the fixed
   vocabulary, and put remedies in `--advice`. `--code` overrides derivation only for a message that cannot be
   written at the raise site.
+- Never emit ANSI directly (`ansi green`, `nu-highlight` and `std/log` all ignore the colour setting): wrap text with
+  `style paint <codes>` or gate on `style colors`, which honour `config use-colors` (`use_ansi_coloring`, `NO_COLOR`,
+  the terminal). A command's explicit `--colors` flag overrides the check (`validate rules --colors=false`,
+  `paint --colors=true`). Error messages (`error raise`) never carry ANSI.
 - Lint with `nu-lint <file>` (owner config at `~/.config/nu-lint.toml`); file- or line-level suppressions use
   `# nu-lint-ignore-file: <rule>` / `# nu-lint-ignore: <rule>`.
 - Format with `topiary`. It refuses files that contain `type` declarations: comment the typedefs out before
