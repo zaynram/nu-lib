@@ -611,3 +611,13 @@ def "test reset drops pruned_at and keeps the hydration mark" []: nothing -> not
       assert equal (in-proj $fx $code) {pruned: null mark: datetime} 'metadata gone, the mark kept'
   }
 }
+
+def "test a failing reset scan leaves the snapshot in place" []: nothing -> nothing {
+  case {|fx|
+      let code = "proj scan --force | ignore; use std-rfc/kv *; kv set --universal --table=proj hydrating (date now) | ignore; let failed = try { with-env {project_exclude: {src: ['[bad']}} { proj scan --force --reset }; false } catch { true }; {failed: $failed, names: (proj list | get name | sort), mark: (kv get --universal --table=proj hydrating | describe)}"
+      let r = in-proj $fx $code
+      assert $r.failed 'the bad glob makes the scan raise'
+      assert equal $r.names [alpha beta gamma notes tools vend] 'the previous snapshot survives'
+      assert equal $r.mark datetime 'and so does the hydration mark'
+  }
+}

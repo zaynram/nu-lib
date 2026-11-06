@@ -106,7 +106,7 @@ export module test {
 # Scan the workspace for projects and rewrite the registry snapshot.
 # ---
 # Returns the scan metadata `{found added start end elapsed}` for the scanned kinds (the record of the last scan
-# when it is younger than 24 hours and neither `--force` nor `--reset` is given). Registered projects are kept
+# when its stamp matches the kind directories and is younger than 24 hours, unless `--force` or `--reset` is given). Registered projects are kept
 # unless their directory is gone; new directories are inspected and added. `--prune` only drops the missing ones,
 # prints how many and returns nothing. Scanning needs `$env.WORK` (the workspace root).
 # Notes:
@@ -140,12 +140,6 @@ export def scan [
   if not ($reset or $force) and $current != null and not (is-stale $current) { return $current.last_scan }
   let scanned: list<string> = $KIND | columns | where $it in $kinds
   let full_reset: bool = $reset and ($KIND | columns | all $it in $kinds)
-  if $full_reset {
-    # The hydration mark survives: a job resetting the registry must still keep other shells from starting one.
-    let mark: oneof<nothing, datetime> = get-meta hydrating
-    reset-table proj
-    if $mark != null { set-meta hydrating $mark | ignore }
-  }
   let start: datetime = date now
   # The registered projects that stay: every kind's rows whose directory still exists; none for a kind being reset.
   let kept: record = $KIND | columns | each {|k|
@@ -174,6 +168,11 @@ export def scan [
   {stamp: (stamp $work) last_scan: $last_scan kinds: $kinds pruned_at: (if $full_reset { null } else { $current.pruned_at? })}
   | record where value != null
   | write-snapshot
+  # A full reset discards the old registry's other keys only after the new snapshot is in place: a scan that fails
+  # or is killed before this point leaves the previous snapshot (and the hydration mark) untouched.
+  if $full_reset {
+    for key in (list-meta | get $.key | where $it not-in [snapshot hydrating]) { drop-meta $key | ignore }
+  }
   $last_scan
 }
 
@@ -464,12 +463,6 @@ def prune-missing-dirs []: nothing -> int {
 
 # The number of projects in a kinds record.
 def count []: record -> int { values | each { length } | append 0 | math sum }
-
-def reset-table [table: string]: nothing -> nothing {
-  for key in (kv list --universal --table=$table).key {
-    kv drop --universal --table=$table $key
-  }
-}
 
 # Whether `$env.WORK` (any case) names a workspace.
 def has-workspace []: nothing -> bool { $env.work!? | is-not-empty }

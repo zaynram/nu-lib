@@ -25,7 +25,7 @@ describes the pattern the library uses instead, and when not to use it.
 5. **Staleness is decided by a fingerprint, with a TTL as the fallback.** The fingerprint is cheap to compute on
    every import (for `proj`, the modification times of the four kind directories under `$env.WORK`, ~0.3 ms; for
    `conf`, the override file's size and modification time — the file itself, a symlink is followed — plus the
-   library root and the running `nu` version). The TTL (24 h for both) catches what the fingerprint cannot see: a
+   library root and the running `nu` version). The TTL (24 h for `proj`, and for `conf`'s script records) catches what the fingerprint cannot see: a
    remote URL edited inside a repository, a file or variable an override script reads. A fingerprint miss only
    needs the cheap part redone (new project directories inspected, missing ones dropped); a TTL miss inspects
    everything again. A command that changes the snapshot without inspecting anything (`proj scan --prune`) keeps the

@@ -78,10 +78,12 @@ To try a script by hand: `nu --no-config-file -I <library root> -c 'run ~/.confi
 ## Cache
 
 The checked record of the configured file (not of a `--file`) is kept in `$nu.cache-dir/nu-lib/machine-override.nuon`
-together with its key: the file's path, modification time and size, and the running `nu` version. A call whose key
-matches returns the cached record without running the script or validating anything (about 5 ms instead of 13 ms
-for a `.nuon`, 50 ms for the example `.nu`; `use conf` at login takes this path). Editing the file, or running
-another `nu`, misses the cache and rewrites it; `conf machine-config --no-cache` does so on demand (`cache = off`).
+together with its key: the file's path, the modification time and size of the file itself (a symlink is followed),
+the library root and the running `nu` version. A call whose key matches returns the cached record without running
+the script or validating anything (about 5 ms instead of 13 ms for a `.nuon`, 50 ms for the example `.nu`; `use conf`
+at login takes this path) — for a `.nuon` indefinitely, for a `.nu` script for one day, since the files and variables
+a script reads are invisible to the key. Editing the file, running another `nu`, or moving the library misses the
+cache and rewrites it; `conf machine-config --no-cache` does so on demand (`cache = off`).
 The cache is written to a temporary name and renamed into place, so a reader never sees a partial file; a cache
 directory that cannot be written is not an error (the file is loaded again next time). `_docs/hydration.md` has the
 general pattern.
