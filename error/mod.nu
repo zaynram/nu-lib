@@ -1,6 +1,6 @@
 # Helpers for raising errors.
 
-# Return values are closures intentionally:
+# With `--labels`, `error raise` returns a closure instead of raising, intentionally:
 # - Calling `error make` from a nested scope causes error duplication as it propagates upwards.
 
 # ——— definitions —————————————————————————————————————————————————————————————
@@ -9,6 +9,8 @@
 # ---
 # Throws the error with the message and code unspanned when `--labels` is empty.
 # Returns a closure that can be invoked to create the error when `--labels` is not empty.
+# Pipeline input (an error record, e.g. a caught error) becomes the error's single `inner` error; empty `--code` and
+# `--advice` values are left out.
 @category core
 export def raise [
   message: string # Error message to include in the rendered output
