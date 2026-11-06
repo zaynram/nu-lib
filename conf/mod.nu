@@ -98,8 +98,9 @@ def submit [target: oneof<nothing, string> --return]: oneof<nothing, path> -> on
 
 # Show or load a scope's environment variables (`NU_LIB_DIRS`, `PATH`, and `NU_PLUGIN_DIRS` for the vendor scope).
 #
-# Each list variable is the entries the environment already has, preceded by those of the piped record's entries
-# and the scope's directories (in that order) that it lacks. Existing entries keep their positions, so loading
+# Each list variable is the entries the environment already has (PATH-like text inherited from a parent process
+# counts as its entries), preceded by those of the piped record's entries and the scope's directories (in that
+# order) that it lacks. Existing entries keep their positions, so loading
 # never drops or reorders a directory and loading twice changes nothing. Other piped variables are kept, and
 # `--with` values replace anything else.
 @category env
@@ -114,7 +115,9 @@ export def --env vars [
   let scope: record = profile-env (if $vendor { 'vendor' } else { 'user' }) --no-file=$no_file
   let combined: record = $scope
     | record each {|key dirs|
+      # Inherited PATH-like text is split: Nushell converts `PATH` and `NU_LIB_DIRS` to lists, not `NU_PLUGIN_DIRS`.
       let existing: list = $env | get --optional --ignore-case $key | default []
+        | if ($in | describe) == string { split row (char esep) } else { }
       let added: list = $input | get --optional $key | default [] | append $dirs | uniq | where $it not-in $existing
       {$key: ($added | append $existing)}
     }
@@ -227,12 +230,15 @@ export def prompt [
 # Put the library's directories and the vendor scope on NU_LIB_DIRS, NU_PLUGIN_DIRS and PATH (idempotent: existing
 # entries are kept and nothing is duplicated). A broken machine override file must not break `use conf` (the
 # owner's env.nu runs it at every shell start): it is reported on stderr and the defaults are loaded instead;
-# an explicit `conf machine-config` still raises the error.
+# an explicit `conf machine-config` still raises the error. Any other error is not the file's fault and is raised
+# as it is.
 export-env {
   let libs: record = {NU_LIB_DIRS: $NU_LIB_DIRS NU_PLUGIN_DIRS: $NU_PLUGIN_DIRS}
   try {
     $libs | vars --vendor --load
   } catch {|e|
+    # Only the override file's own errors (`conf::machine::*`) are worked around.
+    if not ($e.details?.code? | default '' | str starts-with 'conf::machine::') { $e.raw }
     # The cause is the help: a validation hint, or a failing script's stderr (collapsed to one line).
     let cause: string = $e.details?.help? | default '' | lines | str trim | compact --empty | str join ' | ' | str substring 0..240
     let warning: string = 'conf: the machine override file was ignored, using the defaults:' | style paint yellow

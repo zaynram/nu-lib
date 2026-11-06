@@ -123,8 +123,10 @@ command that raised (none for `machine-config` itself), the last the kind.
 A failing override fails `conf machine-config` and every explicit `conf` call that resolves the machine
 configuration. `use conf` is the exception: its environment block runs at every shell start (the owner's `env.nu`),
 so there a failing override is reported on stderr (`conf: the machine override file was ignored, using the
-defaults: …`) and the defaults are loaded instead. Fix the file and run `conf machine-config` to see the full
-error; `conf vars --no-file` and `conf machine-config --no-file` ignore the file on purpose.
+defaults: …`) and the defaults are loaded instead. Only the file's own errors (`conf::machine::*`) are worked around
+this way; anything else that fails inside the block is raised as it is, so an unrelated problem is never blamed on the
+override file. Fix the file and run `conf machine-config` to see the full error; `conf vars --no-file` and
+`conf machine-config --no-file` ignore the file on purpose.
 
 ## Example
 

@@ -26,7 +26,7 @@ def child [ctx: record code: string --vars: record = {} --prelude: string = 'use
   $res | insert value $value
 }
 
-# As `run`, but return the value and fail with the child's stderr when it exits non-zero.
+# As `child`, but return the value and fail with the child's stderr when it exits non-zero.
 def value [ctx: record code: string --vars: record = {} --prelude: string = 'use conf']: nothing -> any {
   let res: record = child $ctx $code --vars $vars --prelude $prelude
   if $res.exit_code != 0 { error make --unspanned {msg: $"child failed: ($res.stderr | str trim)"} }
@@ -528,6 +528,31 @@ def "test use conf twice changes nothing" []: nothing -> nothing {
     let once: record = value $ctx '$env | select NU_LIB_DIRS NU_PLUGIN_DIRS PATH'
     let twice: record = value $ctx '$env | select NU_LIB_DIRS NU_PLUGIN_DIRS PATH' --prelude 'use conf; use conf'
     assert equal $twice $once 'the export-env is idempotent'
+  }
+}
+
+def "test use conf splits an inherited NU_PLUGIN_DIRS string" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    # Nushell converts inherited `PATH` and `NU_LIB_DIRS` to lists, but hands `NU_PLUGIN_DIRS` on as text.
+    let text: string = ['/sbconf/a' '/sbconf/b'] | str join (char esep)
+    let res: record = child $ctx '$env.NU_PLUGIN_DIRS' --vars {NU_PLUGIN_DIRS: $text}
+    assert equal $res.exit_code 0 $'`use conf` survives PATH-like text: ($res.stderr)'
+    assert not ($res.stderr =~ 'ignored, using the defaults') $'the text is not blamed on the override file: ($res.stderr)'
+    assert (($res.value | describe) =~ '^list') $'the variable is a list: ($res.value | describe)'
+    assert equal ($res.value | last 2) ['/sbconf/a' '/sbconf/b'] 'the inherited entries are kept, after the scope'
+    # The constants follow the grandchild's sandbox HOME, not this child's.
+    let consts: list<string> = value $ctx '$conf.NU_PLUGIN_DIRS'
+    assert ($consts | all {|d| $d in $res.value }) 'and the library plugin dirs are added'
+  }
+}
+
+def "test use conf raises an error that is not about the override file" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    # Neither a list nor PATH-like text: `vars` fails on it, which is not the override file's fault.
+    let res: record = child $ctx 'null' --prelude '$env.NU_PLUGIN_DIRS = 5; use conf'
+    assert ($res.exit_code != 0) 'the error fails `use conf`'
+    assert not ($res.stderr =~ 'ignored, using the defaults') $'it is not blamed on the override file: ($res.stderr)'
+    assert ($res.stderr =~ 'type_mismatch') $'the original error is raised: ($res.stderr)'
   }
 }
 
