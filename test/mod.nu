@@ -48,6 +48,10 @@ const PROJECT_FILE: string = 'nutest.nuon'
 const HOME: path = path self ..
 const HOOKS: list<string> = [before-all before-each after-each after-all]
 const ISOLATION: list<string> = [test suite]
+# Test names the runner can call (it writes them into the child program as bare words): no quotes, brackets, braces,
+# pipes, semicolons, comments, carets or percent signs, and no word starting with `$`. Verified on the nightly.
+const CALLABLE: string = r#'^[^'"`()\[{}|;#^%\n]*$'#
+const UNCALLABLE_WORD: string = '(^| )\$'
 # A `def` line in suite source: the command name, double/single/back-quoted or bare.
 const DEF_RX: string = r#'(?m)^[ \t]*(?:export[ \t]+)?def[ \t]+(?:--[\w-]+[ \t]+)*(?:"(?<dq>[^"]+)"|'(?<sq>[^']+)'|`(?<bq>[^`]+)`|(?<bare>[^\s\[]+))'#
 const DEFAULTS: record = {
@@ -490,7 +494,13 @@ def run-suite [suite: path cfg: record opts: record]: nothing -> list {
   let hooks: record = $HOOKS | each {|h| {$h: ($cmds | where role == $h | get name)} } | into record
   let wanted: table = $cmds | where role == test | where $opts.test == '' or $it.name =~ $opts.test
   let ignored: list = $wanted | where ignore | each {|t| {name: $t.name status: skip duration: 0sec error: 'ignored'} }
-  let names: list<string> = $wanted | where not $it.ignore | get name
+  let runnable: table = $wanted | where not $it.ignore
+  # A test is called by writing its name into the child program, so the name must parse as bare words.
+  let callable: closure = {|n| $n =~ $CALLABLE and $n !~ $UNCALLABLE_WORD }
+  let uncallable: list = $runnable | where not (do $callable $it.name) | each {|t|
+    {name: $t.name status: error duration: 0sec error: "this name cannot be called: remove quotes, brackets, braces, | ; # ^ % and words starting with $"}
+  }
+  let names: list<string> = $runnable | where {|t| do $callable $t.name } | get name
   let rows: list = match $cfg.isolation {
     suite => (run-child $suite $cfg $hooks $names $opts)
     test => {
@@ -504,8 +514,8 @@ def run-suite [suite: path cfg: record opts: record]: nothing -> list {
     }
   }
   for row in ($rows | where name == '(after all)') { render $row $opts.verbose }
-  for row in $ignored { render $row $opts.verbose }
-  do $annotate [...$rows ...$ignored]
+  for row in [...$ignored ...$uncallable] { render $row $opts.verbose }
+  do $annotate [...$rows ...$ignored ...$uncallable]
 }
 
 # Run some of a suite's tests in one child interpreter; render and return their rows.

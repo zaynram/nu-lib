@@ -23,6 +23,9 @@ def "test needs fish" []: nothing -> nothing {
 - A test is a `def "test <name>"` defined **in the suite file**, or any command with the `@test` attribute
   (`use std/testing *` makes the attributes parse). Imported commands never count, even when named `test …`.
 - Tests run in the order they are defined.
+- The runner calls each test by writing its name into the child program, so a name must parse as bare words:
+  no quotes, brackets, braces, `|`, `;`, `#`, `^`, `%`, and no word starting with `$`. Other names are reported
+  as `error` ("this name cannot be called") without stopping the rest of the suite.
 - `# ignore …` as the description (or `@ignore`) reports a test as `skip` with reason `ignored` without running it.
 - `skip "<reason>"` aborts a test as `skip`. Use it for runtime conditions (missing program, wrong OS, no
   credentials) so that an unavailable dependency never reads as passed or failed. A `skip` raised in `before all`

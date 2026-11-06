@@ -134,6 +134,20 @@ def "before each" [] { }
     assert equal (ok $dir 'let r: table = test; $r | length') 5
   }}
 
+  {name: 'run: names that cannot be called are reported, the rest still run' run: {||
+    let dir = project {'tests/suites/n.nu': `def "test it's broken" [] { }
+def "test a|b" [] { }
+def "test a {b}" [] { }
+def "test a;b" [] { }
+def "test a --flag" [] { }
+def "test fine one" [] { }`}
+    let rows = ok $dir 'test --isolation suite'
+    assert equal ($rows | statuses) {
+      'test a --flag': ok 'test fine one': ok "test it's broken": error 'test a|b': error 'test a {b}': error 'test a;b': error
+    }
+    assert str contains ($rows | row "test it's broken").error 'cannot be called'
+  }}
+
   {name: 'run: --jobs gives the same results as sequential' run: {||
     let dir = project {'tests/suites/s.nu': $STATUSES}
     let one = ok $dir 'test | select name status'
