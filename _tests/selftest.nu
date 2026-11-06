@@ -618,7 +618,7 @@ def "test skipped inside a sandbox" [] { with-sandbox {|c| skip "nope" } }'}
 def main [
   filter?: string # Regex selecting which cases to run
 ]: nothing -> nothing {
-  let selected: list = cases | where {|c| $filter == null or $c.name =~ $filter }
+  let selected: list = cases | where ($filter == null or $it.name =~ $filter)
   if ($selected | is-empty) {
     print --stderr $"no case matches '($filter)'; run without a filter to list the cases"
     exit 2

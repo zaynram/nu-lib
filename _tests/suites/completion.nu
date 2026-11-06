@@ -212,7 +212,7 @@ def "test fish-complete runs fish" []: nothing -> nothing {
   if (which fish | is-empty) { skip 'fish is not installed' }
   let got = [git stat] | local fish-complete 'git stat'
   assert ('status' in $got.value) 'git subcommands complete'
-  assert ($got.value | all { str starts-with stat }) 'only values extending the final span'
+  assert ($got.value | all $it starts-with stat) 'only values extending the final span'
 }
 
 # ——— completion/local: carapace ———————————————————————————————————————————————————
@@ -263,7 +263,7 @@ def "test carapace-complete runs carapace" []: nothing -> nothing {
   if (which carapace | is-empty) { skip 'carapace is not installed' }
   let got = [ls --al] | local carapace-complete ls
   assert ($got | is-not-empty) 'flags complete'
-  assert ($got.value | all { str starts-with '--al' }) 'only matching flags'
+  assert ($got.value | all $it starts-with '--al') 'only matching flags'
 }
 
 # ——— completion/local: set-completer / run-completer ——————————————————————————————

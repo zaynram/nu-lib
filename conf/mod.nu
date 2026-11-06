@@ -140,11 +140,17 @@ export def --env dir [
   let p: oneof<path, list<path>> = $s
     | get --ignore-case --optional $target
     | default {
-      error raise $"no directory named '($target)'" --kind not_found --advice $"directories: ($s | columns | str join ', ')"
+      error raise $"no directory named '($target)'" ...{
+        kind: not_found
+        advice: $"directories: ($s | columns | str join ', ')"
+      }
     }
   if $return { return $p }
   if ($p | describe) =~ '^list' {
-    error raise $"'($target)' is a list of directories" --kind invalid_argument --advice 'pass --return to get the list instead of navigating'
+    error raise $"'($target)' is a list of directories" ...{
+      kind: invalid_argument
+      advice: 'pass --return to get the list instead of navigating'
+    }
   }
   cd $p
 }
@@ -183,13 +189,20 @@ export def find [
   $item | match ($in | path type) {
     file => { submit $target --return=$return | return $in }
     dir => { cd $in }
-    _ if $target == null => { null | error raise $"config directory '($item)' does not exist" --kind not_found }
+    _ if $target == null => {
+      null | error raise $"config directory '($item)' does not exist" --kind not_found
+    }
     _ => { null | error raise $"no config directory or file named '($target)'" --kind not_found }
   }
   if $path != null { $path } else {
     let files: list = try { xglob **/* --no-dir } | default []
     match ($files | length) {
-      0 => { error raise $"no config files found for '($target)'" --kind not_found --advice 'pass --path to name a file to create' }
+      0 => {
+        error raise $"no config files found for '($target)'" ...{
+          kind: not_found
+          advice: 'pass --path to name a file to create'
+        }
+      }
       1 => { $files | first }
       _ => { $files | path truncate --root . | path select }
     }
@@ -210,9 +223,12 @@ export def prompt [
   if $cfg == null {
     oh-my-posh init nu
   } else if ($cfg | path type) != file {
-    error raise $"prompt configuration file not found: '($cfg)'" --kind not_found
+    error raise $"file not found: '($cfg)'" --kind not_found
   } else if $cfg !~ $PROMPT_EXT {
-    error raise $"unexpected configuration file format: '($cfg)'" --kind invalid_argument --advice 'oh-my-posh reads toml, yaml, yml, json and jsonc files'
+    error raise $"unsupported format: '($cfg)'" ...{
+      kind: invalid_argument
+      advice: 'oh-my-posh reads toml, yaml, yml, json and jsonc files'
+    }
   } else {
     oh-my-posh init nu --config=($cfg)
   }
@@ -222,7 +238,9 @@ export def prompt [
     if $dst != $src { mkdir ($dst | path dirname); mv --force $src $dst }
     if $nu.os-info.name == windows {
       open --raw $dst
-      | collect { lines | take until { str contains '$_omp_executable upgrade' } | str join (char newline) }
+      | collect {
+        lines | take until ($it | str contains '$_omp_executable upgrade') | str join (char newline)
+      }
       | save --force $dst
     }
   }

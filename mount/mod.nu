@@ -27,7 +27,10 @@ export def is-mounted []: path -> bool {
   } else if (which findmnt | is-not-empty) {
     (^findmnt --noheadings --mountpoint $target | complete).exit_code == 0
   } else {
-    error raise 'cannot check mount points: neither `mountpoint` nor `findmnt` is installed' --kind missing_dependency --advice 'install util-linux'
+    error raise 'neither mountpoint nor findmnt is installed' ...{
+      kind: missing_dependency
+      advice: 'install util-linux'
+    }
   }
 }
 
@@ -62,18 +65,29 @@ export def main [
     _ if ($mount | is-mounted) => { return }
     {port: $p} => (^sshfs -p $p $mount -o ...($target | format-remote-options) | complete)
     $x if ($x | is-empty) => {
-      error raise 'no source or remote configuration was provided' --kind invalid_argument --advice 'pass --source for a bind mount, or --remote (or pipe the record) for an sshfs mount'
+      error raise 'no source or remote configuration was provided' ...{
+        kind: invalid_argument
+        advice: 'pass --source for a bind mount, or --remote (or pipe the record) for an sshfs mount'
+      }
     }
-    _ if not (is-admin) => { error raise 'a bind mount needs root privileges' --kind unsupported --advice 'rerun with `sudo`' }
+    _ if not (is-admin) => {
+      error raise 'a bind mount needs root privileges' ...{
+        kind: unsupported
+        advice: 'rerun with `sudo`'
+      }
+    }
     $s => (^mount --mkdir --bind $s $mount | complete)
   }
   if $result.exit_code != 0 {
     try { $mount | unmount --remote=$remote } catch { ignore }
-    error raise $"($program) exited with code ($result.exit_code)" --kind external_failure --advice (
-      [$result.stderr? $result.stdout?] | compact | str trim | compact --empty | get --optional 0 | default (
-        if $remote { 'ensure `sshd` is running on the remote host' }
+    error raise $"($program) exited with code ($result.exit_code)" ...{
+      kind: external_failure
+      advice: (
+        [$result.stderr? $result.stdout?] | compact | str trim | compact --empty | get --optional 0 | default (
+          if $remote { 'ensure `sshd` is running on the remote host' }
+        )
       )
-    )
+    }
   }
   ls --directory $mount | into record
 }

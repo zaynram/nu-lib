@@ -39,7 +39,10 @@ export def set [
   --notify (-n): closure # Called with the alarm's text as its argument on expiry; default: print the text
 ]: nothing -> record {
   if (get-alarm $name) != null {
-    error raise $"an alarm named '($name)' is already set" --kind conflict --advice 'unset it first, or choose another name'
+    error raise $"'($name)' is already set" ...{
+      kind: conflict
+      advice: 'unset it first, or choose another name'
+    }
   }
   let now = date now
   let desc: string = $"alarm::($name)"

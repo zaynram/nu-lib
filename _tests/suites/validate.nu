@@ -184,7 +184,7 @@ def "test dynamic-rule-templates-see-data" []: nothing -> nothing {
 def "test table-row-rules-return-structured-rows" []: nothing -> nothing {
   let found = $GOOD | update doc.rows [{name: x} {size: big}] | validate rules $RULES
   assert equal ($found | columns) [path rule hint reason data] 'every failure row has the same columns, data included'
-  assert ($found | all {|r| $r.data == null }) 'preset rules carry no data'
+  assert ($found | all data == null) 'preset rules carry no data'
 }
 
 # ——— validate string ——————————————————————————————————————————————————————————
@@ -428,8 +428,8 @@ def "test literal fields are quoted in green when styled" []: nothing -> nothing
     "$.code is 'x1' which does not match '^\\d+$'"
     "$.k must be exactly 'yes'"
   ] 'the text with quotes around the literals'
-  assert ($styled | all { $in =~ $"'Ab'|'x1'|'yes'" }) 'the quotes are inside the styling'
-  assert ($styled | all { str contains $"(ansi g)'" }) 'the literals open in green'
+  assert ($styled | all $it =~ $"'Ab'|'x1'|'yes'") 'the quotes are inside the styling'
+  assert ($styled | all ($it | str contains $"(ansi g)'")) 'the literals open in green'
   assert ($styled.0? | default '' | str contains 'lowercase letters (') 'the class is not quoted'
 }
 

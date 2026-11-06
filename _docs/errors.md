@@ -13,7 +13,10 @@ use error
 export def dir [name: string]: nothing -> path {
   let dir: path = $nu.default-config-dir | path join $name
   if not ($dir | path exists) {
-    error raise $"no config directory named '($name)'" --kind not_found --advice 'create it with `conf init`'
+    error raise $"no config directory named '($name)'" ...{
+      kind: not_found
+      advice: 'create it with `conf init`'
+    }
   }
   $dir
 }
@@ -38,6 +41,9 @@ error raise <message> [--kind (-k) <kind>] [--advice (-a) <text>] [--labels <tab
 | `--advice` | Rendered as the error's `help`: what to do about it. Empty text is left out. |
 | `--labels` | `[{text, span}]` rows that point at source spans. With labels, `error raise` *returns a closure* instead of raising; call it with `do $in` at the raise site, so the spans render where they belong. |
 | `--code` | Replaces the derived code entirely. `--code ''` raises without a code. |
+
+Two or more flags are passed as a record spread, one per line, as in the example above; a single short flag stays
+on the line.
 
 Pipeline input (a caught error, or any error record) becomes the raised error's single `inner` error:
 `try { open $path } catch {|e| $e | error raise $"could not read '($path)'" --kind io }`.
@@ -133,7 +139,10 @@ Errors that should point at source spans use `--labels`. Because `error raise` t
 site stays in control of when and where the error is made:
 
 ```nushell
-error raise 'this value is not a path' --kind invalid_argument --labels [{text: 'here' span: (metadata $value).span}] | do $in
+error raise 'this value is not a path' ...{
+  kind: invalid_argument
+  labels: [{text: 'here' span: (metadata $value).span}]
+} | do $in
 ```
 
 The code is derived where the closure is made (the `error raise` call), not where it is run.

@@ -27,7 +27,10 @@ def ensure-bumpable []: path -> oneof<string, error> {
   if not ($file | path exists) { error raise $"file not found: '($file)'" --kind not_found }
   let ext: string = $file | path parse | get $.extension
   if $BUMPABLE not-has $ext {
-    error raise $"unsupported file extension: '($ext)'" --kind unsupported --advice $"`save` writes: ($BUMPABLE | str join ', ')"
+    error raise $"unsupported file extension: '($ext)'" ...{
+      kind: unsupported
+      advice: $"`save` writes: ($BUMPABLE | str join ', ')"
+    }
   }
   return $ext
 }
@@ -60,7 +63,9 @@ export def bump [
     if $type == null { return {...$row prev: null curr: null} }
     let data: any = open $row.file
     let curr = $data
-      | try { get $row.cell } catch {|e| $e | error raise $"no version at '($row.cell)' in '($row.file)'" --kind not_found }
+      | try { get $row.cell } catch {|e|
+        $e | error raise $"no version at '($row.cell)' in '($row.file)'" --kind not_found
+      }
       | into semver
     let next = $wanted | default (
         $curr | semver bump --build-metadata=$meta --loose --preserve-build-metadata $target

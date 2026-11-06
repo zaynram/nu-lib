@@ -231,7 +231,7 @@ def "test env rejects an unknown path mode even when cached" []: nothing -> noth
       assert error { win env --path bogus } 'before caching'
       win env | ignore
       let err = try { win env --path bogus; null } catch {|e| $e }
-      assert equal $err.msg "invalid value for `--path`: 'bogus'" 'after caching'
+      assert equal $err.msg "unknown --path 'bogus'" 'after caching'
       assert equal $err.details?.code? windows::win-env::invalid_argument 'the code'
     }
   }

@@ -72,7 +72,7 @@ def "test show of an unknown name is null unless errors are asked for" []: nothi
 def "test a name can only be set once" []: nothing -> nothing {
   alarm set t-one 1hr --silent | ignore
   let err: record = try { alarm set t-one 5min --silent; {} } catch {|e| $e }
-  assert equal $err.msg "an alarm named 't-one' is already set" 'the duplicate is refused'
+  assert equal $err.msg "'t-one' is already set" 'the duplicate is refused'
   assert equal $err.details?.code? alarm::set::conflict 'the code'
 }
 

@@ -155,7 +155,10 @@ export def is-enabled [
   } else if $name != null {
     not (list $name --strict=$strict | get $.0?.disabled!? | default false)
   } else {
-    error raise 'a ref or --name is required' --kind invalid_argument --advice "pass the hook's cell-path or its --name"
+    error raise 'a ref or --name is required' ...{
+      kind: invalid_argument
+      advice: "pass the hook's cell-path or its --name"
+    }
   }
 }
 
@@ -180,7 +183,9 @@ export def with [
   # Throw an error if the hook cannot be resolved
 ]: oneof<nothing, record> -> oneof<nothing, any, error> {
   let vars: record = default {}
-  if $name == null and $hook == null { error raise 'either a name or reference is required' --kind invalid_argument }
+  if $name == null and $hook == null {
+    error raise 'either a name or reference is required' --kind invalid_argument
+  }
   let ref: oneof<nothing, cell-path> = $hook
     | default (if $name != null { list $name --strict=$strict | get $.0?.ref })
   if $ref != null and ($env.config.hooks | get --optional --ignore-case $ref) != null {
@@ -222,7 +227,10 @@ export def show [
       $in | each {|| upsert code $stringify | upsert condition $stringify }
     }
   if $found == [] and $strict {
-    error raise $"no hook at '($ref)'" --kind not_found --labels [{text: reference span: (metadata $ref).span}] | do $in
+    error raise $"no hook at '($ref)'" ...{
+      kind: not_found
+      labels: [{text: reference span: (metadata $ref).span}]
+    } | do $in
   }
   $found | get $.0? | if $cell == null { } else { get --optional=(not $strict) $cell } | default $default
 }
@@ -238,7 +246,10 @@ export def list [
   let found: list = flatten-hooks --include=$names
   if $found == [] and $strict {
     let listed: string = $names | each {|n| $"'($n)'" } | str join ', '
-    error raise $"no hook named ($listed)" --kind not_found --labels [{text: 'name(s)' span: (metadata $names).span}] | do $in
+    error raise $"no hook named ($listed)" ...{
+      kind: not_found
+      labels: [{text: 'name(s)' span: (metadata $names).span}]
+    } | do $in
   }
   $found
 }
@@ -255,11 +266,17 @@ export def --env edit [
   # closure or string, so they take `--overwrite` only
 ]: nothing -> oneof<HookData, CodeType> {
   if $overwrite == null and $update == null {
-    error raise 'no overwrite value or update record was given' --kind invalid_argument --advice 'pass --overwrite or --update'
+    error raise 'no overwrite value or update record was given' ...{
+      kind: invalid_argument
+      advice: 'pass --overwrite or --update'
+    }
   } else if ($env.config.hooks | get --optional --ignore-case $ref) == null {
     error raise $"no hook at '($ref)'" --kind not_found
   } else if $overwrite == null and ($ref | hook-type) in [display_output command_not_found] {
-    error raise $"the hook at '($ref)' holds a single closure or string, not a record" --kind invalid_argument --advice 'display_output and command_not_found are replaced with --overwrite, not merged with --update'
+    error raise $"the hook at '($ref)' holds a single closure or string, not a record" ...{
+      kind: invalid_argument
+      advice: 'display_output and command_not_found are replaced with --overwrite, not merged with --update'
+    }
   } else {
     # `update` calls a closure argument, so the overwrite value is wrapped: a closure is stored, not its result.
     # A bare closure/string hook becomes a `{code}` record before an update record is merged into it.
@@ -298,7 +315,10 @@ export def --wrapped test [
   | show --raw $ref $in
   | default {
     let part: string = if $condition { 'condition' } else { 'code' }
-    error raise $"no hook ($part) at '($ref)'" --kind not_found --labels [{text: reference span: (metadata $ref).span}] | do $in
+    error raise $"no hook ($part) at '($ref)'" ...{
+      kind: not_found
+      labels: [{text: reference span: (metadata $ref).span}]
+    } | do $in
   }
   | let h: oneof<string, closure>
   | match ($in | describe) {

@@ -339,7 +339,7 @@ def "test an auth failure raises outside an interactive session" []: record -> n
 
 # The real `td`: PATH without the stub.
 def --env unstub [t: record]: nothing -> nothing {
-  $env.PATH = $env.PATH | where {|p| not ($p | str starts-with $t.dir) }
+  $env.PATH = $env.PATH | where not ($it starts-with $t.dir)
 }
 
 def "test live reads" []: record -> nothing {

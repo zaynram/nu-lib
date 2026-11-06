@@ -396,7 +396,7 @@ def normalize-layer [base: path source: string --internal]: record -> record {
   }
   for key in [paths lib-dirs passthrough] {
     let v: any = $layer | get --optional $key
-    if $v != null and not (($v | describe) starts-with list and ($v | all {|i| ($i | describe) == string })) {
+    if $v != null and not (($v | describe) starts-with list and ($v | all ($it | describe) == string)) {
       error make --unspanned {msg: $"invalid ($key) '($v)' in ($source)" help: 'expected a list of strings such as [tests/suites]'}
     }
   }
@@ -428,7 +428,7 @@ def env-layer []: nothing -> record {
   let layer: record = $value
   # A child receives the complete configuration the runner resolved (`resolved: true` plus every key). Only that record
   # may carry the internal keys; in a user's layer they are unknown keys like any other.
-  let resolved: bool = ($layer.resolved? | describe) == bool and $layer.resolved? and ($DEFAULTS | columns | all {|k| $k in $layer })
+  let resolved: bool = ($layer.resolved? | describe) == bool and $layer.resolved? and ($DEFAULTS | columns | all $it in $layer)
   $layer | normalize-layer $env.PWD '$env.NU_TEST' --internal=$resolved
 }
 
@@ -558,7 +558,7 @@ def run-suite [suite: path cfg: record opts: record]: nothing -> list {
   let uncallable: list = $runnable | where not (do $callable $it.name) | each {|t|
     {name: $t.name status: error duration: 0sec error: "this name cannot be called: remove quotes, brackets, braces, | ; # ^ % >, words starting with $, and bare = or && words"}
   }
-  let names: list<string> = $runnable | where {|t| do $callable $t.name } | get name
+  let names: list<string> = $runnable | where (do $callable $it.name) | get name
   # A hook name is written into every test's chain: one that cannot be called would break the whole child program.
   let bad_hooks: list<string> = $hooks | values | flatten | where not (do $callable $it)
   if ($bad_hooks | is-not-empty) {
@@ -708,7 +708,7 @@ def spawn-script [cfg: record vars: record script: path]: nothing -> record<stdo
   let launch: list<string> = [...$detach ...$limit $nu.current-exe ...$args]
   if not $cfg.scrub { return (with-env $vars { '' | run-external ...$launch | complete }) }
   let keep: list<string> = $KEEP | append $cfg.passthrough
-  let kept: record = $env | record where {|k v| $k in $keep or $k =~ '^LC_' }
+  let kept: record = $env | record where key in $keep or key =~ '^LC_'
   let env_bin: list = which --all env | where type == external
   if ($env_bin | is-not-empty) {
     # `env -i` builds the child's environment from scratch. `hide-env` cannot be relied on: once a `do --env` has
@@ -718,9 +718,9 @@ def spawn-script [cfg: record vars: record script: path]: nothing -> record<stdo
     return ('' | run-external ...$command | complete)
   }
   # No `env` program (native Windows): hide what we can; see the caveat above.
-  let hidden: list<string> = $env | columns | where {|k|
-    $kept not-has $k and $k not-in [PWD FILE_PWD CURRENT_FILE config]
-  }
+  let hidden: list<string> = $env | columns | where (
+    $kept not-has $it and $it not-in [PWD FILE_PWD CURRENT_FILE config]
+  )
   do { hide-env ...$hidden; with-env $vars { '' | run-external ...$launch | complete } }
 }
 
@@ -794,7 +794,7 @@ def summarize [results: list elapsed: duration strict: bool colors: bool]: nothi
 def relpath [from: path to: path]: nothing -> string {
   let a: list<string> = $from | path expand | path split
   let b: list<string> = $to | path expand | path split
-  let common: int = $a | zip $b | take while {|p| $p.0? == $p.1? } | length
+  let common: int = $a | zip $b | take while $it.0? == $it.1? | length
   let up: list<string> = 0..<(($a | length) - $common) | each { '..' }
   # `skip` here would be this module's own `skip`; slice instead.
   let rel: list<string> = [...$up ...($b | slice $common..)]

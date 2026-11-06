@@ -55,7 +55,10 @@ export def upgrade [
   let input: oneof<nothing, record> = $in
   if $async {
     if $system {
-      error raise '`--system` cannot run in the background' --kind invalid_argument --advice 'sudo needs a prompt: run `pman upgrade --system` in the foreground'
+      error raise '`--system` cannot run in the background' ...{
+        kind: invalid_argument
+        advice: 'sudo needs a prompt: run `pman upgrade --system` in the foreground'
+      }
     }
     job spawn --description=pkg-auto-upgrade {
       history upgrade --age
@@ -133,12 +136,18 @@ export def history [
   --throw (-t) # Throw an error if the log file is missing
 ]: nothing -> oneof<record, nothing, duration> {
   if $LOG not-has $target {
-    error raise $"unknown target '($target)'" --kind invalid_argument --advice $"targets: ($LOG | columns | str join ', ')"
+    error raise $"unknown target '($target)'" ...{
+      kind: invalid_argument
+      advice: $"targets: ($LOG | columns | str join ', ')"
+    }
   }
   alias invoke = if $age { (date now) - (ls $in).0.modified } else { open $in }
   try { $LOG | get $target | invoke } catch {|e|
     if $throw {
-      $e | error raise $"no cached results found for '($target)'" --kind not_found --advice $"nothing has written '($LOG | get $target)' yet"
+      $e | error raise $"no cached results found for '($target)'" ...{
+        kind: not_found
+        advice: $"nothing has written '($LOG | get $target)' yet"
+      }
     }
   }
 }
@@ -204,7 +213,7 @@ def _targets []: nothing -> list { $LOG | columns }
 def _apt [buffer: string]: nothing -> oneof<list, table> {
   let line: string = $buffer
     | split row (char space)
-    | skip while { $in not-in [apt install remove] }
+    | skip while $it not-in [apt install remove]
     | if $in.0? == apt { skip } else { }
     | prepend [sudo apt-get]
     | str join (char space)

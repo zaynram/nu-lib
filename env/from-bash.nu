@@ -172,16 +172,30 @@ export def --env main [
 ] {
   let texts: list<string> = [$in $content] | compact
   if ($texts | length) + ([$file] | compact | length) > 1 {
-    error raise 'the script was given more than once' --kind invalid_argument --advice 'pipe its text, give --content, or give a file path: one of them'
+    error raise 'the script was given more than once' ...{
+      kind: invalid_argument
+      advice: 'pipe its text, give --content, or give a file path: one of them'
+    }
   }
   if $return != null and $return not-in $RETURN {
-    error raise $"unknown --return '($return)'" --kind invalid_argument --advice $"expected one of: ($RETURN | str join ', ')"
+    error raise $"unknown --return '($return)'" ...{
+      kind: invalid_argument
+      advice: $"expected one of: ($RETURN | str join ', ')"
+    }
   }
   if $execute != [] and $return not-in [null preserve] {
-    error raise $"--execute cannot be combined with --return '($return)'" --kind invalid_argument --advice '--execute returns every change (preserve)'
+    error raise $"--execute cannot be combined with --return '($return)'" ...{
+      kind: invalid_argument
+      advice: '--execute returns every change (preserve)'
+    }
   }
   let script: oneof<string, binary> = $texts | get 0? | default {
-    let path: path = $file | default { error raise 'no script was given' --kind invalid_argument --advice 'pipe its text, or give --content or a file path' }
+    let path: path = $file | default {
+      error raise 'no script was given' ...{
+        kind: invalid_argument
+        advice: 'pipe its text, or give --content or a file path'
+      }
+    }
     if not ($path | path exists) { error raise $"file not found: '($path)'" --kind not_found }
     open --raw $path
   }
@@ -203,9 +217,12 @@ export def --env main [
   }
   if ($sections | where mark == '=done' | is-empty) {
     let stderr: string = $res.stderr | text | str replace --all "\u{0}=phase\u{0}" '' | str trim
-    error raise $"bash exited with status ($res.exit_code) before the variables were read" --kind external_failure --advice (
-      [$stderr 'a script that calls `exit` ends bash early; `return` (with status 0) ends the script and keeps the variables'] | compact --empty | str join (char newline)
-    )
+    error raise $"bash exited with status ($res.exit_code) before the variables were read" ...{
+      kind: external_failure
+      advice: (
+        [$stderr 'a script that calls `exit` ends bash early; `return` (with status 0) ends the script and keeps the variables'] | compact --empty | str join (char newline)
+      )
+    }
   }
   # Snapshots in pairs, before and after: the script first, then each function.
   let comparisons: list<record> = $sections

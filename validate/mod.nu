@@ -128,7 +128,12 @@ export def string [
     let labels: table<text: string, span: record> = $labels | default --empty [$value $check]
     # The message is the caller's `--message`, whose span lies at the call site, so the code is the caller's `--code`
     # rather than derived here; with labels, `error raise` returns the closure that raises.
-    $inner | error raise $message --kind invalid_argument --code $code --labels $labels --advice $instruct
+    $inner | error raise $message ...{
+      kind: invalid_argument
+      code: $code
+      labels: $labels
+      advice: $instruct
+    }
   }
 }
 
@@ -285,9 +290,12 @@ export def rules [
   let data: record;
   let colors: bool = $colors | default { style colors }
   if $return not-in $RETURNS {
-    error raise $"invalid --return value '($return)'" --kind invalid_argument --labels [
-      {text: $"expected one of ($RETURNS | str join ', ')" span: (metadata $return).span}
-    ] | do $in
+    error raise $"invalid --return value '($return)'" ...{
+      kind: invalid_argument
+      labels: [
+        {text: $"expected one of ($RETURNS | str join ', ')" span: (metadata $return).span}
+      ]
+    } | do $in
   }
   let bail: bool = $return == 'one'
   let rules: table = $rules | default any $.type
@@ -378,7 +386,7 @@ export def rules [
   let found: table = if $strict {
     # A container with no declared children is open; one that failed, or sits under one that did, cannot be scanned.
     containers $rows
-    | where {|box| not ($dead != [] and ($dead | under $box.at)) }
+    | where not ($dead != [] and ($dead | under $it.at))
     | each --flatten {|box|
       let names: list<string> = $rows | where parent == $box.repr | get leaf
       if $names == [] { [] } else {
@@ -401,7 +409,10 @@ export def rules [
       | str trim
       | format pattern "[{index}]: {hint}"
       | align ':'
-    error raise 'validation completed with errors' --kind invalid_argument --advice $help
+    error raise 'validation completed with errors' ...{
+      kind: invalid_argument
+      advice: $help
+    }
   } else {
     return $in
   }
@@ -419,8 +430,8 @@ def fits [value: any type: string]: nothing -> bool {
       any => true
       number => ($kind in [int float])
       record => ($kind starts-with record)
-      table => (($kind starts-with table) or (($kind starts-with list) and ($value | all {|v| ($v | describe) starts-with record })))
-      $l if $l starts-with 'list<' => (($kind =~ '^(list|table)') and ($value | all {|v| fits $v ($l | str substring 5..-2) }))
+      table => (($kind starts-with table) or (($kind starts-with list) and ($value | all ($it | describe) starts-with record)))
+      $l if $l starts-with 'list<' => (($kind =~ '^(list|table)') and ($value | all (fits $it ($l | str substring 5..-2))))
       _ => ($kind == $t)
     }
     if $ok { return true }
@@ -483,11 +494,15 @@ def failure [
 ]: nothing -> record<path: cell-path, rule: string, hint: string, reason: string, data: any> {
   # Only a preset name or `--custom` templates reach here; anything else is a defect in this module.
   let preset: record = $custom | default ($RULE_PRESETS | get --ignore-case --optional $rule)
-    | default { error raise $"'($rule)' is not a rule preset and no custom templates were given" --kind internal }
+    | default {
+      error raise $"'($rule)' is not a preset and no custom templates were given" --kind internal
+    }
     | compact --empty
     | default false syntax
   let missing: list<string> = [reason hint] | where $preset not-has $it
-  if $missing != [] { error raise $"the rule '($rule)' has no ($missing | str join ' or ') template" --kind internal }
+  if $missing != [] {
+    error raise $"the rule '($rule)' has no ($missing | str join ' or ') template" --kind internal
+  }
   let literal: list<string> = $preset.literal? | default []
   let fields: record = $context | record each {|key value|
     {

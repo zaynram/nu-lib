@@ -100,9 +100,11 @@ or a new external dependency.
     record; it is not a key/value conversion for `[[k v]; …]` tables.
   - `rotate` is a matrix rotation for tables: on a record it puts values before keys (`rotate key value` labels
     them backwards) and `--ccw` reverses the order. Use `transpose` for records.
-- Predicates are row conditions, not closures: `where $it.n > 1`, `take until $it == $x`, `skip while $it < 3`,
-  `any $it.name == $n`, `all $it in $expected` — never `where {|r| $r.n > 1 }`. A longer condition goes in
-  parentheses over several lines; a closure is only for a predicate that needs more than one expression.
+- Predicates are row conditions, not closures: `where name =~ $re`, `where size? > 1kb`, `take until name == $x`,
+  `skip while $it < 3`, `any name == $n`, `all $it in $expected` — never `where {|r| $r.n > 1 }`. As the left operand
+  of an operator (not inside parentheses) a column is named directly and takes the cell-path operators (`name!?`),
+  but not the `$.` prefix; inside parentheses, on the right side, or for a scalar element use `$it`. A closure is
+  only for a predicate that needs more than one expression.
 - `each` doubles as "apply if present": piped a scalar or record it runs the closure once and returns the bare result;
   piped `null` it skips the closure. Only use it that way where the value can never be a list (a list is iterated).
 - `each` by default; `par-each` costs ~1 ms per call before any work, so it only pays off when each item does slow

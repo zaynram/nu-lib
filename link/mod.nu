@@ -37,18 +37,25 @@ export def bin [
         _ => {
           let res: record = ^sudo unlink $config.link out+err>| complete
           if $res.exit_code != 0 {
-            error raise $"unable to remove the dangling link '($config.link)'" --kind external_failure --advice ($res.stdout | str trim)
+            error raise $"unable to remove the dangling link '($config.link)'" ...{
+              kind: external_failure
+              advice: ($res.stdout | str trim)
+            }
           }
         }
       }
     }
-    $type => { error raise $"a ($type) that is not a link already exists at '($config.link)'" --kind conflict }
+    $type => {
+      error raise $"a ($type) that is not a link already exists at '($config.link)'" --kind conflict
+    }
   }
   let source: path = which --all $name
     | where type == external and ($it.path | path dirname) not-in $config.skip
     | get --optional 0.path
     | default {
-      error raise $"no external '($name)' found on PATH outside ($config.skip | str join ', ')" --kind not_found
+      error raise $"no external '($name)' found on PATH outside ($config.skip | str join ', ')" ...{
+        kind: not_found
+      }
     }
   let res: record = match $os {
     windows => {
@@ -58,7 +65,10 @@ export def bin [
     _ => { ^sudo ln -s $source $config.link out+err>| complete }
   }
   if $res.exit_code != 0 {
-    error raise $"unable to link '($source)' at '($config.link)'" --kind external_failure --advice ($res.stdout | str trim)
+    error raise $"unable to link '($source)' at '($config.link)'" ...{
+      kind: external_failure
+      advice: ($res.stdout | str trim)
+    }
   }
   $config.link
 }

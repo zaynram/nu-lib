@@ -50,9 +50,12 @@ export def paint [
   let text: string = $in
   let prefix: string = $codes | each {|code|
     try { ansi $code } catch {
-      error raise $"unknown ansi code '($code)'" --kind invalid_argument --labels [
-        {text: 'not a name from `ansi --list`' span: (metadata $codes).span}
-      ] | do $in
+      error raise $"unknown ansi code '($code)'" ...{
+        kind: invalid_argument
+        labels: [
+          {text: 'not a name from `ansi --list`' span: (metadata $codes).span}
+        ]
+      } | do $in
     }
   } | str join
   if $codes != [] and ($colors | default { colors }) { $"($prefix)($text)(ansi reset)" } else { $text }
@@ -78,9 +81,12 @@ export def --wrapped "ansi extern" [
 ]: nothing -> string {
   # The attribute is checked before the colour decision, so a bad name is an error without a terminal too.
   let pre: string = if $attr == null { '' } else if $attr in (_ansi_attributes) { ansi $'attr_($attr)' } else {
-    error raise $"unknown attribute '($attr)'" --kind invalid_argument --labels [
-      {text: $"expected one of: (_ansi_attributes | str join ', ')" span: (metadata $attr).span}
-    ] | do $in
+    error raise $"unknown attribute '($attr)'" ...{
+      kind: invalid_argument
+      labels: [
+        {text: $"expected one of: (_ansi_attributes | str join ', ')" span: (metadata $attr).span}
+      ]
+    } | do $in
   }
   let args: string = if $rest == [] { '' } else {
     ' ' + ($rest | each { if $in =~ '\s' or $in == '' { to nuon } else { } } | str join ' ')

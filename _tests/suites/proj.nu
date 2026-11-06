@@ -395,7 +395,7 @@ def "test remote url forms" []: nothing -> nothing {
         git-init $dir --remote $url
       } | ignore
       let rows = in-proj $fx 'proj scan --force | ignore; proj list --kind src | select name host repo'
-      let got: record = $rows | where {|r| $remotes has $r.name } | each {|r| {($r.name): [$r.host $r.repo]} } | into record
+      let got: record = $rows | where $remotes has $it.name | each {|r| {($r.name): [$r.host $r.repo]} } | into record
       assert equal $got.port [github owner/port] 'ssh with a port'
       assert equal $got.scheme [github owner/scheme] 'ssh scheme'
       assert equal $got.slash [gitlab owner/slash] 'https with a user and a trailing slash'
@@ -463,7 +463,7 @@ def "test fixture registers and removes test projects" []: nothing -> nothing {
 def "test fixture after without before raises" []: nothing -> nothing {
   case {|fx|
       let err = caught-in-proj $fx 'use proj [test]; test after'
-      assert equal $err.msg "project test fixture is inactive for kind: 'test'" 'inactive fixture'
+      assert equal $err.msg "test fixture is inactive for kind 'test'" 'inactive fixture'
       # the code names the raising def; the `test` submodule it lives in is not a segment
       assert equal $err.code 'proj::after::conflict' 'the code'
   }

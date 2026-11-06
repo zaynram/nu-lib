@@ -50,13 +50,13 @@ def "test every level writes one line to stderr" []: nothing -> nothing {
 
 def "test lines are plain when colours are off" []: nothing -> nothing {
   let res = logged 'log critical one; log error two; log warning three; log info four'
-  assert ($res.stderr | all { $in !~ '\e\[' }) $'no escape sequences without a terminal: ($res.stderr)'
+  assert ($res.stderr | all $it !~ '\e\[') $'no escape sequences without a terminal: ($res.stderr)'
   assert equal ($res.stderr | parse --regex $LINE | get msg) [one two three four] 'the lines parse as written'
 }
 
 def "test lines are coloured when colours are on" []: nothing -> nothing {
   let res = logged $"($COLORED); log warning w; log info i"
-  assert ($res.stderr | all { $in =~ '\e\[' }) $'escape sequences with colours on: ($res.stderr)'
+  assert ($res.stderr | all $it =~ '\e\[') $'escape sequences with colours on: ($res.stderr)'
   assert str contains $res.stderr.0? $'|(ansi yellow)WRN(ansi reset)|' 'a warning takes the std colour for the level'
   assert equal ($res.stderr | ansi strip | parse --regex $LINE | get msg) [w i] 'the same text underneath'
 }

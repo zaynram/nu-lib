@@ -66,7 +66,7 @@ let carried = $module.commands.decl_id | append $module.aliases.decl_id
   submodules: (
     $module.submodules | where {|sub|
       let own = $sub.commands.decl_id | append $sub.aliases.decl_id
-      ($own | is-empty) or ($own | any {|id| $id not-in $carried })
+      ($own | is-empty) or ($own | any $it not-in $carried)
     } | get name
   )
 }
@@ -110,7 +110,7 @@ def locate [target: path]: nothing -> path {
   if ($target | path exists) { return $target }
   include-dirs
   | each {|dir| $dir | path join $target }
-  | where {|p| ($p | path type) == file or ($p | path join mod.nu | path exists) }
+  | where (($it | path type) == file or ($it | path join mod.nu | path exists))
   | get --optional 0
   | default $target
 }
@@ -141,7 +141,10 @@ def introspect [ctx: record]: nothing -> record {
   let out = ^$nu.current-exe --no-config-file --include-path=(include-dirs | str join (char esep)) --commands $script
     | complete
   if $out.exit_code != 0 {
-    error raise $"the module could not be collected after `($ctx.uses | last)`" --kind external_failure --advice ($out.stderr | str trim)
+    error raise $"the module could not be collected after `($ctx.uses | last)`" ...{
+      kind: external_failure
+      advice: ($out.stderr | str trim)
+    }
   }
   $out.stdout | from nuon
 }
@@ -253,7 +256,10 @@ export def collect [
   ...targets: string # module names or paths (directory, mod.nu, or file.nu)
 ]: nothing -> table {
   if ($targets | is-empty) {
-    error raise 'at least one module target is required' --kind invalid_argument --advice 'give a module name, or the path of a module directory, its mod.nu, or a single-file module'
+    error raise 'at least one module target is required' ...{
+      kind: invalid_argument
+      advice: 'give a module name, or the path of a module directory, its mod.nu, or a single-file module'
+    }
   }
   $targets | each {|target|
     let t = resolve $target

@@ -60,7 +60,7 @@ def with-sudo [ctx: record code: string]: nothing -> record {
 # 404.
 const UPGRADE_GUARD: string = r#'
 use conf/machine.nu [ machine-config ]
-let outside = (machine-config user).binaries | where {|d| not ($d starts-with $env.HOME) and not ($d starts-with $env.SBPMAN_NUBIN) }
+let outside = (machine-config user).binaries | where not ($it starts-with $env.HOME) and not ($it starts-with $env.SBPMAN_NUBIN)
 if $outside != [] { error make --unspanned {msg: $"refusing to run: binaries outside the sandbox: ($outside)"} }
 def "http get" [url: string --headers: record = {} --raw] {
   let file = if $url == 'https://api.github.com/repos/nushell/nightly/releases' {
@@ -122,7 +122,7 @@ def stubbed-upgrade [ctx: record code: string --failing: list<string> = [] --clo
 
 def "test registry lists the upgrade commands" []: nothing -> nothing {
   assert equal ($pman.REGISTRY | columns) $REGISTRY_BINS 'the managed binaries'
-  assert ($pman.REGISTRY | values | all {|v| ($v | describe) =~ '^list<list' }) 'each entry is a list of argument sets'
+  assert ($pman.REGISTRY | values | all ($it | describe) =~ '^list<list') 'each entry is a list of argument sets'
 }
 
 def "test log lives in the cache dir" []: nothing -> nothing {
@@ -132,7 +132,7 @@ def "test log lives in the cache dir" []: nothing -> nothing {
 def "test bump nu is exported" []: nothing -> nothing {
   let names: list<string> = scope commands | get name | where $it starts-with 'pman '
   assert ('pman bump-nu' in $names) 'the nightly installer'
-  assert not ($names | any { $in =~ 'nightly' }) "the submodule's helpers stay private"
+  assert not ($names | any $it =~ 'nightly') "the submodule's helpers stay private"
 }
 
 # ——— history ——————————————————————————————————————————————————————————————————
@@ -217,7 +217,7 @@ def "test upgrade runs every registry entry" []: nothing -> nothing {
     assert equal $r.value.rustup [{output: "rustup upgrade\n" success: true}] 'stdout of a successful call'
     assert equal ($r.value.pixi | get output) ["pixi self-update\n" "pixi global update\n"] 'argument sets run in order'
     assert equal ($r.calls | where $it starts-with bun) ['bun upgrade --canary' 'bun --global update'] 'every set runs, one after another, in order'
-    assert not ($r.calls | any { $in starts-with 'sudo' }) 'no system packages without --system'
+    assert not ($r.calls | any $it starts-with 'sudo') 'no system packages without --system'
   }
 }
 
@@ -252,7 +252,7 @@ def "test upgrade input overrides the registry" []: nothing -> nothing {
     assert ($dprint.output starts-with 'invalid arguments') 'a malformed entry is reported'
     assert equal $dprint.success false 'and failed'
     assert equal $r.value.sbpman_missing [{output: "command not found: 'sbpman_missing'" success: false}] 'a missing binary is reported'
-    assert not ($r.calls | any { $in starts-with 'dprint' }) 'the overridden entry does not run'
+    assert not ($r.calls | any $it starts-with 'dprint') 'the overridden entry does not run'
   }
 }
 
@@ -871,7 +871,7 @@ def "test the smoke test imports the barrel and every module directory" []: noth
     assert equal ($imported | first) ($ROOT | path basename) $'the barrel first: ($program)'
     # `drop nth 0`, not `skip 1`: `skip` is the runner's command in a suite.
     assert equal ($imported | drop nth 0 | sort) ($expected | sort) 'then every module directory under the root'
-    assert ([util var mount _tests] | all {|m| $m in $expected }) 'those the barrel does not expose included'
+    assert ([util var mount _tests] | all $it in $expected) 'those the barrel does not expose included'
   }
 }
 

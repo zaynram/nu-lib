@@ -91,7 +91,10 @@ export module test {
   export def --env after [kind: string = 'test']: nothing -> nothing {
     let t: string = kind-to-table-name $kind
     if $env not-has project_testing or $env.project_testing!? != {kind: $kind table: $t} {
-      error raise $"project test fixture is inactive for kind: '($kind)'" --kind conflict --advice 'run `test before` with the same kind first'
+      error raise $"test fixture is inactive for kind '($kind)'" ...{
+        kind: conflict
+        advice: 'run `test before` with the same kind first'
+      }
     } else {
       # Hidden first: after a `def --env` call such as `kv drop`, `hide-env` no longer reaches the caller.
       hide-env project_testing
@@ -125,9 +128,12 @@ export def scan [
 ]: nothing -> oneof<ScanMetadata, nothing> {
   if $prune { print $"removed (prune-missing-dirs) projects"; return }
   # The arguments and the workspace are checked before the TTL short-circuit: a fresh snapshot excuses neither.
-  let unknown: list<string> = $kinds | where {|k| $KIND not-has $k }
+  let unknown: list<string> = $kinds | where $KIND not-has $it
   if $unknown != [] {
-    error raise $"unknown kind: '($unknown | first)'" --kind invalid_argument --advice $"kinds: ($KIND | columns | str join ', ')"
+    error raise $"unknown kind: '($unknown | first)'" ...{
+      kind: invalid_argument
+      advice: $"kinds: ($KIND | columns | str join ', ')"
+    }
   }
   let work: path = workspace
   let current: oneof<nothing, record> = snapshot
@@ -135,7 +141,7 @@ export def scan [
     return $current.last_scan
   }
   let scanned: list<string> = $KIND | columns | where $it in $kinds
-  if $reset and ($KIND | columns | all {|k| $k in $kinds }) { reset-table proj }
+  if $reset and ($KIND | columns | all $it in $kinds) { reset-table proj }
   let start: datetime = date now
   # The registered projects that stay: every kind's rows whose directory still exists; none for a kind being reset.
   let kept: record = $KIND | columns | each {|k|
@@ -176,7 +182,10 @@ export def kind [
 ]: nothing -> oneof<KindSummary, list<KindSummary>, error> {
   match ($kind | describe) {
     string if $KIND not-has $kind => {
-      error raise $"unknown kind: '($kind)'" --kind invalid_argument --advice $"kinds: ($KIND | columns | str join ', ')"
+      error raise $"unknown kind: '($kind)'" ...{
+        kind: invalid_argument
+        advice: $"kinds: ($KIND | columns | str join ', ')"
+      }
     }
     string => {
       name: $kind
@@ -184,7 +193,9 @@ export def kind [
       description: ($KIND | get $kind)
       projects: (rows-of $kind | each {|p| $p | insert kind $kind })
     }
-    nothing if not $all => { error raise 'a kind must be provided without `--all`' --kind invalid_argument }
+    nothing if not $all => {
+      error raise 'a kind must be provided without `--all`' --kind invalid_argument
+    }
     nothing => (
       $KIND | transpose name description
       | insert $.root {|row| workspace | path join $row.name }
@@ -342,7 +353,7 @@ def is-stale [snap: record]: nothing -> bool { # nu-lint-ignore: unused_helper_f
 }
 
 # Whether a hydration job is running in this shell.
-def is-hydrating []: nothing -> bool { job list | any {|j| $j.description? == $JOB } }
+def is-hydrating []: nothing -> bool { job list | any description? == $JOB }
 
 # Refresh a missing or stale snapshot in a background job, unless another shell is already at it. The job is
 # disposable (`--auto-kill`: the snapshot write is atomic, so a killed job leaves the previous snapshot in place) and
@@ -424,7 +435,12 @@ def inspect [root: path name: string]: nothing -> record {
 # Drop the registered projects whose directory is gone and restamp the snapshot; returns how many were dropped.
 def prune-missing-dirs []: nothing -> int {
   let snap: record = snapshot
-    | default { error raise 'no metadata found' --kind not_found --advice 'run a scan first' }
+    | default {
+      error raise 'no metadata found' ...{
+        kind: not_found
+        advice: 'run a scan first'
+      }
+    }
   let kinds: record = $snap.kinds | record each {|k rows| {$k: ($rows | where ($it.path | path exists))} }
   let removed: int = ($snap.kinds | count) - ($kinds | count)
   $snap | update kinds $kinds | update stamp (stamp (workspace)) | upsert pruned_at (date now) | write-snapshot
@@ -446,7 +462,10 @@ def has-workspace []: nothing -> bool { $env.work!? | is-not-empty }
 # The workspace root, `$env.WORK`; raises an error naming the variable when it is unset or empty.
 def workspace []: nothing -> path {
   if not (has-workspace) {
-    error raise 'WORK is not set' --kind missing_dependency --advice 'set $env.WORK to the workspace root (the directory that holds src, txt, dev and ext)'
+    error raise 'WORK is not set' ...{
+      kind: missing_dependency
+      advice: 'set $env.WORK to the workspace root (the directory that holds src, txt, dev and ext)'
+    }
   }
   $env.work!
 }

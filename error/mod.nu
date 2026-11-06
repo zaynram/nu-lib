@@ -63,7 +63,7 @@ def namespace [text: string, file: path]: nothing -> string {
   }
   if $directive != null { return $directive }
   let root: oneof<nothing, string> = roots
-    | where {|r| $file | str starts-with ($r | path join '') }
+    | where $file starts-with ($it | path join '')
     | sort-by --reverse { str length }
     | get $.0?
   let relative: string = if $root == null { $file | path basename } else { $file | path relative-to $root }

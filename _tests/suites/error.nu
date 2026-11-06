@@ -99,19 +99,28 @@ def "test raise from a module under the repository root" []: nothing -> nothing 
 # ——— overrides and the other details ———————————————————————————————————————————
 
 def "test raise with a code" []: nothing -> nothing {
-  assert equal (caught { error raise 'it broke' --code 'mymod::ctx::kind' --kind not_found }).code 'mymod::ctx::kind' 'the code replaces the derived one'
+  let e = caught {
+    error raise 'it broke' ...{
+      code: 'mymod::ctx::kind'
+      kind: not_found
+    }
+  }
+  assert equal $e.code 'mymod::ctx::kind' 'the code replaces the derived one'
 }
 
 def "test raise with an empty code has no code" []: nothing -> nothing {
-  assert equal (caught { error raise 'it broke' --code '' }).code null 'an empty code is not derived, it is left out'
+  let e = caught { error raise 'it broke' --code '' }
+  assert equal $e.code null 'an empty code is not derived, it is left out'
 }
 
 def "test raise with advice" []: nothing -> nothing {
-  assert equal (caught { error raise 'it broke' --advice 'try again' }).help 'try again' 'the advice is the help'
+  let e = caught { error raise 'it broke' --advice 'try again' }
+  assert equal $e.help 'try again' 'the advice is the help'
 }
 
 def "test raise leaves out empty advice" []: nothing -> nothing {
-  assert equal (caught { error raise 'it broke' --advice '' }).help null 'an empty string is compacted away'
+  let e = caught { error raise 'it broke' --advice '' }
+  assert equal $e.help null 'an empty string is compacted away'
 }
 
 def "test raise wraps a record input as the inner error" []: nothing -> nothing {
@@ -136,7 +145,10 @@ def "test raise wraps a caught error as the inner error" []: nothing -> nothing 
 
 def "test raise with labels returns a closure" []: nothing -> nothing {
   let span = (metadata 'here').span
-  let raiser = error raise 'it broke' --kind conflict --labels [{text: 'right here' span: $span}]
+  let raiser = error raise 'it broke' ...{
+    kind: conflict
+    labels: [{text: 'right here' span: $span}]
+  }
   assert equal ($raiser | describe) closure 'nothing is raised yet'
   let e = caught $raiser
   assert equal $e.msg 'it broke' 'the closure raises the error'
@@ -146,7 +158,8 @@ def "test raise with labels returns a closure" []: nothing -> nothing {
 }
 
 def "test raise with labels keeps the inner error" []: nothing -> nothing {
-  let raiser = {msg: 'the cause'} | error raise 'it broke' --labels [{text: x span: (metadata 'x').span}]
+  let cause = {msg: 'the cause'}
+  let raiser = $cause | error raise 'it broke' --labels [{text: x span: (metadata 'x').span}]
   assert equal ((caught $raiser).inner | get msg) ['the cause'] 'the input is captured by the closure'
 }
 

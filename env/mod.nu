@@ -77,7 +77,7 @@ export def --env add [
     | if $name != null { upsert $name $value } else { }
   let added: record = $conversions | default [] | each {|c| {$c.name: ($c | select to_string from_string)} } | into record
   let e: record = if $default {
-      $vars | reject ...($vars | columns | where {|k| null | has --nullable=false $k })
+      $vars | reject ...($vars | columns | where (null | has --nullable=false $it))
     } else { $vars }
     | if $added == {} { } else {
       upsert $.ENV_CONVERSIONS {|| $env.ENV_CONVERSIONS? | default {} | merge ($in | default {}) | merge $added }
@@ -112,9 +112,11 @@ export def has [
   let keys: list<string> = $in | append $names
   if $keys == [] { error raise 'no variable names were provided' --kind invalid_argument }
   let found: list<bool> = $keys | each {|k|
-    let key: oneof<nothing, string> = $env | columns | where {|c|
-      if $ignore_case { ($c | str lowercase) == ($k | str lowercase) } else { $c == $k }
-    } | get 0?
+    let wanted: string = if $ignore_case { $k | str lowercase } else { $k }
+    let key: oneof<nothing, string> = $env
+      | columns
+      | where (if $ignore_case { $it | str lowercase } else { $it }) == $wanted
+      | get 0?
     $key != null and ($nullable or ($env | get $key) != null)
   }
   # a single positional name returns its bool alone; a piped list always returns a list
@@ -140,7 +142,9 @@ export def --env dotenv [
   --load (-l) # Load the variables into the process environment
   --no-transpose (-n) # Return the variables as a table instead of a record
 ]: nothing -> oneof<table<key: string, value: string>, record> {
-  if not ($dotenv_path | path exists) { error raise $"file not found: '($dotenv_path)'" --kind not_found }
+  if not ($dotenv_path | path exists) {
+    error raise $"file not found: '($dotenv_path)'" --kind not_found
+  }
   let text: string = try { open --raw $dotenv_path } catch {|e|
     $e | error raise $"'($dotenv_path)' could not be read" --kind io
   }

@@ -311,7 +311,7 @@ def "test machine config a file that is not a record is invalid" []: nothing -> 
     let other: path = override $ctx machine.toml 'a = 1'
     let unsupported: record = caught {|| conf machine-config --file $other }
     assert equal $unsupported.code conf::machine::load::invalid_argument 'other extensions are invalid'
-    assert ($unsupported.msg =~ 'expected .nuon or .nu') $'the supported forms are named: ($unsupported.msg)'
+    assert ($unsupported.msg =~ '.nuon or .nu') $'the supported forms are named: ($unsupported.msg)'
   }
 }
 
@@ -517,9 +517,9 @@ def "test use conf adds library dirs and keeps existing ones" []: nothing -> not
     let v: record = value $ctx '$env | select NU_LIB_DIRS NU_PLUGIN_DIRS' --prelude $prelude
     let consts: record = value $ctx '{lib: $conf.NU_LIB_DIRS plugins: $conf.NU_PLUGIN_DIRS}' --prelude 'use conf'
     assert ('/sbconf/existing' in $v.NU_LIB_DIRS) 'existing lib dirs survive `use conf`'
-    assert ($consts.lib | all {|d| $d in $v.NU_LIB_DIRS }) 'every library dir is added'
+    assert ($consts.lib | all $it in $v.NU_LIB_DIRS) 'every library dir is added'
     assert equal ($v.NU_LIB_DIRS | first) $ROOT 'the library root takes precedence'
-    assert ($consts.plugins | all {|d| $d in $v.NU_PLUGIN_DIRS }) 'plugin dirs are added'
+    assert ($consts.plugins | all $it in $v.NU_PLUGIN_DIRS) 'plugin dirs are added'
   }
 }
 
@@ -542,7 +542,7 @@ def "test use conf splits an inherited NU_PLUGIN_DIRS string" []: nothing -> not
     assert equal ($res.value | last 2) ['/sbconf/a' '/sbconf/b'] 'the inherited entries are kept, after the scope'
     # The constants follow the grandchild's sandbox HOME, not this child's.
     let consts: list<string> = value $ctx '$conf.NU_PLUGIN_DIRS'
-    assert ($consts | all {|d| $d in $res.value }) 'and the library plugin dirs are added'
+    assert ($consts | all $it in $res.value) 'and the library plugin dirs are added'
   }
 }
 
@@ -752,7 +752,7 @@ def "test prompt rejects a missing or unknown config" []: nothing -> nothing {
     let txt: path = $ctx.code | path join theme.txt
     'x' | save $txt
     let unknown: record = child $ctx $'($stub)conf prompt --config ($txt)'
-    assert ($unknown.stderr =~ 'unexpected configuration file format') $'an unknown format raises: ($unknown.stderr)'
+    assert ($unknown.stderr =~ 'unsupported format') $'an unknown format raises: ($unknown.stderr)'
     assert ($unknown.stderr =~ 'conf::prompt::invalid_argument') $'the invalid_argument code: ($unknown.stderr)'
   }
 }

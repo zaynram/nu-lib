@@ -137,7 +137,7 @@ def "test plain shells get the missing lib dirs only" []: nothing -> nothing {
     let r: record = plain $ctx '{dirs: $env.NU_LIB_DIRS consts: $NU_LIB_DIRS}' --prelude $prelude
     assert equal ($r.dirs | take 2) [$ROOT /sbbarrel/existing] 'existing entries keep their order'
     assert equal ($r.dirs | length) ($r.dirs | uniq | length) 'the library root is not added twice'
-    assert ($r.consts | all {|d| $d in $r.dirs }) 'every library dir is present'
+    assert ($r.consts | all $it in $r.dirs) 'every library dir is present'
   }
 }
 
@@ -182,7 +182,7 @@ def "test windows loader follows the kernel without WSL_DISTRO_NAME" []: nothing
 def "test login shells load conf" []: nothing -> nothing {
   with-sandbox {|ctx|
     let r: record = login $ctx '{plugins: $env.NU_PLUGIN_DIRS vendor: (conf machine-config vendor --host other).plugins home: $env.mods_home?}' --not-interactive
-    assert ($r.vendor | all {|d| $d in $r.plugins }) 'the vendor plugin dirs are loaded'
+    assert ($r.vendor | all $it in $r.plugins) 'the vendor plugin dirs are loaded'
     assert equal $r.home null 'mods needs an interactive shell too'
   }
 }

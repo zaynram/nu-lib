@@ -130,7 +130,10 @@ export def --env "win env" [
 ]: oneof<nothing, record> -> oneof<nothing, record, any> {
   let input: record = default {}
   if $path not-in [merge overwrite] {
-    error raise $"invalid value for `--path`: '($path)'" --kind invalid_argument --advice 'merge or overwrite'
+    error raise $"unknown --path '($path)'" ...{
+      kind: invalid_argument
+      advice: 'merge or overwrite'
+    }
   }
   # the cache holds the raw Windows variables; `--path` is applied afterwards
   let windows: record = if $reset { null } else { try { open $_save | from msgpack } }
@@ -173,7 +176,9 @@ export def --env "win home" [
   } else if $edit {
     run-external $env.EDITOR? $p
   } else if $cd {
-    try { cd $p } catch {|e| $e | error raise $"resolved path is not a valid directory: '($p)'" --kind not_found }
+    try { cd $p } catch {|e|
+      $e | error raise $"resolved path is not a valid directory: '($p)'" --kind not_found
+    }
   }
 }
 
@@ -199,6 +204,8 @@ export def --env "win path" [
   } else if $edit {
     run-external $env.EDITOR? $p
   } else if $cd {
-    try { cd $p } catch {|e| $e | error raise $"resolved path is not a valid directory: '($p)'" --kind not_found }
+    try { cd $p } catch {|e|
+      $e | error raise $"resolved path is not a valid directory: '($p)'" --kind not_found
+    }
   }
 }

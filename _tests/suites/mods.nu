@@ -88,7 +88,7 @@ def "test refresh drops piped rows that are hidden" []: nothing -> nothing {
 def "test list short names the loaded modules" []: nothing -> nothing {
   let names: list<string> = mods list --short
   assert ('mods' in $names) 'mods is loaded'
-  assert ($names | all { $in !~ '^_' }) 'private modules are omitted'
+  assert ($names | all $it !~ '^_') 'private modules are omitted'
 }
 
 def "test list describes a module" []: nothing -> nothing {

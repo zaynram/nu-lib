@@ -103,7 +103,10 @@ export alias week = list :week
 def tw [...args: string]: nothing -> string {
   let res: record = timew ...$args :yes :quiet | complete
   if $res.exit_code != 0 {
-    error raise $"timew ($args.0) exited with code ($res.exit_code)" --kind external_failure --advice ($res.stderr | str trim)
+    error raise $"timew ($args.0) exited with code ($res.exit_code)" ...{
+      kind: external_failure
+      advice: ($res.stderr | str trim)
+    }
   }
   $res.stdout
 }

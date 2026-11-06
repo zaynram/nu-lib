@@ -29,7 +29,10 @@ export def rejoin [
   let input: oneof<nothing, string, list<string>> = $in
   match ($input | describe | str replace --regex '<.*' '') {
     nothing if ($segments | is-empty) => {
-      error raise 'nothing to join' --kind invalid_argument --advice 'pipe a path (or a list of paths), or give segments'
+      error raise 'nothing to join' ...{
+        kind: invalid_argument
+        advice: 'pipe a path (or a list of paths), or give segments'
+      }
     }
     list => { $input | each {|p| [$p] | append $segments | join-with $sep } }
     _ => { [$input] | append $segments | compact | join-with $sep }
@@ -51,13 +54,23 @@ export def truncate [
   list<oneof<path, string>> -> list<oneof<path, string>>
 ] {
   let queue: any = $in
-  if $n == 0 { error raise 'cannot keep zero segments' --kind invalid_argument --advice 'a negative count keeps every segment' }
+  if $n == 0 {
+    error raise 'cannot keep zero segments' ...{
+      kind: invalid_argument
+      advice: 'a negative count keeps every segment'
+    }
+  }
   let trim: closure = if $from =~ ^e {
     {|n: int| last $n }
   } else if $from =~ ^s {
     {|n: int| first $n }
-  } else { error raise $"unknown --from '($from)'" --kind invalid_argument --advice 'use start or end' }
-  let glob: bool = $queue | any { describe | $in == string }
+  } else {
+    error raise $"unknown --from '($from)'" ...{
+      kind: invalid_argument
+      advice: 'use start or end'
+    }
+  }
+  let glob: bool = $queue | any ($it | describe) == string
   $queue | each {|item|
     let base: path = if $glob { $item } else { $item.name }
       | if $root == null { $in } else { path relative-to ($root | path expand) }
@@ -87,6 +100,9 @@ export def select [
     match ($choice | describe) { string => $choice _ => { $choice | get --optional $column } }
   } else if not $optional {
     # The message is the caller's `--message`, whose span lies at the call site, so the code cannot be derived here.
-    error raise $message --kind invalid_argument --code 'path::select::invalid_argument'
+    error raise $message ...{
+      kind: invalid_argument
+      code: 'path::select::invalid_argument'
+    }
   }
 }

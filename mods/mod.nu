@@ -82,7 +82,9 @@ def module-file-shorthand []: [
   let p: oneof<nothing, path>;
   $env.mods_refs?
   | default ($SHORT | reverse | build-mods-refs)
-  | if $p == null { } else { where {|ref| $p == $ref.find or $p starts-with ($ref.find | path join '') } | get 0? }
+  | if $p == null { } else {
+    where ($p == $it.find or $p starts-with ($it.find | path join '')) | get 0?
+  }
 }
 
 # Replace a path's prefix with its shorthand (`~`, `@` for mods_home, `$` for nupm modules).
@@ -100,7 +102,7 @@ def shorten []: path -> path {
 # registers the `use`/`hide` tracking hook once (re-`use` adds nothing).
 export-env {
   if $env.mods_home!? == null {
-    let home: oneof<nothing, path> = $env.NU_LIB_DIRS? | default [] | where { path exists } | get 0?
+    let home: oneof<nothing, path> = $env.NU_LIB_DIRS? | default [] | where ($it | path exists) | get 0?
     if $home != null { $env.mods_home = $home }
   }
   if $env.mods_refs!? == null { $env.mods_refs = module-file-shorthand }
@@ -147,13 +149,19 @@ export def --env define [
   let base: path = $directory
     | default $env.mods_home!?
     | default {
-      error raise 'no directory to save the module under' --kind missing_dependency --advice 'pass --directory or set $env.mods_home'
+      error raise 'no directory to save the module under' ...{
+        kind: missing_dependency
+        advice: 'pass --directory or set $env.mods_home'
+      }
     }
   let directory: directory = $base | path expand --no-symlink | append $name | path join
   if not ($directory | path exists) { mkdir $directory }
   let path: path = $directory | path join mod.nu
   if not $overwrite and ($path | path exists) {
-    error raise $"module '($name)' is already defined at '($path)'" --kind conflict --advice 'pass --overwrite to replace it'
+    error raise $"module '($name)' is already defined at '($path)'" ...{
+      kind: conflict
+      advice: 'pass --overwrite to replace it'
+    }
   }
   let source: list<string> = $block | preserve-serialized-closure
   try { $source | save --force --progress $path } catch {|e|
@@ -282,7 +290,9 @@ export def --env main [
   let input: any = $in
   list --update --short | ignore
   match ($input | describe | str replace --regex '<.*' '') {
-    closure if $name == null => (error raise 'name is required when defining a new module' --kind invalid_argument)
+    closure if $name == null => {
+      error raise 'name is required when defining a new module' --kind invalid_argument
+    }
     closure => (define $name $input)
     nothing if not $all and $name == null => (list-used | rename --column={key: name value: module_id})
     nothing => (list --short --overlays=$all $name)
@@ -297,10 +307,17 @@ export def --env main [
         | default $name name
         | default false overwrite
         | default { error raise 'module definition is required' --kind invalid_argument } definition
-        | default { error raise 'name is required when defining a new module' --kind invalid_argument } name
+        | default {
+          error raise 'name is required when defining a new module' --kind invalid_argument
+        } name
       define $m.name $m.definition --directory=$m.directory? --overwrite=$m.overwrite
     }
-    $t => (error raise $"unsupported input type '($t)'" --kind invalid_argument --advice 'pipe a closure, a details record or a record of name/closure pairs')
+    $t => {
+      error raise $"unsupported input type '($t)'" ...{
+        kind: invalid_argument
+        advice: 'pipe a closure, a details record or a record of name/closure pairs'
+      }
+    }
   }
 }
 

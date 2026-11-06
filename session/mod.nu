@@ -20,7 +20,10 @@ export type Session = record<name: string, age: duration, status: string>
 # client is one error instead of a failed external call.
 def need-client []: nothing -> nothing {
   if (which zellij | is-empty) {
-    error raise 'zellij is not on PATH' --kind missing_dependency --advice 'install zellij, or put its directory on PATH'
+    error raise 'zellij is not on PATH' ...{
+      kind: missing_dependency
+      advice: 'install zellij, or put its directory on PATH'
+    }
   }
 }
 
@@ -73,7 +76,10 @@ export def list [
   if $res.exit_code != 0 and $res.stderr =~ '(?i)no active zellij sessions' {
     return []
   } else if $res.exit_code != 0 {
-    error raise 'zellij could not list its sessions' --kind external_failure --advice ($res.stderr | str trim)
+    error raise 'zellij could not list its sessions' ...{
+      kind: external_failure
+      advice: ($res.stderr | str trim)
+    }
   }
   $res.stdout
   | lines
@@ -99,14 +105,25 @@ export def down [
   if $all {
     let res: record = client delete-all-sessions --yes --force
     if $res.exit_code != 0 {
-      error raise 'zellij could not delete the sessions' --kind external_failure --advice ($res.stderr | str trim)
+      error raise 'zellij could not delete the sessions' ...{
+        kind: external_failure
+        advice: ($res.stderr | str trim)
+      }
     }
   } else {
     let name: string = $name
-      | default { error raise 'a session name is required without --all' --kind invalid_argument --advice 'name the session to tear down, or pass --all' }
+      | default {
+        error raise 'a session name is required without --all' ...{
+          kind: invalid_argument
+          advice: 'name the session to tear down, or pass --all'
+        }
+      }
     let res: record = client delete-session --force $name
     if $res.exit_code != 0 {
-      error raise $"zellij could not delete the session '($name)'" --kind external_failure --advice ($res.stderr | str trim)
+      error raise $"zellij could not delete the session '($name)'" ...{
+        kind: external_failure
+        advice: ($res.stderr | str trim)
+      }
     }
   }
 }
@@ -139,7 +156,10 @@ export def --wrapped manage [
   } else if $env.ZELLIJ_SESSION_NAME? != null {
     ^zellij --session=($env.ZELLIJ_SESSION_NAME) action ...$rest
   } else {
-    error raise 'no session name was given and this shell is not inside a Zellij session' --kind invalid_argument --advice 'pass --session <name>, or run from inside the session'
+    error raise 'no session name was given and this shell is not inside a Zellij session' ...{
+      kind: invalid_argument
+      advice: 'pass --session <name>, or run from inside the session'
+    }
   }
 }
 
@@ -156,10 +176,18 @@ export def --wrapped exec [
   let piped: oneof<nothing, list<string>> = $in
   need-client
   let command: string = $rest | get --optional $.0
-    | default { error raise 'a command line is required' --kind invalid_argument --advice "`session exec 'cargo build' --floating`" }
+    | default {
+      error raise 'a command line is required' ...{
+        kind: invalid_argument
+        advice: "`session exec 'cargo build' --floating`"
+      }
+    }
   let words: list<string> = $command | split row ' ' | where $it != ''
   if $words == [] {
-    error raise $"the command line '($command)' names no program" --kind invalid_argument --advice "`session exec 'cargo build' --floating`"
+    error raise $"the command line '($command)' names no program" ...{
+      kind: invalid_argument
+      advice: "`session exec 'cargo build' --floating`"
+    }
   }
   let args: list<string> = $piped | default ($words | skip 1)
   ^zellij run ...($rest | skip 1) -- ($words | first) ...$args
