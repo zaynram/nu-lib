@@ -386,18 +386,36 @@ def "test return one honours colors" []: nothing -> nothing {
   let rule = [{path: $.a type: int}]
   let plain = {a: x} | rules $rule --return=one --colors=false
   assert equal $plain.hint '$.a has type string; expected int' 'no styles with --colors=false'
-  let styled = {a: x} | rules $rule --return=one
-  assert ($styled.hint != ($styled.hint | ansi strip)) 'styled by default'
+  let styled = {a: x} | rules $rule --return=one --colors=true
+  assert ($styled.hint != ($styled.hint | ansi strip)) 'styled with --colors=true, even without a terminal'
   assert equal ($styled.hint | ansi strip) $plain.hint 'the same text'
   let strict = {a: 1 b: 2} | rules $rule --return=one --strict --colors=false
   assert equal $strict.hint 'ensure $.b is a valid property' 'foreign keys too'
 }
 
-def "test colors style hints by default" []: nothing -> nothing {
+def "test colors follow config use-colors by default" []: nothing -> nothing {
   let rule = [{path: $.a type: int}]
+  assert not (({a: x} | rules $rule | get hint.0) =~ '\e\[') 'plain by default without a terminal (the child has none)'
+  $env.config.use_ansi_coloring = true
   let styled = {a: x} | rules $rule | get hint.0
-  assert ($styled =~ '\e\[') 'the hint has ANSI codes'
+  assert ($styled =~ '\e\[') 'styled by default when colours are on'
   assert equal ($styled | ansi strip) ({a: x} | rules $rule --colors=false | get hint.0) 'stripping matches --colors=false'
+  $env.config.use_ansi_coloring = false
+  assert not (({a: x} | rules $rule --return=one | get hint) =~ '\e\[') 'plain by default when colours are off, also with --return=one'
+}
+
+def "test literal fields are quoted in green when styled" []: nothing -> nothing {
+  let doc = {s: Ab code: 'x1' k: nope}
+  let rules = [{path: $.s pattern: '^[a-z]+$' class: 'lowercase letters'} {path: $.code pattern: '^\d+$'} {path: $.k const: yes}]
+  let styled = $doc | rules $rules --colors=true | get hint
+  assert equal ($styled | ansi strip) [
+    "$.s is 'Ab'; expected lowercase letters ('^[a-z]+$')"
+    "$.code is 'x1' which does not match '^\\d+$'"
+    "$.k must be exactly 'yes'"
+  ] 'the text with quotes around the literals'
+  assert ($styled | all { $in =~ $"'Ab'|'x1'|'yes'" }) 'the quotes are inside the styling'
+  assert ($styled | all { str contains $"(ansi g)'" }) 'the literals open in green'
+  assert ($styled.0? | default '' | str contains 'lowercase letters (') 'the class is not quoted'
 }
 
 def "test errors help lines are aligned" []: nothing -> nothing {

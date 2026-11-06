@@ -15,6 +15,7 @@
 
 use error
 use std-rfc/str align
+use style
 use types "cell-path join"
 
 # ——— constants ————————————————————————————————————————————————————————————————
@@ -27,6 +28,8 @@ const RETURNS: list<string> = [one input nothing table]
 # Tables with more rows than this are judged with `par-each`.
 const PARALLEL_ROWS: int = 64
 
+# A preset's `syntax: true` highlights every context field as nu code; `syntax: false` highlights `{at}` only and
+# shows the `literal` fields as quoted, green strings. `failure` always styles; `validate rules` strips afterwards.
 const RULE_PRESETS: record = {
   any-const: {
     reason: 'value is not the expected constant'
@@ -35,8 +38,9 @@ const RULE_PRESETS: record = {
   }
   str-const: {
     reason: 'value is not the expected string'
-    hint: $"{at} must be exactly (ansi g)'{const}'(ansi rst)"
+    hint: '{at} must be exactly {const}'
     syntax: false
+    literal: [const]
   }
   foreign-key: {
     reason: 'key is not one of the allowed properties'
@@ -70,13 +74,15 @@ const RULE_PRESETS: record = {
   }
   regex-simple: {
     reason: 'value does not match the expected pattern'
-    hint: $"{at} is (ansi g)'{actual}'(ansi rst) which does not match (ansi g)'{regex}'(ansi rst)"
+    hint: '{at} is {actual} which does not match {regex}'
     syntax: false
+    literal: [actual regex]
   }
   regex-class: {
     reason: 'value does not satisfy the regular expression'
-    hint: $"{at} is (ansi g)'{actual}'(ansi rst); expected {class} \((ansi g)'{regex}'(ansi rst))"
+    hint: '{at} is {actual}; expected {class} ({regex})'
     syntax: false
+    literal: [actual regex]
   }
   max-length: {
     reason: 'value has more characters than allowed'
@@ -269,10 +275,12 @@ export def rules [
   # - `'input'` means return `$in` (data; default)
   # - `'nothing'` means return `null`
   # - `'table'` means return `[]` (empty list; consistent shape)
-  --colors (-c) = true
-  # Use ANSI coloring in failure reasons and hints (`false` strips it, also with `--return=one`)
+  --colors (-c): oneof<nothing, bool>
+  # Use ANSI styles in failure reasons and hints (default: `style colors`, i.e. `config use-colors`); `false`
+  # strips them and `true` keeps them without a terminal, also with `--return=one`
 ]: record -> oneof<nothing, table<path: cell-path, rule: string, reason: string, hint: string, data: any>, record> {
   let data: record;
+  let colors: bool = $colors | default { style colors }
   if $return not-in $RETURNS {
     error raise $"invalid --return value '($return)'" --kind invalid_argument --labels [
       {text: $"expected one of ($RETURNS | str join ', ')" span: (metadata $return).span}
@@ -441,7 +449,8 @@ def under [at: cell-path]: list<cell-path> -> bool {
 }
 
 # One failure row, with rule based dynamic style application.
-# - Styles are stripped by request with `validate rules --colors=false`
+# - Styles are always applied here (`nu-highlight`, and `style paint` forced on); `validate rules` strips them when
+#   its `--colors` resolves to false, so the many callers of this command need no flag of their own.
 def failure [
   rule: string@_presets
   # Key of a pre-configured rule, or a standalone string
@@ -459,14 +468,18 @@ def failure [
     | default false syntax
   let missing: list<string> = [reason hint] | where $preset not-has $it
   if $missing != [] { error raise $"the rule '($rule)' has no ($missing | str join ' or ') template" --kind internal }
-  let fields: record = $context
-    | if $preset.syntax {
-      transpose key value
-      | update $.value { $'($in)' | nu-highlight }
-      | transpose --ignore-titles --header-row --as-record
-    } else {
-      update $.at ($'($in.at)' | nu-highlight)
+  let literal: list<string> = $preset.literal? | default []
+  let fields: record = $context | record each {|key value|
+    {
+      $key: (if $preset.syntax or $key == at {
+        $'($value)' | nu-highlight
+      } else if $key in $literal {
+        $"'($value)'" | style paint g --colors=true
+      } else {
+        $value
+      })
     }
+  }
   {
     path: $context.at
     rule: $rule
@@ -488,7 +501,8 @@ def fill-template [fields: record]: string -> string {
   } | str join
 }
 
-# Strip the styles of failure rows (a table, or the one record `--return=one` returns) unless `--colors` is set.
+# Strip the styles of failure rows (a table, or the one record `--return=one` returns) unless `--colors` is set
+# (the resolved value of `validate rules --colors`).
 def styled [--colors]: oneof<record, table> -> oneof<record, table> {
   if $colors { } else { ansi strip $.reason $.hint }
 }
