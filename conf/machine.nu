@@ -2,18 +2,29 @@
 
 # nu-lint-ignore-file: dispatch_with_subcommands
 
+# ——— imports ——————————————————————————————————————————————————————————————————
+
+use ../bash-env
+
 # ——— constants ————————————————————————————————————————————————————————————————
 
 const ROOT: path = path self .. | path expand --strict
 const MODE: list<string> = [user vendor]
 const STRATEGY: list<string> = [overwrite prepend append]
+# `.profile` variables (the owner's `XDG_*_DIR` naming) and the user-scope keys they set.
+const PROFILE_DIRS: record = {
+  XDG_DATA_DIR: share
+  XDG_CONFIG_DIR: config
+  XDG_CACHE_DIR: cache
+  XDG_STATE_DIR: state
+}
 const DEFAULT: record = {
   user: {
     home: $nu.home-dir
     share: ($nu.data-dir | path dirname)
     cache: ($nu.cache-dir | path dirname)
     config: ($nu.default-config-dir | path dirname)
-    state: ($nu.cache-dir | path dirname)
+    state: ($nu.home-dir | path join .local state)
     autoload: ($nu.user-autoload-dirs | first)
     modules: [
       $ROOT
@@ -50,8 +61,10 @@ type MachineConfig = oneof<UserMachineConfig, VendorMachineConfig>
 
 # Return the machine configuration based on the current platform and environment.
 #
-# The configuration target can be overridden manually with flags.
-# Custom environments can be used for testing purposes by piping a record in.
+# The defaults derive from Nushell's directories; a known host/OS/mode combination merges its own values over
+# them (`--strategy` decides how list values combine). When a host branch fails (e.g. a missing `~/.profile` or
+# an unset variable), the cause is printed on stderr and the defaults are returned. The target can be
+# overridden with `--host`/`--os`, and `--with` runs the lookup under a temporary environment (handy for tests).
 def main [
   mode: string@$MODE = user
   # Return the machine configuration for this space
@@ -59,40 +72,50 @@ def main [
   # Override the hostname to return the variables for (defaults to `hostname`)
   --os (-o): string = $nu.os-info.name
   # Override the OS (platform) to return variables for
-  --strategy (-s): string@$STRATEGY
-  # Strategy for merging machine-specific values into the defaults
+  --strategy (-s): string@$STRATEGY = overwrite
+  # How machine-specific list values combine with the defaults: overwrite, prepend or append
   --with (-w): record
   # Gather machine configuration values with this record as a temporary environment
   --verbose (-v)
   # Print information to the console as the configuration is built
-# ]: nothing -> oneof<record, error> {
-  ]: nothing -> oneof<MachineConfig, error> {
+]: nothing -> oneof<MachineConfig, error> {
   if $DEFAULT not-has $mode { error make --unspanned $"unsupported mode: '($mode)'" }
-  if $with != null { return (with-env $with {|| main $mode --host=$host --os=$os --strategy=$strategy }) }
+  if $strategy not-in $STRATEGY {
+    error make --unspanned $"unsupported strategy: '($strategy)' \(expected one of: ($STRATEGY | str join ', '))"
+  }
+  if $with != null {
+    return (with-env $with {|| main $mode --host=$host --os=$os --strategy=$strategy --verbose=$verbose })
+  }
   let meta: record = {mode: $mode host: $host os: $os}
     | default (sys host).hostname $.host
     | default $nu.os-info.name $.os
   if $verbose { $meta | transpose k v | format pattern '{k} = {v}' | print }
-  let machine: record = match $meta {
+  let branch: oneof<nothing, closure> = match $meta {
     {mode: user host: ZR-XPS14 os: linux} => {||
-      let profile: path = $nu.home-dir | path join .profile
-      use /work/ext/bash-env
-      bash-env --return=merge $profile
-      | match ($in.path!? | describe) {
-        nothing | list<any> | list<string> => ()
-        string => (update $.path! ($in.path! | split row (char esep)) | rename --column={PATH: binaries})
-      } | select ...($in | columns | where $it starts-with XDG)
-      | rename --block={ str replace --regex 'XDG_(\w+)_DIR' '$1' | str lowercase }
-      | insert $.scripts [($env.work! | path join bin) ($in.data | path join nupm scripts)]
-      | insert $.modules [$ROOT ($env.work! | path join ext)]
-      | insert $.binaries [
-        $DEFAULT.vendor.binaries
-        ($nu.home-dir | path basename --replace linuxbrew/.linuxbrew/bin)
-        ($in.data | path basename --replace bin)
-        ($in.data | path join pnpm)
-        ($in.data | path join ipex-llm-ollama)
-        ...(glob --no-file --depth=3 $'($in.data)/**/bin')
-      ]
+      let sourced: record = bash-env --return=merge ($nu.home-dir | path join .profile)
+      let work: oneof<nothing, string> = $env.work!? | default $sourced.WORK?
+      if $work == null { error make --unspanned 'WORK is not set (neither in the environment nor by ~/.profile)' }
+      let dirs: record = $PROFILE_DIRS
+        | items {|var key| {$key: ($sourced | get --optional $var)} }
+        | into record
+        | compact
+      let share: path = $dirs.share? | default $DEFAULT.user.share
+      let profile_path: list<string> = $sourced.PATH?
+        | default []
+        | if ($in | describe) == string { split row (char esep) } else { }
+      $dirs | merge {
+        scripts: [($work | path join bin) ($share | path join nupm scripts)]
+        modules: [$ROOT ($work | path join ext)]
+        binaries: ([
+          $DEFAULT.vendor.binaries
+          ($nu.home-dir | path basename --replace linuxbrew/.linuxbrew/bin)
+          ($share | path basename --replace bin)
+          ($share | path join pnpm)
+          ($share | path join ipex-llm-ollama)
+          ...(glob --no-file --depth=3 $'($share)/**/bin')
+          ...$profile_path
+        ] | uniq)
+      }
     }
     {mode: user host: ZR-XPS14 os: windows} => {||
       $env | select $.APPDATA $.LOCALAPPDATA | {
@@ -106,12 +129,24 @@ def main [
       $env.NUPM_HOME? | default ($nu.data-dir | path basename --replace nupm) | {
         modules: ($in | path join modules)
         scripts: ($in | path join scripts)
-        binaries: /usr/bin/
+        binaries: /usr/bin
       }
     }
-    _ => (return ($DEFAULT | get $mode))
-  } | do --env --ignore-errors $in | default {}
-  $DEFAULT | get $mode | merge deep --strategy=overwrite $machine | compact
+    _ => null
+  }
+  let machine: record = if $branch == null { {} } else {
+    try { do $branch | default {} } catch {|e|
+      let target: string = $meta | values | str join '/'
+      print --stderr $"(ansi yellow)machine-config: the ($target) configuration failed, using the defaults: ($e.msg)(ansi reset)"
+      {}
+    }
+  }
+  $DEFAULT
+  | get $mode
+  | merge deep --strategy=$strategy $machine
+  | compact
+  | items {|key value| {$key: (if ($value | describe) =~ '^list' { $value | uniq } else { $value })} }
+  | into record
 }
 
 export alias machine-config = main
