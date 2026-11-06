@@ -833,3 +833,33 @@ def "test machine config a cache that cannot be written is not an error" []: not
     rm $dir
   }
 }
+
+def "test machine config follows a symlinked override" []: nothing -> nothing {
+  need-posix
+  with-sandbox {|ctx|
+    let target: path = override $ctx target.nuon '{user: {state: /one}}'
+    let link: path = $ctx.code | path join machine.nuon
+    ^ln -s $target $link
+    with-env {NU_MACHINE_CONFIG: $link} {
+      assert equal (conf machine-config).state /one 'read through the link'
+      '{user: {state: /two-changed}}' | save --force $target
+      assert equal (conf machine-config).state /two-changed 'editing the target misses the cache'
+    }
+  }
+}
+
+def "test machine config a script record expires after a day" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let o = logging-override $ctx
+    with-env {NU_MACHINE_CONFIG: $o.file} {
+      conf machine-config | ignore
+      let cache: path = $nu.cache-dir | path join nu-lib machine-override.nuon
+      open $cache | update at ((date now) - 2day) | to nuon | save --force $cache
+      conf machine-config | ignore
+      assert equal (runs $o.log) 2 'a day-old script record is not trusted'
+      open $cache | update key.root /elsewhere | to nuon | save --force $cache
+      conf machine-config | ignore
+      assert equal (runs $o.log) 3 'nor one computed against another library root'
+    }
+  }
+}

@@ -23,6 +23,8 @@ const FORMS: list<string> = [nuon nu]
 # The cache of the configured override file's checked record: one nuon file in Nushell's cache directory, keyed by
 # the file's path, modification time and size and by the running `nu` version (`_docs/hydration.md`).
 const CACHE: path = $nu.cache-dir | path join nu-lib machine-override.nuon
+# A script's cached record expires: the key cannot see the files and variables the script reads.
+const CACHE_TTL: duration = 24hr
 const WINDOWS_APPS: path = $nu.home-dir | path join AppData Local Microsoft WindowsApps
 const DEFAULT: record = {
   user: {
@@ -140,25 +142,31 @@ def load [file: path]: nothing -> record {
   $value
 }
 
-# The cache key of an override file: its path, modification time (ns) and size, and the `nu` version.
+# The cache key of an override file: its path, the modification time (ns) and size of the file itself (a symlink
+# is followed), the library root and the `nu` version.
 def cache-key [file: path]: nothing -> record {
-  let entry: record = ls --directory $file | first
-  {file: $file modified: ($entry.modified | into int) size: ($entry.size | into int) nu: (version).version}
+  let entry: record = ls --directory ($file | path expand) | first
+  {file: $file modified: ($entry.modified | into int) size: ($entry.size | into int) root: $ROOT nu: (version).version}
 }
 
-# The checked record of the configured override file, served from the cache when the key matches (a `.nu` override
-# otherwise runs a child `nu`, and either form is validated, on every call), else loaded, checked and cached.
+# The checked record of the configured override file, served from the cache when the key matches and, for a script,
+# the record is younger than a day (a `.nu` override otherwise runs a child `nu`, and either form is validated, on
+# every call), else loaded, checked and cached.
 # `cache` says what happened: `hit`, `miss` (the cache was rewritten) or `off` (`--no-cache`: loaded and rewritten).
 def override-record [file: path --no-cache]: nothing -> record<value: record, cache: string> {
   let key: record = cache-key $file
   let cached: any = if $no_cache { null } else { try { open $CACHE } catch { null } }
-  if ($cached | describe) =~ '^record' and $cached.key? == $key { return {value: $cached.value cache: hit} }
+  let hit: bool = if ($cached | describe) =~ '^record' and $cached.key? == $key {
+    # A static file is its own record; a script's record is trusted for a day.
+    ($file | path parse | get extension) == 'nuon' or (($cached.at? | describe) == 'datetime' and (date now) - $cached.at < $CACHE_TTL)
+  } else { false }
+  if $hit { return {value: $cached.value cache: hit} }
   let value: record = load $file | check $file
   # A cache that cannot be written is not an error: the next call loads the file again.
   try {
     mkdir ($CACHE | path dirname)
     let tmp: path = $"($CACHE).($nu.pid)"
-    {key: $key value: $value} | to nuon | save --force $tmp
+    {key: $key at: (date now) value: $value} | to nuon | save --force $tmp
     mv --force $tmp $CACHE
   } catch { null }
   {value: $value cache: (if $no_cache { 'off' } else { 'miss' })}
