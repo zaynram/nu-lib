@@ -19,14 +19,15 @@ version checks. Check `nu --version` before assuming a language behavior; verify
 - In a git worktree, pass the *worktree* root with `-I`. The owner's shell config puts the main checkout on
   `NU_LIB_DIRS`, so without `-I` a worktree's modules silently resolve their imports from the main checkout.
 - `export use <module>` (as in the root barrel) does **not** run the re-exported module's `export-env` block; only a
-  direct `use` does. Environment set-up must therefore be triggered explicitly: the barrel runs only the env blocks
-  with `export-env { source-env (path self . | path join <module> mod.nu) }` under guards.
+  direct `use` does. Environment set-up must therefore be triggered explicitly: `loaders.nu` runs only the env
+  blocks with guarded `source-env (… <module> mod.nu)` calls. `source-env` of a file also executes its top-level
+  `use` statements (running those modules' env blocks), so a file meant for `source-env` must import nothing.
 - Every module parses with only the repository on the include path; nothing outside it is imported at parse time.
   Machine-specific values come from configuration (see `_docs/module-partition.md`), not from code.
 - Mixed modules are split: `<module>/local/mod.nu` re-exports the abstract part and adds the configuration-dependent
   commands (`alarm`, `completion`, `mods`). `completion/external` is a deprecated shim for `completion/local`. The
-  root `local` barrel gathers them (`local alarm …`); `init-local [--barrel]` writes the autoload file that exposes
-  them as bare names through overlays (see `_docs/module-partition.md`).
+  root `local` barrel gathers them (`local alarm …`); `prelude.nu` is the surface with them as bare names and no
+  prefixes, and `init-local` writes the autoload file that loads it (see `_docs/module-partition.md`).
 
 ## Module partition
 
@@ -46,6 +47,8 @@ or a new external dependency.
 - Errors with stable identities use `error raise --code=<module>::<context>::<kind>` from the `error` module.
 - Lint with `nu-lint <file>` (owner config at `~/.config/nu-lint.toml`); file- or line-level suppressions use
   `# nu-lint-ignore-file: <rule>` / `# nu-lint-ignore: <rule>`.
+- Format with `topiary`. It refuses files that contain `type` declarations: comment the typedefs out before
+  formatting and restore them afterwards.
 - Comments and docs must describe actual behavior. When behavior changes, update the doc comment in the same change.
 
 ## Data shaping and performance

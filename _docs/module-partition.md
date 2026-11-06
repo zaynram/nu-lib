@@ -77,7 +77,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `todo` | `td` CLI, Todoist credentials, network. Parsing/formatting helpers are pure. |
 | `completion/local` | `fish`, `carapace`; mutates `$env.config`; its export-env sets `CARAPACE_*` and the carapace `PATH` entry. `fish-complete parse-output` is pure. `completion/external` is a deprecated shim for it. |
 | `style` (mild) | Reads `$env.config.color_config`; falls back to Nushell's default colors. |
-| root `mod.nu` | Aggregates config-dependent modules; parses with only the repository on the lib path; runs the conf, mods, completion/local, proj, track and windows env blocks through guarded `source-env`. |
+| root `mod.nu`, `prelude.nu` | Aggregate config-dependent modules; parse with only the repository on the lib path; `loaders.nu` runs the conf/mods/completion/proj/track/windows env blocks through guarded `source-env`. |
 
 ## Splitting mixed modules
 
@@ -88,11 +88,12 @@ variants under the original names. `use <module>/local` prefixes commands with `
 selection, or through the barrel. Re-export a parent's `main` explicitly (a re-exported `main` takes its module's
 name, `mod`). Modules that are configuration-dependent as a whole (`conf`, `proj`, `todo`, …) are not split.
 
-To use the local variants as bare names in an interactive shell, `init-local` writes an autoload file that loads
-the barrel as a hidden overlay (`__lib__`), activates `local` on top and hides `__lib__` again; `--barrel` makes
-the file load the barrel itself so one file bootstraps the whole surface on a fresh machine. Hiding an overlay
-reverts the environment it set up, which is why the plain form must run after another autoload file has loaded
-the barrel.
+The surface itself lives in `prelude.nu`: `use <root>/prelude.nu *` loads every command with the local variants
+as bare names and none of the `local …` prefixes (a prefixed name and its bare twin are one declaration, so they
+cannot be hidden separately, and `use <root> *` sweeps the `local` barrel in). `init-local` writes an autoload
+file containing that one line, which bootstraps a fresh machine on its own. The environment loaders live in
+`loaders.nu`, a file with no module imports, because `source-env` of a file also executes its `use` statements and
+would run every imported module's `export-env` unguarded.
 
 The root barrel's `local` module gathers every local variant under its module's name: `use <library root> local`
 gives `local alarm …`, `local completion …` and `local mods …`, and `use <library root> *` exposes `local …` as
