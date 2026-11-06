@@ -2,17 +2,47 @@
 # ---
 # Custom module library for my development environment.
 
-const prelude: path = path self prelude/mod.nu | path expand --strict
-const windows: path = path self windows/mod.nu | path expand --strict
+# ——— constants ————————————————————————————————————————————————————————————————
 
-export use $prelude [ var log ]
-use $prelude [ tools shell manage ]
+export use conf/machine.nu [ NU_LIB_DIRS NU_PLUGIN_DIRS ]
 
-export use tools *
-export use shell *
-export use manage *
+# ——— barrels ——————————————————————————————————————————————————————————————————
 
-export-env {
-  if $nu.os-info.name == windows or not $nu.is-login { return }
-  if ($env.path! | any $it =~ '^/mnt/\w{1}/') { source-env $windows }
+module prelude {
+  # Common-use barrel loader for the module library.
+
+  # ——— commands ———————————————————————————————————————————————————————————————
+
+  export module pman
+  export module link
+  export module reload
+  export module edit
+  export module path
+
+  # ——— interfaces —————————————————————————————————————————————————————————————
+
+  export use proj
+  export use track
+  export use time
+  export use todo
+  export use alarm
+  export use hook
+  export use mods
+  export use conf
+  export use env
+  export use error
+
+  # ——— bundles ————————————————————————————————————————————————————————————————
+
+  export use windows *
+  export use completion *
+  export use elevate *
+  export-env {
+    if ($NU_LIB_DIRS | difference $env.NU_LIB_DIRS) == [] { return }
+    $env.NU_LIB_DIRS ++= $NU_LIB_DIRS
+  }
 }
+
+# ——— activation ———————————————————————————————————————————————————————————————
+
+export use prelude *
