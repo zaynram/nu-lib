@@ -546,6 +546,17 @@ def "test use conf splits an inherited NU_PLUGIN_DIRS string" []: nothing -> not
   }
 }
 
+def "test use conf drops the empty fields of inherited PATH-like text" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let blank: record = child $ctx '$env.NU_PLUGIN_DIRS' --vars {NU_PLUGIN_DIRS: ''}
+    assert equal $blank.exit_code 0 $'an empty variable is fine: ($blank.stderr)'
+    assert ('' not-in $blank.value) 'an empty string holds no entry'
+    let trailing: record = child $ctx '$env.NU_PLUGIN_DIRS' --vars {NU_PLUGIN_DIRS: $'/sbconf/a(char esep)'}
+    assert equal ($trailing.value | last) '/sbconf/a' 'the entry before a trailing separator is kept'
+    assert ('' not-in $trailing.value) 'the empty field after it is dropped (it would mean the current directory)'
+  }
+}
+
 def "test use conf raises an error that is not about the override file" []: nothing -> nothing {
   with-sandbox {|ctx|
     # Neither a list nor PATH-like text: `vars` fails on it, which is not the override file's fault.
@@ -672,6 +683,15 @@ def "test find empty directory raises" []: nothing -> nothing {
   }
 }
 
+def "test find without a target names a missing config directory" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let missing: path = $ctx.code | path join absent
+    let err: record = with-env {XDG_CONFIG_DIR: $missing} { caught {|| conf find --return } }
+    assert equal $err.msg $"config directory '($missing)' does not exist" 'the directory, not an empty target name'
+    assert equal $err.code conf::find::not_found 'the find error code'
+  }
+}
+
 def "test find defaults to the config home" []: nothing -> nothing {
   with-sandbox {|ctx|
     mkdir ($ctx.config | path join sbapp)
@@ -687,6 +707,7 @@ def "test find defaults to the config home" []: nothing -> nothing {
 # Returns code that puts it first on PATH; it must run after `use conf`, which moves the scope's directories
 # (e.g. /usr/bin, where a real oh-my-posh may live) to the front.
 def posh-stub [ctx: record]: nothing -> string {
+  need-posix
   let bin: path = $ctx.code | path join bin
   mkdir $bin
   let vendor: path = $ctx.data | path join nushell vendor autoload

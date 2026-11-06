@@ -116,8 +116,10 @@ export def --env vars [
   let combined: record = $scope
     | record each {|key dirs|
       # Inherited PATH-like text is split: Nushell converts `PATH` and `NU_LIB_DIRS` to lists, not `NU_PLUGIN_DIRS`.
+      # Its empty fields (an empty variable, a trailing separator) are dropped: on POSIX an empty PATH entry means
+      # the current directory.
       let existing: list = $env | get --optional --ignore-case $key | default []
-        | if ($in | describe) == string { split row (char esep) } else { }
+        | if ($in | describe) == string { split row (char esep) | where $it != '' } else { }
       let added: list = $input | get --optional $key | default [] | append $dirs | uniq | where $it not-in $existing
       {$key: ($added | append $existing)}
     }
@@ -181,6 +183,7 @@ export def find [
   $item | match ($in | path type) {
     file => { submit $target --return=$return | return $in }
     dir => { cd $in }
+    _ if $target == null => { null | error raise $"config directory '($item)' does not exist" --kind not_found }
     _ => { null | error raise $"no config directory or file named '($target)'" --kind not_found }
   }
   if $path != null { $path } else {
