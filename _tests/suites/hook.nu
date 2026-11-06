@@ -26,9 +26,12 @@ def caught [action: closure]: nothing -> oneof<nothing, record> {
 
 # ——— export-env ———————————————————————————————————————————————————————————————
 
-def "test import provides the list and record defaults" []: nothing -> nothing {
+# Nushell refills `pre_prompt`/`pre_execution`/`env_change` itself on this nightly (`$env.config.hooks = {}` comes
+# back filled, `null` is rejected), so the module's `export-env` cannot be told apart from Nushell's defaults here:
+# this pins the shapes the module relies on, whichever of the two supplies them, even after a caller emptied the hooks.
+def "test import leaves the list and record defaults in place" []: nothing -> nothing {
   with-sandbox {|ctx|
-    let types = sandboxed $ctx '$env.config.hooks | select pre_prompt pre_execution env_change | items {|k v| {($k): ($v | describe)} } | into record | to nuon' --prelude 'use hook' --pipe
+    let types = sandboxed $ctx '$env.config.hooks | select pre_prompt pre_execution env_change | record each {|k v| {($k): ($v | describe)} } | to nuon' --prelude '$env.config.hooks = {}; use hook' --pipe
     assert equal $types {pre_prompt: 'list<any>' pre_execution: 'list<any>' env_change: record} 'lists and a record'
   }
 }
@@ -121,6 +124,14 @@ def "test with needs a name or a reference" []: nothing -> nothing {
   assert equal $e.code 'hook::with::invalid_argument' 'the derived code'
 }
 
+def "test with refuses a single valued hook" []: nothing -> nothing {
+  let by_ref = caught { hook with --hook=$.display_output {disabled: true} {|| 'ran' } }
+  assert equal $by_ref.code 'hook::edit::invalid_argument' 'the edit raises before the closure runs'
+  let by_name = caught { hook with --name=display_output {disabled: true} {|| 'ran' } }
+  assert equal $by_name.code 'hook::edit::invalid_argument' 'by name too'
+  assert equal (hook list | where name == display_output | length) 1 'the hook is untouched and still listable'
+}
+
 # ——— reference, show, list ————————————————————————————————————————————————————
 
 def "test reference finds named and unnamed hooks" []: nothing -> nothing {
@@ -201,6 +212,23 @@ def "test edit errors" []: nothing -> nothing {
   assert equal $missing.msg "no hook at '$.pre_prompt.9'" 'missing reference'
   assert equal $missing.code 'hook::edit::not_found' 'the derived code'
   assert equal (caught { hook edit $.pre_prompt.9 --overwrite 'x' }).code 'hook::edit::not_found' 'overwrite needs an existing hook too'
+}
+
+def "test edit update refuses a single valued hook" []: nothing -> nothing {
+  let e = caught { hook edit $.display_output --update {disabled: true} }
+  assert equal $e.msg "the hook at '$.display_output' holds a single closure or string, not a record" 'display_output holds no record'
+  assert equal $e.code 'hook::edit::invalid_argument' 'the derived code'
+  assert str contains $e.help '--overwrite' 'the advice names the remedy'
+  hook add $.command_not_found {|cmd| null }
+  assert equal (caught { hook edit $.command_not_found --update {disabled: true} }).code 'hook::edit::invalid_argument' 'command_not_found too'
+  assert equal (hook list | get name) ['pre_prompt[0]' named pwd display_output command_not_found] 'both are untouched and still listable'
+}
+
+def "test edit overwrite replaces a single valued hook" []: nothing -> nothing {
+  hook edit $.display_output --overwrite 'table' | ignore
+  assert equal (hook display_output) table 'text'
+  hook edit $.display_output --overwrite {|| table } | ignore
+  assert equal (hook show $.display_output $.code --raw | describe) closure 'a closure, still listable'
 }
 
 def "test del removes a hook" []: nothing -> nothing {

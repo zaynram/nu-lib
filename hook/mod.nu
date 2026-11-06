@@ -27,6 +27,9 @@ type HookInfo = oneof<record<ref: cell-path name: string, condition: oneof<nothi
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
+# On the nightlies this library targets Nushell refills these keys itself whenever `$env.config.hooks` is set (`{}`
+# and a `reject` come back filled, `null` is rejected), so this block is a no-op there; it stays as a guard for a
+# Nushell that stops doing so.
 export-env {
   $env.config.hooks = $env.config.hooks
     | default [] pre_prompt pre_execution
@@ -159,7 +162,9 @@ export def is-enabled [
 # Execute a closure in a temporary environment with a modified hook.
 # ---
 # If pipeline input is provided, it will be loaded into the closure environment. When the hook cannot be
-# resolved, the closure still runs (without any modification) unless `--strict` is given.
+# resolved, the closure still runs (without any modification) unless `--strict` is given. `display_output` and
+# `command_not_found` hold a single closure or string, not a record: targeting one raises
+# `hook::edit::invalid_argument` (replace them with `hook edit --overwrite` instead).
 export def with [
   modification: record
   # Merged into the hook record for the duration of the closure, e.g. `{disabled: true}`
@@ -246,12 +251,15 @@ export def --env edit [
   --overwrite: oneof<string, closure, record<condition: closure, code: oneof<string, closure>>>
   # Value to replace the referenced hook with
   --update: record
-  # An update record to merge into an existing hook record
+  # An update record to merge into an existing hook record; `display_output` and `command_not_found` hold a single
+  # closure or string, so they take `--overwrite` only
 ]: nothing -> oneof<HookData, CodeType> {
   if $overwrite == null and $update == null {
     error raise 'no overwrite value or update record was given' --kind invalid_argument --advice 'pass --overwrite or --update'
   } else if ($env.config.hooks | get --optional --ignore-case $ref) == null {
     error raise $"no hook at '($ref)'" --kind not_found
+  } else if $overwrite == null and ($ref | hook-type) in [display_output command_not_found] {
+    error raise $"the hook at '($ref)' holds a single closure or string, not a record" --kind invalid_argument --advice 'display_output and command_not_found are replaced with --overwrite, not merged with --update'
   } else {
     # `update` calls a closure argument, so the overwrite value is wrapped: a closure is stored, not its result.
     # A bare closure/string hook becomes a `{code}` record before an update record is merged into it.
