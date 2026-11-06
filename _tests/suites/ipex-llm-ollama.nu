@@ -15,14 +15,17 @@ def stub [dir: path, name: path, body: string]: nothing -> path {
   $file
 }
 
-# `ipex-llm-ollama status` against a stub `systemctl` that prints `output` and exits with `code`.
+# `ipex-llm-ollama status` against a stub `systemctl` that prints `output` and exits with `code`: `{status calls}`,
+# or `{error calls}` with the error's details when it raised (caught here: `with-sandbox` re-raises failures
+# without their details).
 def status-of [output: string, --code: int = 0]: nothing -> record {
   with-sandbox {|ctx|
     let log: path = $ctx.code | path join calls.log
     stub $ctx.code systemctl $"echo \"$*\" >> '($log)'\ncat <<'EOF'\n($output)\nEOF\nexit ($code)" | ignore
     with-env {PATH: ($env.PATH | prepend $ctx.code)} {
       assert equal (which systemctl | get 0.path) ($ctx.code | path join systemctl) 'the stub systemctl is used'
-      {status: (ipex-llm-ollama status) calls: (open $log | lines)}
+      let result: record = try { {status: (ipex-llm-ollama status)} } catch {|e| {error: $e.details} }
+      $result | insert calls (open $log | lines)
     }
   }
 }
@@ -100,9 +103,11 @@ def "test status keeps an unparsable time as text" []: nothing -> nothing {
 }
 
 def "test status of an unknown service is an error" []: nothing -> nothing {
-  let err = try { status-of 'Unit ipex-llm-ollama.service could not be found.' --code=4; null } catch {|e| $e }
-  assert ($err != null) 'raises'
-  assert str contains $err.msg 'no status reported' 'message'
+  let r = status-of 'Unit ipex-llm-ollama.service could not be found.' --code=4
+  assert ($r has error) 'raises'
+  assert str contains $r.error.msg 'no status reported' 'message'
+  assert equal $r.error.code? ipex-llm-ollama::status::external_failure 'the code'
+  assert str contains ($r.error.help? | default '') 'could not be found' 'systemctl output is the advice'
 }
 
 # ——— serve ————————————————————————————————————————————————————————————————————

@@ -1,5 +1,9 @@
 # Commands for the IPEX-based Ollama installation providing GPU-accelerated inference in WSL.
 
+# ——— imports ——————————————————————————————————————————————————————————————————
+
+use error
+
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 def home []: nothing -> path {
@@ -17,15 +21,12 @@ export alias device = ^ls-sycl-device
 # state (a datetime, or the raw text when it does not parse), or null when systemd reports no time.
 @category system
 export def status []: nothing -> record<state: string, spawned: oneof<datetime, string, nothing>> {
-  # `systemctl status` exits non-zero for inactive units too, so the `Active:` line decides
+  # `systemctl status` exits non-zero for inactive units too, so the `Active:` line decides, not the exit code
+  # nu-lint-ignore: check_complete_exit_code
   let result: record = ^systemctl status ipex-llm-ollama --no-pager --lines 0 out+err>| complete
   let active: list<string> = $result.stdout | lines | str trim | where $it starts-with 'Active: '
   if ($active | is-empty) {
-    error make --unspanned {
-      msg: $"no status reported for the ipex-llm-ollama service \(systemctl exited with code ($result.exit_code)\)"
-      code: 'ipex-llm-ollama::status::unavailable'
-      help: ($result.stdout | str trim)
-    }
+    error raise $"no status reported for the ipex-llm-ollama service \(systemctl exited with code ($result.exit_code)\)" --kind external_failure --advice ($result.stdout | str trim)
   }
   $active
   | first
