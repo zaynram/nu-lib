@@ -7,7 +7,8 @@
 #
 # With `--labels`, `error raise` returns a closure instead of raising, intentionally:
 # - Calling `error make` from a nested scope causes error duplication as it propagates upwards.
-# nu-lint-ignore-file: missing_in_type (`raise` deliberately accepts any pipeline input)
+# nu-lint-ignore-file: missing_in_type
+# (`raise` deliberately accepts any pipeline input: an error record is chained as `inner`, anything else is ignored)
 
 # ——— constants —————————————————————————————————————————————————————————————————
 
