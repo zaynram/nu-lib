@@ -88,7 +88,7 @@ def "test a regular file at the link path is an error" []: nothing -> nothing {
     let name: string = $found | first | path basename
     stub $t.bin $name 'exit 0' | ignore
     let err = try { link bin $name; null } catch {|e| $e.details }
-    assert equal $err.code? link::bin::link_exists 'raises link_exists'
+    assert equal $err.code? link::bin::conflict 'a non-link at the link path is a conflict'
     assert str contains $err.msg $"/usr/bin/($name)" 'names the link path'
     assert equal (sudo-calls $t.log) [] 'sudo is not called'
   }
@@ -97,7 +97,7 @@ def "test a regular file at the link path is an error" []: nothing -> nothing {
 def "test a missing source binary is an error" []: nothing -> nothing {
   with-stub-sudo {|t|
     let err = try { link bin (unused-name); null } catch {|e| $e.details }
-    assert equal $err.code? link::bin::source_not_found 'raises source_not_found'
+    assert equal $err.code? link::bin::not_found 'no source is not_found'
     assert equal (sudo-calls $t.log) [] 'sudo is not called'
   }
 }
@@ -107,7 +107,7 @@ def "test builtins are not link sources" []: nothing -> nothing {
     if ('/usr/bin/str' | path type) != null { skip '/usr/bin/str exists' }
     assert ((which --all str | where type != external) | is-not-empty) 'str is a builtin'
     let err = try { link bin str; null } catch {|e| $e.details }
-    assert equal $err.code? link::bin::source_not_found 'a builtin has no binary to link'
+    assert equal $err.code? link::bin::not_found 'a builtin has no binary to link'
     assert equal (sudo-calls $t.log) [] 'sudo is not called'
   }
 }
@@ -117,8 +117,8 @@ def "test a failed link raises with the command output" []: nothing -> nothing {
     let name: string = unused-name
     stub $t.bin $name 'exit 0' | ignore
     let err = try { link bin $name; null } catch {|e| $e.details }
-    assert equal $err.code? link::bin::non_zero_exit_code 'raises non_zero_exit_code'
-    assert equal $err.msg 'unable to link binary' 'message'
+    assert equal $err.code? link::bin::external_failure 'a failed ln is an external failure'
+    assert ($err.msg =~ $"^unable to link '.*/($name)' at '/usr/bin/($name)'$") $'the message names the source and the link: ($err.msg)'
     assert str contains $err.help 'ln: permission denied' 'the command output is the advice'
   }
 }
@@ -127,5 +127,5 @@ def "test the windows link lives in the user bin directory" []: nothing -> nothi
   if $nu.os-info.name != windows { skip 'Windows only' }
   let name: string = $"nulib-link-test-(random chars --length 8 | str lowercase)"
   let err = try { link bin $name; null } catch {|e| $e.details }
-  assert equal $err.code? link::bin::source_not_found 'nothing to link'
+  assert equal $err.code? link::bin::not_found 'nothing to link'
 }

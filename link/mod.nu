@@ -13,7 +13,8 @@ use error
 # Windows (created with `cmd /c mklink`). Its source is the first external `<name>` on PATH outside the link
 # directory (on Linux, outside `/bin` and `/usr/bin`). A link that already resolves is returned unchanged, a
 # dangling link is removed first, and any other existing file at the link path is an error. Errors carry the
-# codes `link::bin::<kind>`.
+# codes `link::bin::<kind>`: `unsupported` (the OS), `conflict` (a non-link at the link path), `not_found` (no
+# source on PATH) and `external_failure` (`unlink`/`ln`/`mklink` failed; what they printed is the advice).
 @category platform
 export def bin [
   name: oneof<string, path>@_executables # The name of the binary to link
@@ -25,7 +26,7 @@ export def bin [
       let dir: path = $env.USERPROFILE | path join .local bin
       {link: ($dir | path join $name) skip: [$dir]}
     }
-    _ => { error raise --code=link::bin::unsupported_os $"unsupported operating system: '($os)'" }
+    _ => { error raise $"unsupported operating system: '($os)'" --kind unsupported }
   }
   match ($config.link | path type) {
     null => { }
@@ -33,35 +34,33 @@ export def bin [
     symlink => {
       match $os {
         windows => { rm $config.link }
-        _ => { ^sudo unlink $config.link out+err>| complete | check 'unable to remove the dangling link' dangling_symlink }
+        _ => {
+          let res: record = ^sudo unlink $config.link out+err>| complete
+          if $res.exit_code != 0 {
+            error raise $"unable to remove the dangling link '($config.link)'" --kind external_failure --advice ($res.stdout | str trim)
+          }
+        }
       }
     }
-    $type => { error raise --code=link::bin::link_exists $"a ($type) that is not a link already exists at '($config.link)'" }
+    $type => { error raise $"a ($type) that is not a link already exists at '($config.link)'" --kind conflict }
   }
   let source: path = which --all $name
     | where type == external and ($it.path | path dirname) not-in $config.skip
     | get --optional 0.path
     | default {
-      error raise --code=link::bin::source_not_found $"no external '($name)' found on PATH outside ($config.skip | str join ', ')"
+      error raise $"no external '($name)' found on PATH outside ($config.skip | str join ', ')" --kind not_found
     }
-  match $os {
+  let res: record = match $os {
     windows => {
       mkdir ($config.link | path dirname)
       ^cmd /c mklink $config.link $source out+err>| complete
     }
     _ => { ^sudo ln -s $source $config.link out+err>| complete }
-  } | check 'unable to link binary' non_zero_exit_code
+  }
+  if $res.exit_code != 0 {
+    error raise $"unable to link '($source)' at '($config.link)'" --kind external_failure --advice ($res.stdout | str trim)
+  }
   $config.link
-}
-
-# ——— helpers ——————————————————————————————————————————————————————————————————
-
-# Raise `link::bin::<kind>` with the command output as advice when an external command failed.
-def check [msg: string, kind: string]: record<stdout: string, exit_code: int> -> nothing {
-  let result: record = $in
-  if $result.exit_code == 0 { return }
-  let output: string = $result.stdout | str trim
-  error raise --code=$"link::bin::($kind)" $msg --advice=(if $output != '' { $"[output]\n($output)" }) | ignore
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————
