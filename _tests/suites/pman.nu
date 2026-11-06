@@ -5,7 +5,8 @@
 # - `upgrade` first puts `machine-config user`'s binary directories on PATH, and the first one is the directory of
 #   the running `nu` (which, on the owner's machine, also holds the real `rustup`/`cargo`). It therefore runs in a
 #   grandchild started from a *copy* of the `nu` binary inside the sandbox, with stubs for every registry binary
-#   in the sandbox `~/.local/bin`; the grandchild refuses to run if any binary directory is outside the sandbox.
+#   in the sandbox `~/.local/bin`; the grandchild refuses to run if any binary directory is outside the sandbox, and
+#   `http get` is shadowed there to serve the fixture release, so `upgrade`'s auto-bump never reaches the network.
 # - `reload-plugins` runs with the `plugin` commands and `cargo` shadowed by definitions made before `use pman`.
 # - `bump-nu` runs in a grandchild started from a copy of `nu` in the sandbox (so `$nu.current-exe`, and with it the
 #   default install directory, is in the sandbox) against fixture releases served by a localhost HTTP server
@@ -20,15 +21,23 @@ const REGISTRY_BINS: list<string> = [rustup dprint brew claude cargo pipx pixi b
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
-# Write an executable stub that appends `<name> <args>` to `log` and echoes it (or fails, with `--fail`).
-def stub [dir: path name: path log: path --fail]: nothing -> nothing {
+# Replace every `@PLACEHOLDER@` key of `values` in a template with its value.
+def fill-in [values: record]: string -> string {
+  let template: string = $in
+  $values | transpose key value | reduce --fold $template {|it acc| $acc | str replace --all $it.key $it.value }
+}
+
+# Write an executable stub that appends `<name> <args>` to `log` and echoes it (or fails, with `--fail`), then runs
+# the shell lines of `--also`.
+def stub [dir: path name: path log: path --fail --also: string = '']: nothing -> nothing {
   mkdir $dir
   let body: string = if $fail {
     $'echo "($name) failed: $*" >&2(char newline)exit 3'
   } else {
     $'echo "($name) $*" >> "($log)"(char newline)echo "($name) $*"'
   }
-  $"#!/bin/sh\n($body)\n" | save --force ($dir | path join $name)
+  [$"#!/bin/sh\n($body)" $also] | compact --empty | str join (char newline) | $in + (char newline)
+  | save --force ($dir | path join $name)
   ^chmod +x ($dir | path join $name)
 }
 
@@ -43,30 +52,62 @@ def with-sudo [ctx: record code: string]: nothing -> record {
   $res | insert calls $calls
 }
 
+# The prelude of an `upgrade` grandchild: it refuses to run with a binary directory outside the sandbox, and it
+# shadows `http get` (seen by `pman` because it is defined first) to serve `@WWW@`, the fixture release a test wrote
+# with `release`, so `bump-nu` can never reach the network from an upgrade. The releases API `bump-nu` reads by
+# default is the fixture's `releases.json`; any other URL names a file under `@WWW@`, and a missing one fails like a
+# 404.
+const UPGRADE_GUARD: string = r#'
+use conf/machine.nu [ machine-config ]
+let outside = (machine-config user).binaries | where {|d| not ($d starts-with $env.HOME) and not ($d starts-with $env.SBPMAN_NUBIN) }
+if $outside != [] { error make --unspanned {msg: $"refusing to run: binaries outside the sandbox: ($outside)"} }
+def "http get" [url: string --headers: record = {} --raw] {
+  let file = if $url == 'https://api.github.com/repos/nushell/nightly/releases' {
+    '@WWW@/releases.json'
+  } else {
+    $url | str replace --regex '^https?://[^/]+/' '@WWW@/'
+  }
+  if not ($file | path exists) { error make --unspanned {msg: $"sbfixture: ($url) is not served"} }
+  if $raw { open --raw $file } else { open $file }
+}
+use pman
+'#
+
+# The `nu` that `cargo install-update --all` leaves behind: a stable build, `--version` prints 0.100.0.
+const STABLE_NU: string = r##'#!/bin/sh
+case " $* " in *" --version "*) echo 0.100.0; exit 0 ;; esac
+exit 0
+'##
+
 # Run `code` with `pman` in a grandchild started from a copy of `nu` in the sandbox, with stubs for every
-# registry binary (and `sudo`/`apt-get`) in the sandbox `~/.local/bin`. `failing` stubs exit non-zero.
-def stubbed-upgrade [ctx: record code: string --failing: list<string> = []]: nothing -> record {
+# registry binary (and `sudo`/`apt-get`) in the sandbox `~/.local/bin`. `failing` stubs exit non-zero. With
+# `--clobber-nu`, the `cargo` stub also renames a stable `nu` (`STABLE_NU`) over the sandbox `nu`, as
+# `cargo install-update --all` does on the owner's machine.
+def stubbed-upgrade [ctx: record code: string --failing: list<string> = [] --clobber-nu]: nothing -> record {
   let nubin: path = $ctx.code | path join nubin
   mkdir $nubin
   cp $nu.current-exe ($nubin | path join nu)
   let local: path = $ctx.home | path join .local bin
   let log: path = $ctx.code | path join calls.log
   for name in ($REGISTRY_BINS ++ [sudo apt-get]) { stub $local $name $log --fail=($name in $failing) }
-  let guard: string = '
-    use conf/machine.nu [ machine-config ]
-    let outside = (machine-config user).binaries | where {|d| not ($d starts-with $env.HOME) and not ($d starts-with $env.SBPMAN_NUBIN) }
-    if $outside != [] { error make --unspanned {msg: $"refusing to run: binaries outside the sandbox: ($outside)"} }
-    use pman
-  '
+  if $clobber_nu {
+    let stable: path = $ctx.code | path join stable-nu
+    $STABLE_NU | save --force $stable
+    ^chmod +x $stable
+    stub $local cargo $log --also $"mv -f ($stable | to nuon) ($nubin | path join nu | to nuon)"
+  }
+  let guard: string = $UPGRADE_GUARD | fill-in {'@WWW@': ($ctx.code | path join www)}
   let vars: record = {
     HOME: $ctx.home
     XDG_CONFIG_HOME: $ctx.config
     XDG_DATA_HOME: $ctx.data
     XDG_CACHE_HOME: $ctx.cache
     XDG_STATE_HOME: $ctx.state
+    TMPDIR: ($ctx.root | path join tmp)
     PATH: ([/usr/bin /bin] | str join (char esep))
     SBPMAN_NUBIN: $nubin
   }
+  mkdir $vars.TMPDIR
   let program: string = $"($guard)\n($code) | to nuon --serialize"
   let res: record = with-env $vars {
     ^($nubin | path join nu) --no-config-file --include-path=($ROOT) --commands $program | complete
@@ -274,18 +315,40 @@ def "test reload plugins filters by name" []: nothing -> nothing {
 # Pure helpers are tested directly through `pman/nightly.nu`. `bump-nu` itself runs in a grandchild (`run-bump`)
 # started from a sandbox copy of `nu`, against a release (`release`) served from the sandbox by a localhost HTTP
 # server (`with-server`), installing into the sandbox and updating a sandbox plugin registry. The archives hold a
-# stub `nu` (it logs its first argument, hands `--commands` runs to the real `nu`, and otherwise exits) and stub
-# plugins that speak just enough of the plugin protocol for `plugin add`. Prompts are answered through a
-# pseudo-terminal (`run-bump --pty`).
+# stub `nu` (it logs its first two arguments, answers `--version` and `version | get version` with the build's
+# version, hands other `--commands` runs to the real `nu`, and otherwise exits) and stub plugins that speak just
+# enough of the plugin protocol for `plugin add`. Prompts are answered through a pseudo-terminal (`run-bump --pty`).
 
 const NEWER: string = '0.999.0-nightly.1'
+const OLDER: string = '0.998.0-nightly.1'
 
-# The `nu` of the fixture archives (see the section comment); @LOG@ and @NU@ are filled in by `release`.
+# The `nu` of the fixture archives (see the section comment); `stub-nu` fills in @LOG@, @NU@ and @VERSION@.
 const STUB_NU: string = r##'#!/bin/sh
-printf 'run:%s\n' "$1" >> '@LOG@'
-case " $* " in *" --commands "*) exec '@NU@' "$@" ;; esac
+printf 'run:%s\n' "$1${2:+ $2}" >> '@LOG@'
+case " $* " in
+  *" --version "*|*" version | get version "*) echo '@VERSION@'; exit 0 ;;
+  *" --commands "*) exec '@NU@' "$@" ;;
+esac
 exit 0
 '##
+
+# A `nu` that reports its version and fails every other run (it cannot load the library).
+const VERSION_ONLY_NU: string = r##'#!/bin/sh
+case " $* " in *" --version "*|*" version | get version "*) echo '@VERSION@'; exit 0 ;; esac
+echo 'sbstub: cannot load' >&2
+exit 1
+'##
+
+# A `nu` that fails every run.
+const BROKEN_NU: string = "#!/bin/sh\necho 'sbstub: broken' >&2\nexit 1\n"
+
+# Write a stub `nu` (`STUB_NU` unless another template is given) of `version` to `file`, logging to
+# `$ctx.code/nu.log`.
+def stub-nu [ctx: record file: path version: string --template: string = $STUB_NU]: nothing -> nothing {
+  mkdir ($file | path dirname)
+  $template | fill-in {'@LOG@': ($ctx.code | path join nu.log) '@NU@': $nu.current-exe '@VERSION@': $version} | save --force $file
+  ^chmod +x $file
+}
 
 # Runs `pman bump-nu` in the grandchild and saves `{value}` or `{error code help rendered}` as nuon (stdout may be a
 # terminal).
@@ -308,10 +371,12 @@ def flags [ctx: record url: string]: nothing -> string {
   ] | str join ' '
 }
 
-# Write an executable stub plugin built for nushell `version` (see the fixture).
-def stub-plugin [file: path version: string]: nothing -> nothing {
+# Write an executable stub plugin built for nushell `version`, of its own version `--plugin-version` (see the fixture).
+def stub-plugin [file: path version: string --plugin-version: string = '0.1.0']: nothing -> nothing {
   mkdir ($file | path dirname)
-  open --raw ($FIXTURES | path join pman nu_plugin_stub.sh) | str replace --all '@VERSION@' $version | save --force $file
+  open --raw ($FIXTURES | path join pman nu_plugin_stub.sh)
+  | fill-in {'@VERSION@': $version '@PLUGIN_VERSION@': $plugin_version}
+  | save --force $file
   ^chmod +x $file
 }
 
@@ -330,35 +395,42 @@ def registered [ctx: record]: nothing -> record {
   plugin list --registry --plugin-config ($ctx | registry) | each {|p| [$p.name $p.filename] } | into record
 }
 
+# The sandbox registry as `{<name>: <plugin version>}`.
+def plugin-versions [ctx: record]: nothing -> record {
+  plugin list --registry --plugin-config ($ctx | registry) | each {|p| [$p.name $p.version] } | into record
+}
+
 # Write a release fixture into `$ctx.code/www`: `releases.json` lists an older release first, then the release of
-# `version` with one `.tar.gz` per target (a stub `nu`, the stub `plugins`, LICENSE and README.txt) and an `.msi`.
-# `--digest`/`--sums` (`ok`, `bad`, `none`) set the archives' `digest` and a `SHA256SUMS` asset.
+# `version` with one `.tar.gz` per target (a stub `nu`, the stub `plugins` of `--plugin-version`, LICENSE and
+# README.txt) and an `.msi`. `--digest`/`--sums` (`ok`, `bad`, `none`) set the archives' `digest` and a `SHA256SUMS`
+# asset; `--sums missing` lists the asset without serving it.
 def release [
   ctx: record
   url: string
   version: string
   --targets: list<string> = []
   --plugins: list<string> = []
+  --plugin-version: string = '0.1.0'
+  --nu-version: string = '' # The version the archives' `nu` reports, when not `version`
   --digest: string = ok
   --sums: string = none
   --broken-nu # The archives' `nu` fails every run
+  --version-only-nu # The archives' `nu` reports its version but fails every other run
   --without-nu # The archives hold no `nu`
 ]: nothing -> nothing {
   let www: path = $ctx.code | path join www
   mkdir $www
-  let stub: string = if $broken_nu { "#!/bin/sh\nexit 1\n" } else {
-    $STUB_NU | str replace '@LOG@' ($ctx.code | path join nu.log) | str replace '@NU@' $nu.current-exe
-  }
+  let template: string = if $broken_nu { $BROKEN_NU } else if $version_only_nu { $VERSION_ONLY_NU } else { $STUB_NU }
+  let reported: string = $nu_version | default --empty $version
   let targets: list<string> = $targets | default --empty [(nightly host-target $nu.os-info)]
   let archives: table = $targets | each {|target|
     let base: string = $'nu-($version)-($target)'
     let dir: path = $ctx.code | path join stage $base
     mkdir $dir
-    if not $without_nu {
-      $stub | save --force ($dir | path join nu)
-      ^chmod +x ($dir | path join nu)
+    if not $without_nu { stub-nu $ctx ($dir | path join nu) $reported --template $template }
+    for plugin in $plugins {
+      stub-plugin ($dir | path join $'nu_plugin_($plugin)') (version).version --plugin-version $plugin_version
     }
-    for plugin in $plugins { stub-plugin ($dir | path join $'nu_plugin_($plugin)') (version).version }
     'license' | save --force ($dir | path join LICENSE)
     'readme' | save --force ($dir | path join README.txt)
     ^tar -czf ($www | path join $'($base).tar.gz') -C ($dir | path dirname) $base
@@ -370,7 +442,9 @@ def release [
     {name: $a.name browser_download_url: $'($url)/($a.name)'} | merge $digest
   } | append {name: $'nu-($version)-x86_64-pc-windows-msvc.msi' browser_download_url: $'($url)/never.msi'}
   let sums: list = if $sums == none { [] } else {
-    $archives | each {|a| $'(if $sums == ok { $a.sha } else { $zeros })  ($a.name)' } | str join "\n" | save --force ($www | path join SHA256SUMS)
+    if $sums != missing {
+      $archives | each {|a| $'(if $sums == ok { $a.sha } else { $zeros })  ($a.name)' } | str join "\n" | save --force ($www | path join SHA256SUMS)
+    }
     [{name: SHA256SUMS browser_download_url: $'($url)/SHA256SUMS'}]
   }
   let old: string = $'nu-0.0.1-nightly.1-(nightly host-target $nu.os-info).tar.gz'
@@ -410,7 +484,7 @@ def run-bump [ctx: record flags: string --vars: record = {} --pty: list<string>]
   if not ($exe | path exists) { mkdir ($exe | path dirname); cp $nu.current-exe $exe }
   let out: path = $ctx.code | path join result.nuon
   rm --force $out
-  let program: string = $BUMP | str replace '@FLAGS@' $flags | str replace '@OUT@' ($out | to nuon)
+  let program: string = $BUMP | fill-in {'@FLAGS@': $flags '@OUT@': ($out | to nuon)}
   let args: list<string> = [--no-config-file $'--include-path=($ROOT)' --commands $program]
   let env_vars: record = {
     HOME: $ctx.home
@@ -531,22 +605,36 @@ def "test bump nu check reports without downloading" []: nothing -> nothing {
       run-bump $ctx $'(flags $ctx $url) --check'
     }
     let asset: string = $'nu-($NEWER)-(nightly host-target $nu.os-info).tar.gz'
-    assert equal $r.value.value {current: (version).version latest: $NEWER up_to_date: false asset: $asset} 'the report'
+    assert equal $r.value.value {current: null latest: $NEWER up_to_date: false asset: $asset previous: null} 'the report: no nu is installed there yet'
     assert equal ($r | paths) [releases.json] 'only the release metadata is fetched'
     assert not ($ctx | bin-dir | path exists) 'nothing is installed'
   }
 }
 
-def "test bump nu stops when the latest nightly is running" []: nothing -> nothing {
+def "test bump nu stops when the installed nu is the latest nightly" []: nothing -> nothing {
   with-sandbox {|ctx|
+    let r: record = with-server $ctx {|url|
+      release $ctx $url (version).version
+      # The default install directory holds the running copy of `nu`.
+      run-bump $ctx $'--yes --source ($url)/releases.json --plugin-config ($ctx | registry | to nuon)'
+    }
+    assert equal [$r.value.value.current $r.value.value.up_to_date] [(version).version true] $'up to date: ($r.value.output)'
+    assert equal [$r.value.value.installed $r.value.value.plugins] [[] []] 'nothing installed'
+    assert ($r.value.output =~ 'already the latest nightly') 'it says so'
+    assert equal ($r | paths) [releases.json] 'before downloading'
+  }
+}
+
+def "test bump nu compares the installed nu not the running one" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    stub-nu $ctx ($ctx | bin-dir | path join nu) '0.100.0'
     let r: record = with-server $ctx {|url|
       release $ctx $url (version).version
       run-bump $ctx $'(flags $ctx $url) --yes'
     }
-    assert equal $r.value.value.up_to_date true $'up to date: ($r.value.output)'
-    assert equal [$r.value.value.installed $r.value.value.plugins] [[] []] 'nothing installed'
-    assert ($r.value.output =~ 'already the latest nightly') 'it says so'
-    assert equal ($r | paths) [releases.json] 'before downloading'
+    assert equal [$r.value.value.current $r.value.value.up_to_date] ['0.100.0' false] $'a stable nu on disk is not up to date: ($r.value.output)'
+    assert equal ($r.value.value.installed | length) 1 'it is replaced, although the running nu is the latest'
+    assert equal (^($ctx | bin-dir | path join nu) --version | str trim) (version).version 'by the nightly'
   }
 }
 
@@ -558,7 +646,7 @@ def "test bump nu installs the newest release" []: nothing -> nothing {
     }
     let asset: string = $'nu-($NEWER)-(nightly host-target $nu.os-info).tar.gz'
     let bin: path = $ctx | bin-dir
-    assert equal ($r.value.value | reject installed plugins) {current: (version).version latest: $NEWER up_to_date: false asset: $asset} $'the newest release, listed last: ($r.value.output)'
+    assert equal ($r.value.value | reject installed plugins) {current: null latest: $NEWER up_to_date: false asset: $asset} $'the newest release, listed last: ($r.value.output)'
     assert equal $r.value.value.installed [($bin | path join nu) ($bin | path join nu_plugin_sbextra)] 'nu first, then the plugins'
     assert equal (open --raw ($bin | path join nu) | lines | first) '#!/bin/sh' "the archive's nu"
     assert equal (ls --all $bin | get name | path basename | sort) [nu nu_plugin_sbextra] 'no LICENSE, README or staging files'
@@ -627,6 +715,19 @@ def "test bump nu checks SHA256SUMS when there is no digest" []: nothing -> noth
   }
 }
 
+def "test bump nu reports a SHA256SUMS that cannot be fetched" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = with-server $ctx {|url|
+      release $ctx $url $NEWER --digest none --sums missing
+      run-bump $ctx $'(flags $ctx $url) --yes'
+    }
+    assert equal $r.value.code pman::nightly::published-sha256::io $'the error: ($r.value.output)'
+    assert ($r.value.error =~ "'SHA256SUMS'") $'it names the asset: ($r.value.error)'
+    assert not ($ctx | bin-dir | path exists) 'nothing is installed'
+    assert equal (ls --all ($ctx.root | path join tmp)) [] 'the download is cleaned up'
+  }
+}
+
 def "test bump nu installs after a matching SHA256SUMS" []: nothing -> nothing {
   with-sandbox {|ctx|
     let r: record = with-server $ctx {|url|
@@ -669,7 +770,7 @@ def "test bump nu replaces the running binary atomically" []: nothing -> nothing
     let nubin: path = $ctx.code | path join nubin
     assert equal $r.value.value.installed [($nubin | path join nu)] $'the running nu is the default target: ($r.value.output)'
     assert equal (open --raw ($nubin | path join nu) | lines | first) '#!/bin/sh' 'it is replaced'
-    assert equal (ls --all $nubin | get name | path basename) [nu] 'by a rename: no staging file is left'
+    assert equal (ls --all $nubin | get name | path basename | sort) [nu nu.previous] 'by a rename, keeping the replaced nu: no staging file is left'
     assert ($r.value.output =~ 'replaced the running nu') 'and says how to pick it up'
   }
 }
@@ -682,7 +783,172 @@ def "test bump nu reload execs the installed nu" []: nothing -> nothing {
     }
     assert equal $r.value.exit_code 0 $'the exec succeeds: ($r.value.output)'
     assert equal ($r.value | columns) [output exit_code] 'the process was replaced before it could save a result'
-    assert equal (nu-runs $ctx) ['run:'] 'the installed nu ran, without arguments'
+    assert equal (nu-runs $ctx | last) 'run:' 'the installed nu ran, without arguments'
+  }
+}
+
+# ——— bump-nu: smoke test, previous build, rollback ————————————————————————————
+
+def "test bump nu smoke tests the new nu before installing" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = with-server $ctx {|url|
+      release $ctx $url $NEWER
+      run-bump $ctx $'(flags $ctx $url) --yes'
+    }
+    assert equal (nu-runs $ctx | first 2) ['run:--no-config-file --commands' 'run:--no-config-file --include-path'] $'the version and the library load: ($r.value.output)'
+    let out: string = $r.value.output
+    assert (($out | str index-of 'smoke-testing') < ($out | str index-of 'installed ')) 'before anything is installed'
+  }
+}
+
+def "test bump nu refuses a nu that does not run" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = with-server $ctx {|url|
+      release $ctx $url $NEWER --broken-nu
+      run-bump $ctx $'(flags $ctx $url) --yes'
+    }
+    assert equal $r.value.code pman::nightly::smoke-test::external_failure $'the error: ($r.value.output)'
+    assert ($r.value.error =~ '^the new nu does not run') $'the message: ($r.value.error)'
+    assert equal $r.value.help 'sbstub: broken' 'its stderr is the advice'
+    assert not ($ctx | bin-dir | path exists) 'nothing is installed'
+    let archive: path = $r.value.error | parse --regex "kept at '(?<archive>[^']+)'" | get 0.archive
+    assert equal ($archive | path basename) $'nu-($NEWER)-(nightly host-target $nu.os-info).tar.gz' $'the message names the archive: ($r.value.error)'
+    assert ($archive | path exists) 'which is kept'
+    assert equal ($archive | path dirname | path dirname) ($ctx.root | path join tmp) 'in the temp dir'
+  }
+}
+
+def "test no smoke installs a nu that does not run" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = with-server $ctx {|url|
+      release $ctx $url $NEWER --broken-nu
+      run-bump $ctx $'(flags $ctx $url) --yes --no-smoke'
+    }
+    assert equal ($r.value.value.installed | length) 1 $'installed: ($r.value.output)'
+    assert not ($r.value.output =~ 'smoke-testing') 'without a smoke test'
+    assert equal (ls --all ($ctx.root | path join tmp)) [] 'the download is cleaned up'
+  }
+}
+
+def "test bump nu refuses a nu that cannot load the library" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = with-server $ctx {|url|
+      release $ctx $url $NEWER --version-only-nu
+      run-bump $ctx $'(flags $ctx $url) --yes'
+    }
+    assert equal $r.value.code pman::nightly::smoke-test::external_failure $'the error: ($r.value.output)'
+    assert ($r.value.error =~ $'^nu ($NEWER) cannot load this library') $'the message: ($r.value.error)'
+    assert ($r.value.help =~ 'sbstub: cannot load') $'its stderr is the advice: ($r.value.help)'
+    assert ($r.value.help =~ '--no-smoke') 'which names the way around'
+    assert not ($ctx | bin-dir | path exists) 'nothing is installed'
+  }
+}
+
+def "test bump nu refuses a nu of another version" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = with-server $ctx {|url|
+      # The archive is named after `NEWER`, its `nu` reports `OLDER`.
+      release $ctx $url $NEWER --nu-version $OLDER
+      run-bump $ctx $'(flags $ctx $url) --yes'
+    }
+    assert equal $r.value.code pman::nightly::smoke-test::external_failure $'the error: ($r.value.output)'
+    assert ($r.value.error =~ $"reports version '($OLDER)', not '($NEWER)'") $'the message: ($r.value.error)'
+    assert not ($ctx | bin-dir | path exists) 'nothing is installed'
+  }
+}
+
+# Install `OLDER` as the sandbox's `nu`, with a registered `sbship` plugin 0.1.0 next to it, then bump to `NEWER`,
+# whose archive ships `sbship` 0.2.0. Returns the bump's result.
+def bump-over-older [ctx: record url: string]: nothing -> record {
+  let bin: path = $ctx | bin-dir
+  stub-nu $ctx ($bin | path join nu) $OLDER
+  register $ctx {sbship: $bin}
+  release $ctx $url $NEWER --plugins [sbship] --plugin-version '0.2.0'
+  run-bump $ctx $'(flags $ctx $url) --yes'
+}
+
+def "test bump nu keeps the previous nu and plugins" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = with-server $ctx {|url|
+      let bump: record = bump-over-older $ctx $url
+      {bump: $bump check: (run-bump $ctx $'(flags $ctx $url) --check')}
+    }
+    let bin: path = $ctx | bin-dir
+    assert equal ($r.value.bump.value.installed | path basename) [nu nu_plugin_sbship] $'installed: ($r.value.bump.output)'
+    assert equal (ls --all $bin | get name | path basename | sort) [nu nu.previous nu_plugin_sbship nu_plugin_sbship.previous] 'each replaced file is kept'
+    assert equal (^($bin | path join nu.previous) --version | str trim) $OLDER 'the previous nu'
+    assert equal (^($bin | path join nu) --version | str trim) $NEWER 'next to the new one'
+    assert ((open --raw ($bin | path join nu_plugin_sbship.previous)) =~ '"0.1.0"') 'the previous plugin'
+    assert equal (plugin-versions $ctx) {sbship: '0.2.0'} 'the registry holds the shipped plugin'
+    let asset: string = $'nu-($NEWER)-(nightly host-target $nu.os-info).tar.gz'
+    assert equal $r.value.check.value {current: $NEWER latest: $NEWER up_to_date: true asset: $asset previous: $OLDER} '--check reports the previous version'
+  }
+}
+
+def "test rollback restores the previous build and its plugins" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = with-server $ctx {|url|
+      bump-over-older $ctx $url | ignore
+      run-bump $ctx $'(flags $ctx $url) --rollback'
+    }
+    let bin: path = $ctx | bin-dir
+    let shipped: path = $bin | path join nu_plugin_sbship
+    assert equal ($r.value.value | reject plugins) {current: $OLDER previous: $NEWER installed: [($bin | path join nu) $shipped]} $'the report: ($r.value.output)'
+    assert equal $r.value.value.plugins [{name: sbship filename: $shipped action: updated message: null}] 'the plugin is re-registered from the restored copy'
+    assert equal (^($bin | path join nu) --version | str trim) $OLDER 'the previous nu is back'
+    assert equal (^($bin | path join nu.previous) --version | str trim) $NEWER 'the builds swap'
+    assert equal (plugin-versions $ctx) {sbship: '0.1.0'} 'the registry holds the restored plugin'
+    assert equal (ls --all $bin | get name | path basename | sort) [nu nu.previous nu_plugin_sbship nu_plugin_sbship.previous] 'no staging files'
+    assert equal ($r | paths) [releases.json $'nu-($NEWER)-(nightly host-target $nu.os-info).tar.gz'] 'the rollback fetches nothing'
+    assert not ($r.value.output =~ 'replaced the running nu') 'the running nu was not the target'
+  }
+}
+
+def "test rollback without a previous build errors" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = run-bump $ctx $'--rollback --install-dir ($ctx | bin-dir | to nuon) --plugin-config ($ctx | registry | to nuon)'
+    assert equal $r.code pman::nightly::rollback::not_found $'the error: ($r.output)'
+    assert ($r.help =~ 'nu.previous') $'the advice says what it needs: ($r.help)'
+  }
+}
+
+def "test rollback cannot be combined with check" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let r: record = run-bump $ctx $'--rollback --check --install-dir ($ctx | bin-dir | to nuon)'
+    assert equal $r.code pman::nightly::bump-nu::invalid_argument $'the error: ($r.output)'
+  }
+}
+
+# ——— upgrade: the auto-bump ———————————————————————————————————————————————————
+#
+# `stubbed-upgrade --clobber-nu` makes the `cargo` stub leave a stable `nu` where the sandbox copy was; the bump
+# that `upgrade` then runs reads the release `release` wrote through the `http get` shadow (no server, no network).
+
+def "test upgrade reinstalls the nightly when cargo leaves a stable nu" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    release $ctx 'http://sbfixture' $NEWER
+    let r: record = stubbed-upgrade $ctx 'pman upgrade' --clobber-nu
+    let nubin: path = $ctx.code | path join nubin
+    assert equal ($r.value | columns) ($REGISTRY_BINS ++ [nu]) $'the bump is one more entry: ($r.stderr)'
+    assert equal $r.value.nu [{output: $'installed nu ($NEWER) over nu 0.100.0' success: true}] 'its outcome'
+    assert equal (^($nubin | path join nu) --version | str trim) $NEWER 'the smoke-tested nightly replaced the stable build'
+    assert equal (^($nubin | path join nu.previous) --version | str trim) '0.100.0' 'which is kept'
+    assert ($r.stderr =~ 'smoke-testing') 'through the smoke test'
+  }
+}
+
+def "test upgrade reports a bump that refused the build" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    release $ctx 'http://sbfixture' $NEWER --broken-nu
+    let r: record = stubbed-upgrade $ctx 'pman upgrade' --clobber-nu
+    let nubin: path = $ctx.code | path join nubin
+    let row: record = $r.value.nu | first
+    assert equal $row.success false $'the bump failed: ($r.stderr)'
+    assert ($row.output =~ '^nu 0.100.0 stays: the new nu does not run') $'the error, naming what stays: ($row.output)'
+    assert ($row.output =~ 'sbstub: broken') 'with its advice'
+    assert equal (^($nubin | path join nu) --version | str trim) '0.100.0' 'the stable build stays'
+    assert not ($nubin | path join nu.previous | path exists) 'nothing was replaced'
+    assert equal ($r.value.bun | get success) [true true] 'the other upgrades still ran'
   }
 }
 
@@ -701,7 +967,7 @@ def "test bump nu updates and checks the registered plugins" []: nothing -> noth
     ] $'the outcomes: ($r.value.output)'
     assert equal (registered $ctx) {sbkeep: $kept sbship: $shipped} 'a shipped plugin is registered from its installed copy'
     assert ($ctx.home | path join old nu_plugin_sbship | path exists) 'its old binary is kept'
-    assert equal (nu-runs $ctx) ['run:--no-config-file'] 'the new nu checked the registry'
+    assert equal (nu-runs $ctx | last) 'run:--no-config-file --stdin' 'the new nu checked the registry'
   }
 }
 
@@ -756,7 +1022,7 @@ def "test a new nu that cannot check plugins does not abort the bump" []: nothin
     let before: record = registered $ctx
     let r: record = with-server $ctx {|url|
       release $ctx $url $NEWER --broken-nu
-      run-bump $ctx $'(flags $ctx $url) --yes'
+      run-bump $ctx $'(flags $ctx $url) --yes --no-smoke'
     }
     assert equal ($r.value.value.installed | length) 1 $'installed: ($r.value.output)'
     assert equal ($r.value.value.plugins | get action) [failed] 'the plugin is reported'
