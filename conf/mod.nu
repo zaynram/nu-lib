@@ -9,15 +9,12 @@ use edit
 
 export use machine.nu *
 
-# ——— constants ————————————————————————————————————————————————————————————————
-
-const SCRIPT: path = path self machine.nu | path expand --strict
-
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 alias editor = edit
 alias config-dir = try { $env.XDG_CONFIG_DIR! } catch { $nu.default-config-dir | path dirname }
 
+# A scope's variables: its directories first, then the entries the environment already has.
 def profile-env [mode: string = user]: nothing -> record {
   let mc: record = machine-config $mode
   match $mode {
@@ -30,7 +27,8 @@ def profile-env [mode: string = user]: nothing -> record {
       NU_LIB_DIRS: [$mc.modules]
       PATH: [$mc.binaries $mc.scripts]
     })
-  } | update $.PATH { append $env.path! | uniq }
+  } | items {|key dirs| {$key: ($dirs | append ($env | get --optional --ignore-case $key | default []) | uniq)} }
+  | into record
 }
 
 alias xglob = glob --depth=3 --exclude=[
@@ -91,7 +89,6 @@ def scope [vendor: bool]: nothing -> record {
 
 # Open a resolved file in the editor, or return its expanded path.
 def submit [target: oneof<nothing, string> --return]: oneof<nothing, path> -> oneof<nothing, path> {
-  # nu-lint-ignore: unused_parameter
   let p: oneof<nothing, path> = $in
   if ($p | is-empty) { error raise --code=config::unresolved_target $"no items found for target: '($target)'" }
   $p | path expand | if $return { } else { editor }
@@ -99,7 +96,11 @@ def submit [target: oneof<nothing, string> --return]: oneof<nothing, path> -> on
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
-# Show or load a scope's environment variables, PATH additions included.
+# Show or load a scope's environment variables (`NU_LIB_DIRS`, `PATH`, and `NU_PLUGIN_DIRS` for the vendor scope).
+#
+# Each list variable is the piped record's entries, then the scope's directories, then the entries the
+# environment already has (without duplicates), so loading never drops existing directories. Other piped
+# variables are kept, and `--with` values replace anything else.
 @category env
 export def --env vars [
   --vendor (-v) # Use the vendor scope
@@ -107,9 +108,13 @@ export def --env vars [
   --load (-l) # Load the variables into the current process
   --return (-r) # Return the variables as a record (the default when not loading)
 ]: oneof<nothing, record> -> oneof<nothing, record> {
-  let input: record = default {} | merge $with
-  let e: record = if $vendor { profile-env vendor } else { profile-env user }
-  if $load { $input | merge $e | load-env }
+  let input: record = $in | default {}
+  let scope: record = if $vendor { profile-env vendor } else { profile-env user }
+  let combined: record = $scope
+    | items {|key dirs| {$key: ($input | get --optional $key | default [] | append $dirs | uniq)} }
+    | into record
+  let e: record = $input | merge $combined | merge $with
+  if $load { $e | load-env }
   if $return or not $load { return $e }
 }
 
@@ -122,9 +127,13 @@ export def --env dir [
 ]: nothing -> oneof<nothing, path, record> {
   let s: record = scope $vendor
   if $target == null { return $s }
-  let p: oneof<nothing, path> = $s | get --ignore-case --optional $target
+  let p: oneof<nothing, path, list<path>> = $s | get --ignore-case --optional $target
   if $p == null { error raise --code=config::dir::unresolved_target $"no directory named '($target)'" }
-  $p | if $return { return $in } else { cd $in }
+  if $return { return $p }
+  if ($p | describe) =~ '^list' {
+    error raise --code=config::dir::ambiguous_target $"'($target)' is a list of directories: use --return"
+  }
+  cd $p
 }
 
 # Open an autoload file of a scope; with no target, pick one from a list.
@@ -146,6 +155,10 @@ export def auto [
 }
 
 # Open an application's configuration file; with no target, list the candidates.
+#
+# The target is a file or directory under the config directory (`$env.XDG_CONFIG_DIR`, else the parent of
+# Nushell's). A directory with one config file resolves to it; with several, pick one interactively. `--path`
+# names a file under the target directory, which need not exist yet.
 @category filesystem
 export def find [
   target?: path@_apps # The directory name to search for config files under
@@ -156,7 +169,7 @@ export def find [
   $item | match ($in | path type) {
     file => { submit $target --return=$return | return $in }
     dir => { cd $in }
-    _ => { mkdir $in; cd $in }
+    _ => { null | error raise --code=config::app::unresolved_target $"no config directory or file named '($target)'" }
   }
   if $path != null { $path } else {
     let files: list = try { xglob **/* --no-dir } | default []
@@ -170,7 +183,10 @@ export def find [
 
 const PROMPT_EXT: string = '^.+[.]{1}(toml|yaml|yml|json|jsonc)$'
 
-# Refresh the `oh-my-posh` prompt initialization script in the vendor autoload directory.
+# Refresh the `oh-my-posh` prompt initialization script and move it to the user autoload directory.
+#
+# `oh-my-posh init nu` writes the script into the vendor autoload directory; it replaces any existing copy in the
+# user autoload directory. On Windows, the self-upgrade tail of the script is cut off.
 @category shells
 export def prompt [
   --config (-c): path # Prompt configuration file (defaults to `$env.POSH_CONFIG` if set)
@@ -189,7 +205,7 @@ export def prompt [
   let src: path = (scope true).autoload | path join oh-my-posh.nu
   if ($src | path exists) {
     let dst: path = $src | path dirname --replace=(machine-config).autoload
-    if not ($dst | path exists) { mv --update $src $dst }
+    if $dst != $src { mkdir ($dst | path dirname); mv --force $src $dst }
     if $nu.os-info.name == windows {
       open --raw $dst
       | collect { lines | take until { str contains '$_omp_executable upgrade' } | str join (char newline) }
@@ -200,14 +216,10 @@ export def prompt [
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
+# Put the library's directories and the vendor scope on NU_LIB_DIRS, NU_PLUGIN_DIRS and PATH (idempotent: existing
+# entries are kept and nothing is duplicated).
 export-env {
-  $env | select $.NU_LIB_DIRS $.NU_PLUGIN_DIRS
-  | default [] NU_LIB_DIRS NU_PLUGIN_DIRS
-  | merge deep --strategy=prepend {
-    NU_LIB_DIRS: $NU_LIB_DIRS
-    NU_PLUGIN_DIRS: $NU_PLUGIN_DIRS
-  } | update cells { uniq }
-  | vars --vendor --load
+  {NU_LIB_DIRS: $NU_LIB_DIRS NU_PLUGIN_DIRS: $NU_PLUGIN_DIRS} | vars --vendor --load
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————
@@ -238,7 +250,7 @@ def _apps []: nothing -> record {
 def _app-paths [buffer: string]: nothing -> oneof<record, list> {
   let d: path = config-dir
   $buffer | split row (char space)
-  | where $it not-in [conf app --path -p] and ($it | is-not-empty)
+  | where $it not-in [conf find --path -p] and ($it | is-not-empty)
   | each { prepend $d | path join }
   | where ($it | path type) == dir
   | if ($in | is-empty) { return [] } else {
