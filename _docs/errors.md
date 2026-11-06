@@ -72,10 +72,18 @@ raise` call carries the span of that call. A message built in the same command (
 that command. A message returned by a helper, or stored in a constant, carries the span of *its* site, so the
 derived command would be the helper's: pass `--code` in that case, or build the message where it is raised.
 
-The command segment is an approximation too: the last line matching a `def` before the raise, not a parse. Two
-shapes mislead it: a helper `def` nested inside the command body (a raise after it is attributed to the helper),
-and a multi-line string literal that contains a `def …` line (attributed to that name). Pass `--code` in either
-case, or move the helper out of the command. Nothing in the library has either shape today.
+The command segment is an approximation too: the last line matching a `def` before the raise, not a parse. Three
+shapes mislead it:
+
+- a helper `def` nested inside the command body: a raise after it is attributed to the helper;
+- a multi-line string literal that contains a `def …` line: attributed to that name;
+- a raise outside any `def` that *follows* one in the file: an `export-env` block or an alias body
+  (`export alias boom = do { error raise 'late' --kind conflict }`) placed after the defs is attributed to the last
+  of them (`late::go::conflict` rather than `late::conflict`; before the first def it derives correctly).
+
+Pass `--code` in the first two cases, or move the helper out of the command. For a raise in an `export-env` block
+or an alias, pass `--code`: the section order puts the environment block after the definitions, so such a raise
+nearly always follows a def. Nothing in the library has any of the three shapes today.
 
 ### The directive
 

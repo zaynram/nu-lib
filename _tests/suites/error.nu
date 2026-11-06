@@ -209,6 +209,24 @@ def "test raise outside any def omits the command" []: nothing -> nothing {
   }
 }
 
+def "test raise outside any def that follows one is attributed to that def" []: nothing -> nothing {
+  # The documented approximation (_docs/errors.md): the command is the last `def` line before the raise, so an alias
+  # or `export-env` block placed after the defs names the last def; `--code` is the remedy there.
+  with-sandbox {|ctx|
+    let late = [
+      'use error'
+      'export def go [] { }'
+      "export alias boom = do { error raise 'late' --kind conflict }"
+      "export alias fixed = do { error raise 'late' --kind conflict --code 'late::conflict' }"
+    ] | str join (char newline)
+    let early = "use error\nexport alias boom = do { error raise 'early' --kind conflict }\nexport def go [] { }"
+    let lib = write-lib $ctx {'late/mod.nu': $late 'early/mod.nu': $early}
+    assert equal (child-raise $lib 'use late; late boom').code 'late::go::conflict' 'after a def: the def is named'
+    assert equal (child-raise $lib 'use late; late fixed').code 'late::conflict' '--code gives the intended code'
+    assert equal (child-raise $lib 'use early; early boom').code 'early::conflict' 'before the first def: no command'
+  }
+}
+
 def "test raise in the root mod.nu is named after the root directory" []: nothing -> nothing {
   with-sandbox {|ctx|
     let lib = write-lib $ctx {'mod.nu': "use error\nexport def go [] { error raise 'root' }"}
