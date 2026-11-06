@@ -22,10 +22,13 @@ export const FMT: string = '%DATE%|%ANSI_START%%LEVEL%%ANSI_STOP%|%MSG%'
 # The line format for the current colour setting (`style colors`).
 #
 # With colours on, `FMT` with the date dimmed; `--level` colours the level with that `ansi` name instead of the
-# colour `std/log` gives the level. With colours off, `FMT` without the colour placeholders.
+# colour `std/log` gives the level. With colours off, `FMT` without the colour placeholders. An unknown `--level`
+# name is an error in both modes.
 export def format [
   --level (-l): string # An `ansi` name for the level (default: `std/log`'s colour for it)
 ]: nothing -> string {
+  # `paint` rejects an unknown name whether or not it styles, so a typo surfaces without a terminal too.
+  if $level != null { '%LEVEL%' | style paint $level --colors=false | ignore }
   if not (style colors) { return ($FMT | str replace --all --regex '%ANSI_(START|STOP)%' '') }
   $FMT
   | str replace '%DATE%' ('%DATE%' | style paint wd)

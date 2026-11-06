@@ -33,6 +33,14 @@ def "test format follows the colour setting" []: nothing -> nothing {
   assert equal (log format --level bb) $'(ansi wd)%DATE%(ansi reset)|(ansi bb)%LEVEL%(ansi reset)|%MSG%' 'on: the level takes the given colour'
 }
 
+def "test format rejects an unknown level name in both modes" []: nothing -> nothing {
+  let code: closure = { try { log format --level nonsense | ignore; null } catch {|e| $e.details.code } }
+  $env.config.use_ansi_coloring = false
+  assert equal (do $code) 'style::paint::invalid_argument' 'off: the name is checked before the colour decision'
+  $env.config.use_ansi_coloring = true
+  assert equal (do $code) 'style::paint::invalid_argument' 'on: the same error'
+}
+
 def "test every level writes one line to stderr" []: nothing -> nothing {
   let res = logged 'log critical one; log error two; log warning three; log info four'
   assert equal $res.stdout '' 'nothing on stdout'
