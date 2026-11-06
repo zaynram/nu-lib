@@ -3,6 +3,7 @@
 # `env from-bash` (in `from-bash.nu`) runs `bash` to read the variables a bash script sets; it is the owner's
 # reimplementation of a fork of tesujimath/bash-env-nushell (MIT).
 
+use error
 use completion "into completions"
 
 # `env from-bash`.
@@ -108,16 +109,16 @@ export def has [
   nothing -> oneof<nothing, bool, list<string>>
   list<string> -> list<bool>
 ] {
-  append $names | match ($in | length) {
-    0 => { error make --unspanned 'no variable names were provided' }
-    1 if ($names | is-not-empty) => { first }
-    _ => { }
-  } | each {|k|
+  let keys: list<string> = $in | append $names
+  if $keys == [] { error raise 'no variable names were provided' --kind invalid_argument }
+  let found: list<bool> = $keys | each {|k|
     let key: oneof<nothing, string> = $env | columns | where {|c|
       if $ignore_case { ($c | str lowercase) == ($k | str lowercase) } else { $c == $k }
     } | get 0?
     $key != null and ($nullable or ($env | get $key) != null)
   }
+  # a single positional name returns its bool alone; a piped list always returns a list
+  if $names != [] and ($keys | length) == 1 { $found | first } else { $found }
 }
 
 # Remove variables from the current scope.
@@ -133,7 +134,7 @@ export def --env dotenv [
   --load (-l) # Load the variables into the process environment
   --no-transpose (-n) # Return the variables as a table instead of a record
 ]: nothing -> oneof<table<key: string, value: string>, record> {
-  if not ($dotenv_path | path exists) { error make --unspanned $"unable to resolve path: '($dotenv_path)'" }
+  if not ($dotenv_path | path exists) { error raise $"file not found: '($dotenv_path)'" --kind not_found }
   let vars: table<key: string, value: string> = try {
     open --raw $dotenv_path
     | lines
@@ -142,8 +143,8 @@ export def --env dotenv [
     | parse '{key}={value}'
     | update key { str trim }
     | update value { str trim | str replace --regex `^"(.*)"$|^'(.*)'$` '$1$2' }
-  } catch {
-    error make --unspanned $"unable to parse variables from '($dotenv_path)'"
+  } catch {|e|
+    $e | error raise $"the variables in '($dotenv_path)' could not be read" --kind io
   }
   let record: record = $vars | transpose --ignore-titles --header-row --as-record | default --empty {}
   if $load { load-env $record }

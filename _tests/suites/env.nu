@@ -144,7 +144,9 @@ def "test has treats null as missing only when asked" []: nothing -> nothing {
 }
 
 def "test has without names raises" []: nothing -> nothing {
-  assert error {|| env has } 'no names is an error'
+  let err: record = caught {|| env has }
+  assert equal $err.msg 'no variable names were provided' 'no names is an error'
+  assert equal $err.details?.code? 'env::has::invalid_argument' 'the derived code'
 }
 
 # ——— env rm ———————————————————————————————————————————————————————————————————
@@ -194,7 +196,19 @@ def "test dotenv defaults to the current directory" []: nothing -> nothing {
 }
 
 def "test dotenv of a missing file raises" []: nothing -> nothing {
-  assert error {|| env dotenv /nonexistent/sbenv/.env } 'an unresolvable path is an error'
+  let err: record = caught {|| env dotenv /nonexistent/sbenv/.env }
+  assert equal $err.msg "file not found: '/nonexistent/sbenv/.env'" 'an unresolvable path is an error'
+  assert equal $err.details?.code? 'env::dotenv::not_found' 'the derived code'
+}
+
+def "test dotenv of an unreadable file raises with the cause" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    # a directory exists, but cannot be read as a file
+    let err: record = caught {|| env dotenv $ctx.code }
+    assert equal $err.details?.code? 'env::dotenv::io' 'reading failed'
+    assert equal $err.msg $"the variables in '($ctx.code)' could not be read" 'the path is named'
+    assert equal ($err.details?.inner? | length) 1 'the cause is the inner error'
+  }
 }
 
 # ——— env from-bash ————————————————————————————————————————————————————————————
@@ -234,7 +248,7 @@ def parity [case: string]: nothing -> nothing {
     assert equal (do $run) $pin.output $'the pinned output of ($case).sh'
   } else {
     let err: record = caught $run
-    assert equal $err.details?.code? env::from-bash::script_failed 'a failing script'
+    assert equal $err.details?.code? 'env::from-bash::external_failure' 'a failing script'
     assert ($err.msg ends-with $pin.error) $'the pinned cause of ($case).sh: ($err.msg)'
   }
 }
@@ -416,7 +430,7 @@ def "test from bash needs neither jq nor more than bash and env" []: nothing -> 
 def "test from bash failing script raises" []: nothing -> nothing {
   need-bash
   let err: record = caught {|| "export SBFB_A=1\nfalse" | env from-bash }
-  assert equal $err.details?.code? env::from-bash::script_failed 'the failure code'
+  assert equal $err.details?.code? 'env::from-bash::external_failure' 'the failure code: the module, with no command for main'
   assert equal $err.msg 'the script failed with status 1' 'no stderr, no cause'
 }
 
@@ -429,7 +443,9 @@ def "test from bash failing function names it" []: nothing -> nothing {
 def "test from bash exit raises" []: nothing -> nothing {
   need-bash
   let err: record = caught {|| "export SBFB_A=1\nexit 0" | env from-bash }
-  assert equal $err.details?.code? env::from-bash::incomplete_output 'exit stops bash before the variables are read'
+  assert equal $err.details?.code? 'env::from-bash::external_failure' 'exit stops bash before the variables are read'
+  assert equal $err.msg 'bash exited with status 0 before the variables were read' 'the message says where bash stopped'
+  assert str contains $err.details?.help? '`exit`' 'the advice names the likely cause'
 }
 
 def "test from bash rejects several scripts" []: nothing -> nothing {
@@ -438,32 +454,41 @@ def "test from bash rejects several scripts" []: nothing -> nothing {
     {|| 'A=1' | env from-bash --content 'B=1' }
     {|| env from-bash --content 'B=1' /sbfb/x.sh }
   ] {
-    assert equal (caught $action).details?.code? env::from-bash::ambiguous_input 'one script at a time'
+    let err: record = caught $action
+    assert equal $err.details?.code? 'env::from-bash::invalid_argument' 'one script at a time'
+    assert equal $err.msg 'the script was given more than once' 'the message says what was wrong'
   }
 }
 
 def "test from bash without a script raises" []: nothing -> nothing {
-  assert equal (caught {|| env from-bash }).details?.code? env::from-bash::no_input 'no text and no path'
+  let err: record = caught {|| env from-bash }
+  assert equal $err.details?.code? 'env::from-bash::invalid_argument' 'no text and no path'
+  assert equal $err.msg 'no script was given' 'the message'
+  assert str contains $err.details?.help? '--content' 'the advice lists the ways to give one'
 }
 
 def "test from bash missing file raises" []: nothing -> nothing {
   let err: record = caught {|| env from-bash /sbfb/missing.sh }
-  assert equal $err.details?.code? env::from-bash::file_not_found 'the file code'
-  assert ($err.msg =~ 'missing.sh') $'the path is named: ($err.msg)'
+  assert equal $err.details?.code? 'env::from-bash::not_found' 'the file code'
+  assert equal $err.msg "file not found: '/sbfb/missing.sh'" 'the path is named'
 }
 
 def "test from bash unknown return raises" []: nothing -> nothing {
-  assert equal (caught {|| 'A=1' | env from-bash --return everything }).details?.code? env::from-bash::invalid_return 'an unknown mode'
+  let err: record = caught {|| 'A=1' | env from-bash --return everything }
+  assert equal $err.details?.code? 'env::from-bash::invalid_argument' 'an unknown mode'
+  assert equal $err.msg "unknown --return 'everything'" 'the mode is named'
+  assert str contains $err.details?.help? 'merge, env, shellvars, preserve' 'the advice lists the modes'
 }
 
 def "test from bash execute takes only preserve" []: nothing -> nothing {
   let err: record = caught {|| 'f() { :; }' | env from-bash --execute [f] --return env }
-  assert equal $err.details?.code? env::from-bash::conflicting_flags '--execute with another --return'
+  assert equal $err.details?.code? 'env::from-bash::invalid_argument' '--execute with another --return'
+  assert equal $err.msg "--execute cannot be combined with --return 'env'" 'the message names the flags'
   need-bash
   assert equal ('f() { :; }' | env from-bash --execute [f] --return preserve | columns) [env shellvars fn] 'preserve is allowed'
 }
 
 def "test from bash without bash raises" []: nothing -> nothing {
   let err: record = with-sandbox {|ctx| with-env {PATH: [$ctx.code]} { caught {|| 'A=1' | env from-bash } } }
-  assert equal $err.details?.code? env::from-bash::bash_not_found 'bash is looked up on PATH'
+  assert equal $err.details?.code? 'env::from-bash::missing_dependency' 'bash is looked up on PATH'
 }

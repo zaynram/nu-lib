@@ -104,10 +104,11 @@ def text []: oneof<string, binary> -> string {
   if ($in | describe) == binary { decode utf-8 } else { }
 }
 
-# The error for a failed phase (`{phase status}`: a function, or the script when `phase` is empty). As upstream:
-# a script's cause is its whole stderr with bash's location prefixes removed, a function's the first line of its
-# stderr.
-def failed [failure: record<phase: string, status: string> stderr: string]: nothing -> error {
+# What a failed phase (`{phase status}`: a function, or the script when `phase` is empty) puts in the error message:
+# `what` failed, its exit `status`, and its `cause` (`: <text>`, or empty when bash said nothing). As upstream: a
+# script's cause is its whole stderr with bash's location prefixes removed, a function's the first line of its
+# stderr. The raise itself happens in `main`, so that the error code names this module and not a helper.
+def failure-of [failure: record<phase: string, status: string> stderr: string]: nothing -> record<what: string, status: string, cause: string> {
   let phase: string = $failure.phase
   let err: string = $stderr | split row "\u{0}=phase\u{0}" | last
   let cause: string = if $phase == '' {
@@ -115,9 +116,11 @@ def failed [failure: record<phase: string, status: string> stderr: string]: noth
   } else {
     $err | lines | get 0? | default ''
   }
-  let what: string = if $phase == '' { 'the script' } else { $"function '($phase)'" }
-  let msg: string = $"($what) failed with status ($failure.status)" + (if $cause == '' { '' } else { $": ($cause)" })
-  error raise --code=env::from-bash::script_failed $msg
+  {
+    what: (if $phase == '' { 'the script' } else { $"function '($phase)'" })
+    status: $failure.status
+    cause: (if $cause == '' { '' } else { $": ($cause)" })
+  }
 }
 
 # ——— definitions —————————————————————————————————————————————————————————————
@@ -157,23 +160,23 @@ export def --env main [
 ] {
   let texts: list<string> = [$in $content] | compact
   if ($texts | length) + ([$file] | compact | length) > 1 {
-    error raise --code=env::from-bash::ambiguous_input 'give the script once: piped, with --content, or as a file path'
+    error raise 'the script was given more than once' --kind invalid_argument --advice 'pipe its text, give --content, or give a file path: one of them'
   }
   if $return != null and $return not-in $RETURN {
-    error raise --code=env::from-bash::invalid_return $"unknown --return '($return)' \(expected one of: ($RETURN | str join ', '))"
+    error raise $"unknown --return '($return)'" --kind invalid_argument --advice $"expected one of: ($RETURN | str join ', ')"
   }
   if $execute != [] and $return not-in [null preserve] {
-    error raise --code=env::from-bash::conflicting_flags $"--execute returns every change \(preserve); it cannot be combined with --return ($return)"
+    error raise $"--execute cannot be combined with --return '($return)'" --kind invalid_argument --advice '--execute returns every change (preserve)'
   }
   let script: oneof<string, binary> = $texts | get 0? | default {
-    let path: path = $file | default { error raise --code=env::from-bash::no_input 'no script: pipe its text, or give --content or a file path' }
-    if not ($path | path exists) { error raise --code=env::from-bash::file_not_found $"file not found: '($path)'" }
+    let path: path = $file | default { error raise 'no script was given' --kind invalid_argument --advice 'pipe its text, or give --content or a file path' }
+    if not ($path | path exists) { error raise $"file not found: '($path)'" --kind not_found }
     open --raw $path
   }
   let bash: path = which bash
     | where type == external
     | get 0?.path
-    | default { error raise --code=env::from-bash::bash_not_found '`bash` is not on PATH' }
+    | default { error raise '`bash` is not on PATH' --kind missing_dependency }
   let res: record = $script | ^$bash --noprofile --norc -c $HELPER bash ...$execute | complete
   let records: list<string> = $res.stdout | text | split row (char nul)
   let marks: list<int> = $records | enumerate | where ($it.item | str starts-with '=') | get index
@@ -182,10 +185,15 @@ export def --env main [
     | window 2
     | each {|w| {mark: ($records | get ($w | first)) items: ($records | slice (($w | first) + 1)..<($w | last))} }
   let failure: oneof<nothing, list<string>> = $sections | where mark == '=error' | get 0?.items
-  if $failure != null { failed ($failure | to-vars) ($res.stderr | text) }
+  if $failure != null {
+    let f: record = failure-of ($failure | to-vars) ($res.stderr | text)
+    error raise $"($f.what) failed with status ($f.status)($f.cause)" --kind external_failure
+  }
   if ($sections | where mark == '=done' | is-empty) {
-    let msg: string = $"bash exited with status ($res.exit_code) before the variables were read \(did the script call `exit`?)"
-    error raise --code=env::from-bash::incomplete_output $msg --advice=($res.stderr | text | str replace --all "\u{0}=phase\u{0}" '' | str trim)
+    let stderr: string = $res.stderr | text | str replace --all "\u{0}=phase\u{0}" '' | str trim
+    error raise $"bash exited with status ($res.exit_code) before the variables were read" --kind external_failure --advice (
+      [$stderr 'a script that calls `exit` ends bash early; `return` ends the script and keeps the variables'] | compact --empty | str join (char newline)
+    )
   }
   # Snapshots in pairs, before and after: the script first, then each function.
   let comparisons: list<record> = $sections
