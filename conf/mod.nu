@@ -15,8 +15,8 @@ alias editor = edit
 alias config-dir = try { $env.XDG_CONFIG_DIR! } catch { $nu.default-config-dir | path dirname }
 
 # A scope's variables: its directories first, then the entries the environment already has.
-def profile-env [mode: string = user]: nothing -> record {
-  let mc: record = machine-config $mode
+def profile-env [mode: string = user --no-file]: nothing -> record {
+  let mc: record = machine-config $mode --no-file=$no_file
   match $mode {
     user => ({
       NU_LIB_DIRS: $mc.modules
@@ -107,9 +107,10 @@ export def --env vars [
   --with (-w): record = {} # Merge these variables in, overriding the scope's own
   --load (-l) # Load the variables into the current process
   --return (-r) # Return the variables as a record (the default when not loading)
+  --no-file # Ignore the machine override file: the defaults and `--with` only
 ]: oneof<nothing, record> -> oneof<nothing, record> {
   let input: record = $in | default {}
-  let scope: record = if $vendor { profile-env vendor } else { profile-env user }
+  let scope: record = profile-env (if $vendor { 'vendor' } else { 'user' }) --no-file=$no_file
   let combined: record = $scope
     | items {|key dirs|
       let existing: list = $env | get --optional --ignore-case $key | default []
@@ -222,9 +223,17 @@ export def prompt [
 # ——— environment ——————————————————————————————————————————————————————————————
 
 # Put the library's directories and the vendor scope on NU_LIB_DIRS, NU_PLUGIN_DIRS and PATH (idempotent: existing
-# entries are kept and nothing is duplicated).
+# entries are kept and nothing is duplicated). A broken machine override file must not break `use conf` (the
+# owner's env.nu runs it at every shell start): it is reported on stderr and the defaults are loaded instead;
+# an explicit `conf machine-config` still raises the error.
 export-env {
-  {NU_LIB_DIRS: $NU_LIB_DIRS NU_PLUGIN_DIRS: $NU_PLUGIN_DIRS} | vars --vendor --load
+  let libs: record = {NU_LIB_DIRS: $NU_LIB_DIRS NU_PLUGIN_DIRS: $NU_PLUGIN_DIRS}
+  try {
+    $libs | vars --vendor --load
+  } catch {|e|
+    print --stderr $"(ansi yellow)conf: the machine override file was ignored, using the defaults:(ansi reset) ($e.msg)"
+    $libs | vars --vendor --load --no-file
+  }
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————

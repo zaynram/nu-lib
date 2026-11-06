@@ -227,17 +227,31 @@ def "test machine config finds the file in the config directory" []: nothing -> 
   }
 }
 
-def "test machine config both files is a conflict that fails use conf" []: nothing -> nothing {
+def "test machine config both files is a conflict" []: nothing -> nothing {
   with-sandbox {|ctx|
     let dir: path = $ctx.config | path join nushell
     mkdir $dir
     '{user: {state: /sbstate}}' | save --force ($dir | path join machine.nuon)
     'def main []: nothing -> record { {user: {state: "/sbscript"}} }' | save --force ($dir | path join machine.nu)
     let res: record = child $ctx 'conf machine-config'
-    assert ($res.exit_code != 0) 'the conflict is an error (raised by the export-env of `use conf`)'
+    assert ($res.exit_code != 0) 'the conflict is an error for an explicit call'
     assert ($res.stderr =~ 'conf::machine::conflict') $'the conflict code: ($res.stderr)'
     assert ($res.stderr =~ 'machine.nuon' and $res.stderr =~ 'machine.nu\b') $'both files are named: ($res.stderr)'
     assert equal (value $ctx 'conf machine-config' --vars {NU_MACHINE_CONFIG: ($dir | path join machine.nu)}).state /sbscript 'naming one resolves it'
+  }
+}
+
+def "test a broken override is reported by use conf and the defaults are loaded" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let dir: path = $ctx.config | path join nushell
+    mkdir $dir
+    '{vendor: {plugins: "not-a-list"}}' | save --force ($dir | path join machine.nuon)
+    let res: record = child $ctx '$env.NU_PLUGIN_DIRS'
+    assert equal $res.exit_code 0 $'`use conf` survives a broken override: ($res.stderr)'
+    assert ($res.stderr =~ 'ignored, using the defaults' and $res.stderr =~ 'plugins') $'the cause is reported: ($res.stderr)'
+    let defaults: list<string> = value $ctx '(conf machine-config vendor --no-file).plugins'
+    assert equal ($res.value | where $it in $defaults) $defaults 'the default plugin dirs are loaded'
+    assert equal (child $ctx 'conf machine-config vendor').exit_code 1 'an explicit call still raises'
   }
 }
 

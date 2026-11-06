@@ -114,9 +114,11 @@ vendor `binaries`: `/usr/bin`, or the Windows Apps directory). The file is not k
 | `conf::machine::invalid_argument` | unknown mode or strategy; `--file` with `--no-file`; unsupported extension; malformed nuon; not a record; a shape violation (file or `--with`) | names the file; advice lists the violations |
 | `conf::machine::external_failure` | the script exited non-zero | names the script; advice is its stderr |
 
-A failing override fails `conf machine-config`, and therefore `use conf` (its environment block resolves the vendor
-scope). To fix the file from a shell that ignores it, start one with `NU_MACHINE_CONFIG` empty:
-`with-env {NU_MACHINE_CONFIG: ''} { nu --no-config-file -I <library root> }` (bash: `NU_MACHINE_CONFIG= nu …`).
+A failing override fails `conf machine-config` and every explicit `conf` call that resolves the machine
+configuration. `use conf` is the exception: its environment block runs at every shell start (the owner's `env.nu`),
+so there a failing override is reported on stderr (`conf: the machine override file was ignored, using the
+defaults: …`) and the defaults are loaded instead. Fix the file and run `conf machine-config` to see the full
+error; `conf vars --no-file` and `conf machine-config --no-file` ignore the file on purpose.
 
 ## Example
 
