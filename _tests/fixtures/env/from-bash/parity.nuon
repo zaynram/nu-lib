@@ -1,0 +1,185 @@
+# Parity corpus for `env from-bash`: what bash-env (bash-env-json 0.10.1, with jq) returned for each script here.
+#
+# <case>: {execute: functions run after the script, output: the result of `bash-env --return preserve
+# --execute <execute>` (the module piped the script text on stdin), or error: the cause bash-env-json reported}.
+# Captured 2026-11-06 with SBFB_KEEP=keep, SBFB_GONE=gone and SBFB_UNEX=unex inherited; <PATH> stands for the
+# caller's PATH (joined with the separator) and <PWD> for its directory. Stored as JSON so that control
+# characters stay escaped.
+{
+  "allexport": {
+    "execute": [],
+    "output": {
+      "env": {
+        "SBFB_AUTO": "1"
+      },
+      "shellvars": {
+        "SBFB_S": "2"
+      }
+    }
+  },
+  "cd": {
+    "execute": [],
+    "output": {
+      "env": {
+        "PWD": "/",
+        "OLDPWD": "<PWD>"
+      },
+      "shellvars": {
+        "DIRSTACK": "/"
+      }
+    }
+  },
+  "comments-only": {
+    "execute": [],
+    "output": {
+      "env": {},
+      "shellvars": {}
+    }
+  },
+  "empty": {
+    "execute": [],
+    "output": {
+      "env": {},
+      "shellvars": {}
+    }
+  },
+  "exported-function": {
+    "execute": [],
+    "output": {
+      "env": {
+        "SBFB_A": "1"
+      },
+      "shellvars": {}
+    }
+  },
+  "failing-function": {
+    "execute": [
+      "ok",
+      "bad"
+    ],
+    "error": "bad thing"
+  },
+  "failing": {
+    "execute": [],
+    "error": "first problem\nsecond problem"
+  },
+  "functions": {
+    "execute": [
+      "f0",
+      "f1",
+      "f2"
+    ],
+    "output": {
+      "env": {
+        "SBFB_A": "0"
+      },
+      "shellvars": {
+        "SBFB_S": "top"
+      },
+      "fn": {
+        "f0": {
+          "env": {},
+          "shellvars": {}
+        },
+        "f1": {
+          "env": {
+            "SBFB_A": "1",
+            "SBFB_F1": "yes"
+          },
+          "shellvars": {
+            "SBFB_S1": "one"
+          }
+        },
+        "f2": {
+          "env": {
+            "SBFB_A": "2"
+          },
+          "shellvars": {
+            "SBFB_S1": "two",
+            "SBFB_S": null
+          }
+        }
+      }
+    }
+  },
+  "path": {
+    "execute": [],
+    "output": {
+      "env": {
+        "PATH": "/sbfb/bin:<PATH>"
+      },
+      "shellvars": {}
+    }
+  },
+  "plain": {
+    "execute": [],
+    "output": {
+      "env": {
+        "SBFB_EMPTY": "",
+        "SBFB_A": "a",
+        "SBFB_NUM": "10"
+      },
+      "shellvars": {}
+    }
+  },
+  "removed": {
+    "execute": [],
+    "output": {
+      "env": {
+        "SBFB_GONE": null
+      },
+      "shellvars": {
+        "SBFB_UNEX": "unex",
+        "OPTERR": null
+      }
+    }
+  },
+  "return": {
+    "execute": [],
+    "output": {
+      "env": {
+        "SBFB_A": "1"
+      },
+      "shellvars": {}
+    }
+  },
+  "shellvars": {
+    "execute": [],
+    "output": {
+      "env": {
+        "SBFB_EXPORTED": "exported"
+      },
+      "shellvars": {
+        "SBFB_RO": "fixed",
+        "SBFB_ARRAY": "first",
+        "SBFB_INT": "7",
+        "SBFB_PLAIN": "plain"
+      }
+    }
+  },
+  "special-values": {
+    "execute": [],
+    "output": {
+      "env": {
+        "SBFB_SHELL": "$HOME `cmd` * ? [x] ~",
+        "SBFB_NEWLINE": "first\nsecond\n",
+        "SBFB_SPACES": "  padded  ",
+        "SBFB_LEADING_EQUALS": "=x",
+        "SBFB_UNICODE": "héllo wörld ✓ 日本",
+        "SBFB_TAB_CR": "a\tb\rc",
+        "SBFB_DOUBLE_EQUALS": "a==",
+        "SBFB_QUOTES": "it's \"quoted\" \\ back",
+        "SBFB_EQUALS": "k=v=w"
+      },
+      "shellvars": {
+        "SBFB_SV_EQUALS": "x=y",
+        "SBFB_SV_QUOTES": "say \"hi\" it's",
+        "SBFB_SV_NEWLINE": "one\ntwo"
+      }
+    }
+  },
+  "syntax-error": {
+    "execute": [],
+    "error": "syntax error near unexpected token `then'\n`if then'"
+  }
+}

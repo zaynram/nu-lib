@@ -47,3 +47,54 @@ def "test missing input raises" []: nothing -> nothing {
   assert error {|| bash-env } 'no content or path'
   assert error {|| bash-env /sbbe/missing.sh } 'a missing file'
 }
+
+# ——— parity corpus ————————————————————————————————————————————————————————————
+
+# `_tests/fixtures/env/from-bash` pins what bash-env returns for a corpus of scripts, so that a replacement can be
+# checked against it case by case.
+const CORPUS: path = $FIXTURES | path join env from-bash
+const BIN: path = $ROOT | path join bash-env bin bash-env-json
+const INHERITED: record = {SBFB_KEEP: keep SBFB_GONE: gone SBFB_UNEX: unex}
+
+# The pinned case, with <PATH> and <PWD> resolved for this shell.
+def pinned [case: string]: nothing -> record {
+  let json = {|s: string| $s | to json | str substring 1..-2 }
+  open --raw ($CORPUS | path join parity.nuon)
+  | str replace --all '<PATH>' (do $json ($env.PATH | str join (char esep)))
+  | str replace --all '<PWD>' (do $json $env.PWD)
+  | from nuon
+  | get $case
+}
+
+# Run a corpus script through bash-env and compare with the pinned output (or, for a failing script, the pinned
+# cause that bash-env-json reports).
+def parity [case: string]: nothing -> nothing {
+  need-tools
+  let pin: record = pinned $case
+  let file: path = $CORPUS | path join $"($case).sh"
+  if $pin.error? == null {
+    let out: record = with-env $INHERITED { bash-env --return preserve --execute $pin.execute $file }
+    assert equal $out $pin.output $'the pinned output of ($case).sh'
+  } else {
+    assert error {|| with-env $INHERITED { bash-env --return preserve --execute $pin.execute $file } } 'the script fails'
+    let args: list<string> = if $pin.execute == [] { [] } else { [--shellfns ($pin.execute | str join ',')] }
+    let res: record = with-env $INHERITED { open --raw $file | ^$BIN ...$args | complete }
+    assert equal ($res.stdout | from json | get error) $pin.error $'the pinned cause for ($case).sh'
+  }
+}
+
+def "test parity plain values" []: nothing -> nothing { parity plain }
+def "test parity special values" []: nothing -> nothing { parity special-values }
+def "test parity shell variables" []: nothing -> nothing { parity shellvars }
+def "test parity removed variables" []: nothing -> nothing { parity removed }
+def "test parity path" []: nothing -> nothing { parity path }
+def "test parity functions" []: nothing -> nothing { parity functions }
+def "test parity empty script" []: nothing -> nothing { parity empty }
+def "test parity comments and output only" []: nothing -> nothing { parity comments-only }
+def "test parity failing script" []: nothing -> nothing { parity failing }
+def "test parity syntax error" []: nothing -> nothing { parity syntax-error }
+def "test parity failing function" []: nothing -> nothing { parity failing-function }
+def "test parity cd" []: nothing -> nothing { parity cd }
+def "test parity return" []: nothing -> nothing { parity return }
+def "test parity allexport" []: nothing -> nothing { parity allexport }
+def "test parity exported function" []: nothing -> nothing { parity exported-function }
