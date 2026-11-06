@@ -3,6 +3,8 @@
 # `use proj` scans `$env.WORK` on import and keeps its registry in universal kv, so every case builds its own
 # workspace inside a `with-sandbox` directory and runs `proj` in a sandboxed child interpreter. The real
 # registry and workspace are never touched.
+# nu-lint-ignore-file: missing_output_type
+# (`in-proj` returns whatever the child produced: a nuon value, or its printed lines)
 use ../mod.nu *
 
 # ——— fixture ——————————————————————————————————————————————————————————————————

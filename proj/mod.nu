@@ -326,13 +326,13 @@ def inspect [root: path name: string]: nothing -> record {
 def record-scan-metadata [
   start: datetime
 ]: list<record<found: int, added: int>> -> record {
-  let totals: record = reduce --fold {found: 0 added: 0} {|it acc|
-    {found: ($acc.found + $it.found) added: ($acc.added + $it.added)}
-  }
+  # `math sum` rejects an empty list: scanning no kinds (`--kinds []`) totals zero.
+  let rows: list<record> = $in | default [{found: 0 added: 0}] --empty
+  let totals: record = {found: ($rows.found | math sum) added: ($rows.added | math sum)}
   deduplicate
   let end: datetime = date now
   let counts: list<string> = $KIND | columns | each { $'($in)_count' }
-  list-meta | where key in $counts | reduce --fold 0 {|it acc| $acc + $it.value } | set-meta total_count
+  list-meta | where key in $counts | get $.value | default [0] --empty | math sum | set-meta total_count
   set-meta --return=value last_scan {
     ...$totals
     start: $start
