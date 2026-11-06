@@ -3,6 +3,7 @@
 # `bump-nu` (in `nightly.nu`) installs the latest Nushell nightly build.
 
 use conf/machine.nu [ machine-config ]
+use error
 export use nightly.nu [ bump-nu ]
 
 # Ephemeral log file holding the output of the latest run.
@@ -47,7 +48,9 @@ export def upgrade [
 ]: oneof<record, nothing> -> oneof<record, nothing> {
   let input: oneof<nothing, record> = $in
   if $async {
-    if $system { error make --unspanned '`--system` cannot run in the background: sudo needs a prompt' }
+    if $system {
+      error raise '`--system` cannot run in the background' --kind invalid_argument --advice 'sudo needs a prompt: run `pman upgrade --system` in the foreground'
+    }
     job spawn --description=pkg-auto-upgrade {
       history upgrade --age
       | if $in == null or $in > 24hr { ignore | upgrade --silent }
@@ -96,7 +99,7 @@ export def upgrade [
       $res | save --force $LOG.upgrade
       if not $silent { $res }
     } catch {|e|
-      error make --unspanned {msg: $"could not save the upgrade results to ($LOG.upgrade): ($e.msg)"}
+      $e | error raise $"could not save the upgrade results to '($LOG.upgrade)'" --kind io
     }
   }
 }
@@ -108,10 +111,15 @@ export def history [
   --age (-a) # Return the duration since last write, if the log file exists
   --throw (-t) # Throw an error if the log file is missing
 ]: nothing -> oneof<record, nothing, duration> {
-  if $LOG not-has $target { error make --unspanned $'invalid target: ($target)' }
+  if $LOG not-has $target {
+    error raise $"unknown target '($target)'" --kind invalid_argument --advice $"targets: ($LOG | columns | str join ', ')"
+  }
   alias invoke = if $age { (date now) - (ls $in).0.modified } else { open $in }
-  alias handle = if $throw { error make --unspanned 'no cached results found' }
-  try { $LOG | get $target | invoke } catch { handle }
+  try { $LOG | get $target | invoke } catch {|e|
+    if $throw {
+      $e | error raise $"no cached results found for '($target)'" --kind not_found --advice $"nothing has written '($LOG | get $target)' yet"
+    }
+  }
 }
 
 # Install system packages with apt.
@@ -119,7 +127,7 @@ export def history [
 export def install [
   ...names: string@_apt # Names of the packages to install
 ]: nothing -> nothing {
-  if ($names | is-empty) { error make --unspanned 'no packages were provided' }
+  if ($names | is-empty) { error raise 'no packages were provided' --kind invalid_argument }
   apt-get install --yes ...$names
 }
 

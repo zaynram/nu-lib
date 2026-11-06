@@ -96,7 +96,9 @@ def "test bump nu is exported" []: nothing -> nothing {
 # ——— history ——————————————————————————————————————————————————————————————————
 
 def "test history rejects an unknown target" []: nothing -> nothing {
-  assert error {|| pman history nope } 'only LOG targets'
+  let err: record = try { pman history nope; {} } catch {|e| $e }
+  assert equal $err.details?.code? pman::history::invalid_argument 'only LOG targets'
+  assert ($err.details?.help? =~ 'upgrade') $'the advice lists the targets: ($err.details?.help?)'
 }
 
 def "test history of a missing log" []: nothing -> nothing {
@@ -104,7 +106,8 @@ def "test history of a missing log" []: nothing -> nothing {
     let r: record = sandboxed $ctx '{log: (pman history upgrade) age: (pman history upgrade --age)} | to nuon' --prelude 'use pman' --pipe
     assert equal $r {log: null age: null} 'a missing log is null'
     let res: record = sandboxed $ctx 'pman history upgrade --throw' --prelude 'use pman'
-    assert ($res.exit_code != 0 and $res.stderr =~ 'no cached results found') '--throw raises'
+    assert ($res.exit_code != 0 and $res.stderr =~ 'no cached results found') $'--throw raises: ($res.stderr)'
+    assert ($res.stderr =~ 'pman::history::not_found') $'the not_found code: ($res.stderr)'
   }
 }
 
@@ -128,7 +131,8 @@ def "test install runs apt get install through sudo" []: nothing -> nothing {
 }
 
 def "test install without packages raises" []: nothing -> nothing {
-  assert error {|| pman install } 'no packages is an error'
+  let err: record = try { pman install; {} } catch {|e| $e }
+  assert equal $err.details?.code? pman::install::invalid_argument 'no packages is an error'
 }
 
 def "test remove removes then cleans" []: nothing -> nothing {
@@ -159,7 +163,9 @@ def "test apt passes arguments through" []: nothing -> nothing {
 # ——— upgrade ——————————————————————————————————————————————————————————————————
 
 def "test upgrade async with system raises" []: nothing -> nothing {
-  assert error {|| pman upgrade --async --system } 'sudo needs a prompt'
+  let err: record = try { pman upgrade --async --system; {} } catch {|e| $e }
+  assert equal $err.details?.code? pman::upgrade::invalid_argument 'sudo needs a prompt'
+  assert ($err.details?.help? =~ 'foreground') $'the advice says what to do: ($err.details?.help?)'
 }
 
 def "test upgrade runs every registry entry" []: nothing -> nothing {
@@ -462,7 +468,7 @@ def "test host target follows the host" []: nothing -> nothing {
 def "test musl needs linux" []: nothing -> nothing {
   for os in [macos windows] {
     let e = try { nightly host-target {name: $os arch: x86_64} --musl; null } catch {|e| $e }
-    assert equal ($e.details?.code?) pman::bump-nu::invalid_option $'--musl on ($os)'
+    assert equal ($e.details?.code?) pman::nightly::host-target::unsupported $'--musl on ($os)'
   }
 }
 
@@ -489,7 +495,7 @@ def "test bump nu without a terminal fails fast" []: nothing -> nothing {
       release $ctx $url $NEWER
       run-bump $ctx (flags $ctx $url)
     }
-    assert equal $r.value.code pman::bump-nu::no_terminal $'the error: ($r.value.output)'
+    assert equal $r.value.code pman::nightly::bump-nu::unsupported $'the error: ($r.value.output)'
     assert ($r.value.help =~ '--yes') $'it points at --yes: ($r.value.help)'
     assert equal $r.requests [] 'before fetching anything'
   }
@@ -501,7 +507,7 @@ def "test bump nu interactive without a terminal fails fast" []: nothing -> noth
       release $ctx $url $NEWER
       run-bump $ctx $'(flags $ctx $url) --yes --interactive'
     }
-    assert equal $r.value.code pman::bump-nu::no_terminal $'the error: ($r.value.output)'
+    assert equal $r.value.code pman::nightly::bump-nu::unsupported $'the error: ($r.value.output)'
     assert equal $r.requests [] 'before fetching anything'
   }
 }
@@ -513,7 +519,7 @@ def "test bump nu outside the home directory needs elevation" []: nothing -> not
       release $ctx $url $NEWER
       run-bump $ctx $'--yes --source ($url)/releases.json --install-dir /usr/local/sbpman-nope'
     }
-    assert equal $r.value.code pman::bump-nu::elevation $'the error: ($r.value.output)'
+    assert equal $r.value.code pman::nightly::install-dir::unsupported $'the error: ($r.value.output)'
     assert equal $r.requests [] 'before fetching anything'
   }
 }
@@ -580,7 +586,7 @@ def "test bump nu without a build for the host fails" []: nothing -> nothing {
       release $ctx $url $NEWER --targets [sbarch-unknown-sbos]
       run-bump $ctx $'(flags $ctx $url) --yes'
     }
-    assert equal $r.value.code pman::bump-nu::no_build $'the error: ($r.value.output)'
+    assert equal $r.value.code pman::nightly::pick-build::not_found $'the error: ($r.value.output)'
     assert ($r.value.help =~ 'sbarch-unknown-sbos') $'the available builds are listed: ($r.value.help)'
   }
 }
@@ -591,7 +597,7 @@ def "test bump nu rejects an archive without nu" []: nothing -> nothing {
       release $ctx $url $NEWER --without-nu --plugins [sbextra]
       run-bump $ctx $'(flags $ctx $url) --yes'
     }
-    assert equal $r.value.code pman::bump-nu::missing_binary $'the error: ($r.value.output)'
+    assert equal $r.value.code pman::nightly::extract::not_found $'the error: ($r.value.output)'
     assert not ($ctx | bin-dir | path exists) 'not even the plugins are installed'
   }
 }
@@ -602,7 +608,8 @@ def "test bump nu rejects an archive that does not match its digest" []: nothing
       release $ctx $url $NEWER --digest bad
       run-bump $ctx $'(flags $ctx $url) --yes'
     }
-    assert equal $r.value.code pman::bump-nu::checksum $'the error: ($r.value.output)'
+    assert equal $r.value.code pman::nightly::download::io $'the error: ($r.value.output)'
+    assert ($r.value.help =~ 'expected 0+, got [0-9a-f]+') $'the digests are the advice: ($r.value.help)'
     assert not ($ctx | bin-dir | path exists) 'nothing is installed'
     assert equal (ls --all ($ctx.root | path join tmp)) [] 'the download is cleaned up'
   }
@@ -614,7 +621,7 @@ def "test bump nu checks SHA256SUMS when there is no digest" []: nothing -> noth
       release $ctx $url $NEWER --digest none --sums bad
       run-bump $ctx $'(flags $ctx $url) --yes'
     }
-    assert equal $r.value.code pman::bump-nu::checksum $'the error: ($r.value.output)'
+    assert equal $r.value.code pman::nightly::download::io $'the error: ($r.value.output)'
     assert ('SHA256SUMS' in ($r | paths)) 'the checksums are fetched'
     assert not ($ctx | bin-dir | path exists) 'nothing is installed'
   }
@@ -786,7 +793,7 @@ def "test bump nu installs nothing when declined" []: nothing -> nothing {
       release $ctx $url $NEWER
       run-bump $ctx (flags $ctx $url) --pty ['\[y/N\]' 'n\r']
     }
-    assert equal $r.value.code pman::bump-nu::aborted $'aborted: ($r.value.output)'
+    assert equal $r.value.code pman::nightly::confirm::invalid_argument $'aborted: ($r.value.output)'
     assert not ($ctx | bin-dir | path exists) 'nothing is installed'
     assert equal (ls --all ($ctx.root | path join tmp)) [] 'the download is cleaned up'
   }
@@ -798,7 +805,7 @@ def "test bump nu interactive without a choice aborts" []: nothing -> nothing {
       release $ctx $url $NEWER
       run-bump $ctx $'(flags $ctx $url) --interactive' --pty ['Choose a build' '\x1b']
     }
-    assert equal $r.value.code pman::bump-nu::aborted $'aborted: ($r.value.output)'
+    assert equal $r.value.code pman::nightly::pick-build::invalid_argument $'aborted: ($r.value.output)'
     assert equal ($r | paths) [releases.json] 'nothing is downloaded'
   }
 }

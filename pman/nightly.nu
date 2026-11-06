@@ -55,10 +55,10 @@ export def host-target [
 ]: nothing -> string {
   match $os.name {
     linux => $'($os.arch)-unknown-linux-(if $musl { "musl" } else { "gnu" })'
-    _ if $musl => (error raise --code=pman::bump-nu::invalid_option $'--musl builds exist only for Linux, not ($os.name)')
+    _ if $musl => (error raise $"--musl builds exist only for Linux, not '($os.name)'" --kind unsupported)
     macos => $'($os.arch)-apple-darwin'
     windows => $'($os.arch)-pc-windows-msvc'
-    _ => (error raise --code=pman::bump-nu::no_build $'there are no nightly builds for ($os.name)')
+    _ => (error raise $"there are no nightly builds for '($os.name)'" --kind unsupported)
   }
 }
 
@@ -96,7 +96,7 @@ export def api-headers [
 def install-dir [dir?: path]: nothing -> path {
   let dir: path = $dir | default ($nu.current-exe | path dirname) | path expand --no-symlink
   if not ($dir | is-under $nu.home-dir) and not (is-admin) {
-    error raise --code=pman::bump-nu::elevation $"installing into ($dir) needs elevated privileges" --advice 'rerun elevated, or pass an --install-dir inside your home directory'
+    error raise $"installing into '($dir)' needs elevated privileges" --kind unsupported --advice 'rerun elevated, or pass an --install-dir inside your home directory'
   }
   $dir
 }
@@ -105,10 +105,10 @@ def install-dir [dir?: path]: nothing -> path {
 def latest-release [source: string]: nothing -> record {
   log info $'fetching the latest release from ($source)'
   let releases: list = try { http get --headers (api-headers $source) $source } catch {|e|
-    error raise --code=pman::bump-nu::fetch $'could not fetch the releases from ($source): ($e.msg)'
+    $e | error raise $"could not fetch the releases from '($source)'" --kind io
   }
   $releases | sort-by published_at --reverse | get 0?
-  | default { error raise --code=pman::bump-nu::no_build $'($source) lists no releases' }
+  | default { error raise $"'($source)' lists no releases" --kind not_found }
 }
 
 # The build to install: the archive for `target`, or one chosen from the release's archives.
@@ -119,12 +119,12 @@ def pick-build [
   let archives: table = $builds | where ext != msi
   if $target == null {
     $archives | input list --display target $'(ansi cyan)Choose a build(ansi reset)'
-    | default { error raise --code=pman::bump-nu::aborted 'no build chosen: nothing was installed' }
+    | default { error raise 'no build chosen: nothing was installed' --kind invalid_argument }
   } else {
     let ext: string = if $target =~ windows { 'zip' } else { 'tar.gz' }
     $archives | where {|b| $b.target == $target and $b.ext == $ext } | get 0? | default {
       let known: string = $archives | each { get target } | str join ', '
-      error raise --code=pman::bump-nu::no_build $'the latest release has no build for ($target)' --advice $'builds: ($known); choose one with --interactive'
+      error raise $"the latest release has no build for '($target)'" --kind not_found --advice $'builds: ($known); choose one with --interactive'
     }
   }
 }
@@ -152,13 +152,13 @@ def download [
   let archive: path = $dir | path join $build.name
   log info $'downloading ($build.url)'
   try { http get --raw $build.url | save --force $archive } catch {|e|
-    error raise --code=pman::bump-nu::fetch $'could not download ($build.name): ($e.msg)'
+    $e | error raise $"could not download '($build.name)'" --kind io
   }
   let expected: oneof<string, nothing> = published-sha256 $build $sums
   if $expected != null {
     let actual: string = open --raw $archive | hash sha256
     if $actual != $expected {
-      error raise --code=pman::bump-nu::checksum $'($build.name) does not match its published sha256: expected ($expected), got ($actual)'
+      error raise $"'($build.name)' does not match its published sha256" --kind io --advice $'expected ($expected), got ($actual)'
     }
     log info $'verified the sha256 of ($build.name)'
   }
@@ -171,14 +171,14 @@ def extract [archive: path dir: path]: nothing -> list<path> {
   # GNU tar reads the `.tar.gz` builds; the bsdtar of Windows and macOS also reads the `.zip` ones.
   let res: record = ^tar -xf $archive -C $dir | complete
   if $res.exit_code != 0 {
-    error raise --code=pman::bump-nu::extract $'could not extract ($archive | path basename): ($res.stderr | str trim)'
+    error raise $"could not extract '($archive | path basename)'" --kind external_failure --advice ($res.stderr | str trim)
   }
   let bins: list<path> = do { cd $dir; glob '**/*' --no-dir } | where {|file|
     let parts: record = $file | path parse
     $parts.extension in ['' exe] and ($parts.stem == nu or ($parts.stem | str starts-with nu_plugin_))
   } | sort-by {|file| ($file | path parse | get stem) != nu }
   if not ($bins | any {|file| ($file | path parse | get stem) == nu }) {
-    error raise --code=pman::bump-nu::missing_binary $'($archive | path basename) holds no `nu` binary'
+    error raise $"'($archive | path basename)' holds no nu binary" --kind not_found
   }
   $bins
 }
@@ -187,7 +187,7 @@ def extract [archive: path dir: path]: nothing -> list<path> {
 def confirm [build: record dir: path count: int]: nothing -> nothing {
   let answer: string = input $"install ($build.name) \(($count) binaries) into ($dir)? [y/N] "
   if ($answer | str trim | str lowercase) not-in [y yes] {
-    error raise --code=pman::bump-nu::aborted 'installation declined: nothing was installed'
+    error raise 'installation declined: nothing was installed' --kind invalid_argument
   }
 }
 
@@ -303,10 +303,10 @@ export def bump-nu [
 ]: nothing -> record {
   let tty: bool = is-terminal --stdin
   if $interactive and not $tty {
-    error raise --code=pman::bump-nu::no_terminal '--interactive needs a terminal'
+    error raise '--interactive needs a terminal' --kind unsupported
   }
   if not ($check or $yes or $tty) {
-    error raise --code=pman::bump-nu::no_terminal 'there is no terminal to confirm the installation' --advice 'pass --yes to install without confirmation, or --check to only compare versions'
+    error raise 'there is no terminal to confirm the installation' --kind unsupported --advice 'pass --yes to install without confirmation, or --check to only compare versions'
   }
   let target: oneof<string, nothing> = if not $interactive { host-target $nu.os-info --musl=$musl }
   let dir: oneof<path, nothing> = if not $check { install-dir $install_dir }
