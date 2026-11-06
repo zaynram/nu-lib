@@ -2,8 +2,8 @@
 # whether the library emits ANSI at all.
 #
 # Every colour the library prints goes through `paint` (or is gated on `colors`), so `$env.config.use_ansi_coloring`
-# (`true`, `false` or `auto`), `NO_COLOR` and the terminal are honoured everywhere, through `config use-colors`. The
-# builtin `ansi` itself ignores that setting.
+# (`true`, `false` or `auto`), the `FORCE_COLOR`/`NO_COLOR`/`CLICOLOR` variables and the terminal are honoured
+# everywhere, through `config use-colors`. The builtin `ansi` itself ignores that setting.
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
@@ -23,9 +23,12 @@ const SHAPES: list<string> = [shape_external shape_external_resolved shape_exter
 
 # Whether output should carry ANSI styles: `config use-colors`.
 #
-# That builtin is the only correct check: it resolves `$env.config.use_ansi_coloring` (`true`, `false`, or `auto`,
-# which means "stdout is a terminal"), and the `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE` variables for `auto`. Do
-# not read `$env.config.use_ansi_coloring` directly.
+# That builtin is the only correct check: it resolves `$env.config.use_ansi_coloring` (`true`, `false`, or `auto`).
+# For `auto` the environment is consulted in this order, a variable counting as set when it is non-empty and not
+# `0`/`false`: `FORCE_COLOR` set turns colours on, terminal or not and over `NO_COLOR`; otherwise `NO_COLOR` set turns
+# them off; otherwise a present `CLICOLOR` decides (set: on, terminal or not; `0`, `false` or empty: off); otherwise
+# colours are on when stdout is a terminal and `TERM` is not `dumb`. `CLICOLOR_FORCE` has no effect. Do not read
+# `$env.config.use_ansi_coloring` directly.
 @category formats
 export def colors []: nothing -> bool { config use-colors }
 
@@ -58,9 +61,9 @@ export def paint [
 # Style a command (optionally with arguments) using the color config; plain text when colours are off (`colors`).
 #
 # The name takes `shape_external` (or `shape_external_resolved`) and the arguments `shape_externalarg` from
-# `$env.config.color_config`, falling back to Nushell's default colors for keys it does not set. Arguments are
-# taken as written, flags included (put `--resolved`/`--attr` before the name); arguments that contain whitespace,
-# or are empty, are shown quoted.
+# `$env.config.color_config`, falling back to Nushell's default colors for keys it does not set. `--resolved` and
+# `--attr` are recognised wherever they appear, before or after the name; every other flag-like word is an argument,
+# taken as written (`--wrapped`). Arguments that contain whitespace, or are empty, are shown quoted.
 @category formats
 @example 'a command with arguments' { ansi extern git commit -m 'a message' | ansi strip } --result "git commit -m \"a message\""
 export def --wrapped "ansi extern" [

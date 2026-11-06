@@ -32,10 +32,14 @@ def "test colors is off for auto without a terminal" []: nothing -> nothing {
   assert equal (style colors) false 'a test child has no terminal'
 }
 
-def "test colors honours NO_COLOR only for auto" []: nothing -> nothing {
+def "test colors honours the colour variables only for auto" []: nothing -> nothing {
   with-sandbox {|ctx|
-    let auto: bool = sandboxed $ctx 'style colors | to nuon' --prelude 'use style' --vars {NO_COLOR: '1'} --pipe
-    assert equal $auto false 'NO_COLOR turns auto off'
+    let auto: closure = {|vars| sandboxed $ctx 'style colors | to nuon' --prelude 'use style' --vars $vars --pipe }
+    # The child's stdout is a pipe, so `auto` is off already: NO_COLOR is only observable against CLICOLOR, which
+    # opens the gate without a terminal.
+    assert equal (do $auto {CLICOLOR: '1'}) true 'CLICOLOR=1 turns auto on without a terminal'
+    assert equal (do $auto {CLICOLOR: '1' NO_COLOR: '1'}) false 'NO_COLOR turns auto off again'
+    assert equal (do $auto {NO_COLOR: '1' FORCE_COLOR: '1'}) true 'FORCE_COLOR beats NO_COLOR'
     let forced: bool = sandboxed $ctx '$env.config.use_ansi_coloring = true; style colors | to nuon' --prelude 'use style' --vars {NO_COLOR: '1'} --pipe
     assert equal $forced true 'an explicit true wins over NO_COLOR'
   }
@@ -123,6 +127,12 @@ def "test ansi extern is plain when colours are off" []: nothing -> nothing {
 
 def "test flag like arguments are passed through" []: nothing -> nothing {
   assert equal (style ansi extern git commit -m msg --amend | ansi strip) 'git commit -m msg --amend' 'unknown flags are arguments'
+}
+
+def "test known flags are parsed wherever they appear" []: nothing -> nothing {
+  shapes red yellow green
+  assert equal (style ansi extern git --resolved) $'(ansi yellow)git(ansi reset)' '--resolved after the name is the flag, not an argument'
+  assert equal (style ansi extern git --attr bold x) $'(ansi red)(ansi attr_bold)git(ansi reset)(ansi green) x(ansi reset)' '--attr after the name too'
 }
 
 def "test arguments with whitespace are quoted" []: nothing -> nothing {
