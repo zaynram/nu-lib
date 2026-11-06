@@ -16,7 +16,8 @@ use error
 #
 # On exit code 0 the result is stdout (`""` when the command printed nothing), or `do $then $stdout` with `--then`.
 # Any other exit code raises "<desc> exited with code <n>" (with the name in backticks when `desc` is a command
-# on PATH), whose help text is `[output]:` followed by stdout and stderr, or by `--empty` when both are empty.
+# on PATH), whose help text is `[output]:` followed by stdout and stderr (each on its own lines), or by `--empty`
+# when both are empty.
 @category system
 @example 'the stdout of a successful command' { {stdout: "hi\n" stderr: '' exit_code: 0} | post-complete } --result "hi\n"
 @example 'transform the stdout' { {stdout: '1 2' stderr: '' exit_code: 0} | post-complete --then {|o| $o | split row ' ' } } --result ['1' '2']
@@ -92,10 +93,14 @@ def run-captured []: closure -> oneof<nothing, record> {
   }
 }
 
-# The help text of a failed command: `[output]:` followed by its stdout and stderr, or by `empty` when both are blank.
+# The help text of a failed command: `[output]:` followed by its stdout and stderr (the non-blank streams, each
+# trimmed at the end and joined by a newline, so a stdout without a trailing newline does not run into stderr), or
+# by `empty` when both are blank.
 def output-help [--empty: oneof<nothing, string>]: record -> string {
   let result: record = $in
-  let output: string = $"($result.stdout? | default '')($result.stderr? | default '')"
-    | if ($in | str trim) == '' { $empty | default '' } else { }
+  let output: string = [($result.stdout? | default '') ($result.stderr? | default '')]
+    | each { str trim --right }
+    | compact --empty
+    | if $in == [] { $empty | default '' } else { str join (char nl) }
   $"[output]:(char nl)($output)" | str trim --right
 }

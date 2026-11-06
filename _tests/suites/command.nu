@@ -73,6 +73,12 @@ def "test post complete placeholder only replaces fully empty output" []: nothin
   assert equal (caught { done "only out\n" '' 3 | command post-complete }).help "[output]:\nonly out" 'stdout alone is shown'
 }
 
+def "test post complete separates stdout from stderr without a trailing newline" []: nothing -> nothing {
+  assert equal (caught { done out err 1 | command post-complete }).help "[output]:\nout\nerr" 'printf-style stdout does not run into stderr'
+  assert equal (caught { done "out\n" "err\n" 1 | command post-complete }).help "[output]:\nout\nerr" 'no blank line between streams that end with a newline'
+  assert equal (caught { done "  \n" "err\n" 1 | command post-complete }).help "[output]:\nerr" 'a blank stream is left out'
+}
+
 def "test post complete includes the inner error" []: nothing -> nothing {
   let e = caught { done '' x 1 | command post-complete --inner {msg: 'while doing a thing'} }
   assert equal ($e.inner | get msg) ['while doing a thing'] 'the inner record becomes the only inner error'
@@ -215,7 +221,7 @@ def "test attempt runs the external when a builtin has the same name" []: nothin
 }
 
 def "test attempt runs a command given by path" []: nothing -> nothing {
-  need sh
+  need-posix
   with-sandbox {|ctx|
     let script = $ctx.code | path join hello.sh
     "#!/bin/sh\necho \"hello $1\"\n" | save $script
