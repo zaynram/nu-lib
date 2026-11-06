@@ -1,6 +1,8 @@
-# `ansi extern`: `test _tests/suites/style.nu`.
+# `colors`, `paint` and `ansi extern`: `test _tests/suites/style.nu`.
 #
-# Tests set `$env.config.color_config` explicitly; each runs in its own child, so the changes stay local.
+# Tests set `$env.config.color_config` and `use_ansi_coloring` explicitly; each runs in its own child, so the changes
+# stay local. A test child has no terminal, so with the default `auto` colours are off: `before each` turns them on,
+# and the tests about the gate set the value they need.
 use style
 use ../mod.nu *
 
@@ -9,38 +11,96 @@ def caught [action: closure]: nothing -> oneof<nothing, record> {
   try { do $action | ignore; null } catch {|e| $e.details }
 }
 
-def --env colors [external: any resolved: any arg: any]: nothing -> nothing {
+def --env "before each" []: nothing -> nothing { $env.config.use_ansi_coloring = true }
+
+def --env shapes [external: any resolved: any arg: any]: nothing -> nothing {
   $env.config.color_config.shape_external = $external
   $env.config.color_config.shape_external_resolved = $resolved
   $env.config.color_config.shape_externalarg = $arg
 }
+
+# ——— colors ———————————————————————————————————————————————————————————————————
+
+def "test colors follows use_ansi_coloring" []: nothing -> nothing {
+  assert equal (style colors) true 'true: on'
+  $env.config.use_ansi_coloring = false
+  assert equal (style colors) false 'false: off'
+}
+
+def "test colors is off for auto without a terminal" []: nothing -> nothing {
+  $env.config.use_ansi_coloring = 'auto'
+  assert equal (style colors) false 'a test child has no terminal'
+}
+
+def "test colors honours NO_COLOR only for auto" []: nothing -> nothing {
+  with-sandbox {|ctx|
+    let auto: bool = sandboxed $ctx 'style colors | to nuon' --prelude 'use style' --vars {NO_COLOR: '1'} --pipe
+    assert equal $auto false 'NO_COLOR turns auto off'
+    let forced: bool = sandboxed $ctx '$env.config.use_ansi_coloring = true; style colors | to nuon' --prelude 'use style' --vars {NO_COLOR: '1'} --pipe
+    assert equal $forced true 'an explicit true wins over NO_COLOR'
+  }
+}
+
+# ——— paint ————————————————————————————————————————————————————————————————————
+
+def "test paint wraps the text when colours are on" []: nothing -> nothing {
+  assert equal ('ok' | style paint green) $'(ansi green)ok(ansi reset)' 'one code and a reset'
+  assert equal ('ok' | style paint green attr_bold) $'(ansi green)(ansi attr_bold)ok(ansi reset)' 'codes in order, one reset'
+  assert equal ('ok' | style paint wd) $'(ansi wd)ok(ansi reset)' 'short names too'
+}
+
+def "test paint returns the text when colours are off" []: nothing -> nothing {
+  $env.config.use_ansi_coloring = false
+  assert equal ('ok' | style paint green attr_bold) ok 'no escape sequences'
+}
+
+def "test paint without codes returns the text" []: nothing -> nothing {
+  assert equal ('ok' | style paint) ok 'nothing to apply, no reset either'
+}
+
+def "test paint colors flag overrides the setting" []: nothing -> nothing {
+  assert equal ('ok' | style paint green --colors=false) ok 'false suppresses'
+  $env.config.use_ansi_coloring = false
+  assert equal ('ok' | style paint green --colors=true) $'(ansi green)ok(ansi reset)' 'true forces'
+}
+
+def "test paint rejects an unknown code in both modes" []: nothing -> nothing {
+  let on = caught { 'x' | style paint green nonsense }
+  assert equal $on.msg "unknown ansi code 'nonsense'" 'the code is named'
+  assert equal $on.code 'style::paint::invalid_argument' 'the derived code'
+  assert str contains ($on.labels.0?.text? | default '') 'ansi --list' 'the label points at the list'
+  $env.config.use_ansi_coloring = false
+  assert equal (caught { 'x' | style paint nonsense }).code 'style::paint::invalid_argument' 'also when colours are off'
+}
+
+# ——— ansi extern ——————————————————————————————————————————————————————————————
 
 def "test example" []: nothing -> nothing {
   assert equal (style ansi extern git commit -m 'a message' | ansi strip) 'git commit -m "a message"' 'flags and a quoted argument'
 }
 
 def "test name only" []: nothing -> nothing {
-  colors red yellow green
+  shapes red yellow green
   assert equal (style ansi extern git) $'(ansi red)git(ansi reset)' 'the name in the external color'
 }
 
 def "test name with arguments" []: nothing -> nothing {
-  colors red yellow green
+  shapes red yellow green
   assert equal (style ansi extern git status --short) $'(ansi red)git(ansi reset)(ansi green) status --short(ansi reset)' 'arguments in the argument color'
 }
 
 def "test resolved uses the resolved color" []: nothing -> nothing {
-  colors red yellow green
+  shapes red yellow green
   assert equal (style ansi extern --resolved git) $'(ansi yellow)git(ansi reset)' 'shape_external_resolved'
 }
 
 def "test record colors" []: nothing -> nothing {
-  colors {fg: red attr: b} yellow {fg: blue}
+  shapes {fg: red attr: b} yellow {fg: blue}
   assert equal (style ansi extern git x) $'(ansi {fg: red attr: b})git(ansi reset)(ansi {fg: blue}) x(ansi reset)' 'style records like the color config uses'
 }
 
 def "test attr styles only the name" []: nothing -> nothing {
-  colors red yellow green
+  shapes red yellow green
   assert equal (style ansi extern --attr bold git x) $'(ansi red)(ansi attr_bold)git(ansi reset)(ansi green) x(ansi reset)' 'the attribute follows the color'
   assert equal (style ansi extern --attr italic --resolved git) $'(ansi yellow)(ansi attr_italic)git(ansi reset)' 'with --resolved'
 }
@@ -50,6 +110,15 @@ def "test an unknown attr is an error listing the valid ones" []: nothing -> not
   assert equal $e.msg "unknown attribute 'nonsense'" 'the attribute is named'
   assert equal $e.code 'style::ansi-extern::invalid_argument' 'the derived code names the command with a dash'
   assert str contains ($e.labels.0?.text? | default '') 'bold, dimmed, italic' 'the valid attributes are listed'
+  $env.config.use_ansi_coloring = false
+  assert equal (caught { style ansi extern --attr nonsense git }).code 'style::ansi-extern::invalid_argument' 'also when colours are off'
+}
+
+def "test ansi extern is plain when colours are off" []: nothing -> nothing {
+  $env.config.use_ansi_coloring = false
+  shapes red yellow green
+  assert equal (style ansi extern git status --short) 'git status --short' 'name and arguments, no escape sequences'
+  assert equal (style ansi extern --attr bold --resolved git 'a b' '') 'git "a b" ""' 'quoting still applies'
 }
 
 def "test flag like arguments are passed through" []: nothing -> nothing {
@@ -71,6 +140,6 @@ def "test missing colors fall back to the defaults" []: nothing -> nothing {
 }
 
 def "test null colors fall back to the defaults" []: nothing -> nothing {
-  colors null null null
+  shapes null null null
   assert equal (style ansi extern git) $'(ansi cyan)git(ansi reset)' 'a null key counts as unset'
 }
