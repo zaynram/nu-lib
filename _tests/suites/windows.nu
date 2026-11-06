@@ -318,10 +318,13 @@ def "test path cd changes into the resolved directory" []: nothing -> nothing {
   }
 }
 
-# ignore: pending decision W4 (`win path` declares path input but ignores it; proposal: use it as the base)
 def "test path uses the piped path as its base" []: nothing -> nothing {
   with-win {|t|
     assert equal ('/mnt/d' | win path --join [x]) /mnt/d/x 'the input is the base path'
+    assert equal ('/mnt/d' | win path --user) /mnt/d '--user applies only without input'
+    assert equal ('C:\Tools' | win path --join [x]) ($t.mnt | path join c Tools x) 'a Windows base comes back as a POSIX path'
+    $t.home | win path --cd --join [..]
+    assert equal $env.PWD ($t.mnt | path join c Users) 'cd into the joined input'
   }
 }
 

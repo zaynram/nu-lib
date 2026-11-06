@@ -169,7 +169,8 @@ export def --env "win home" [
   }
 }
 
-# Construct a path under the Windows system drive (`/mnt/c`), or the Windows home directory with `--user`.
+# Construct a path under a base: the piped path, else the Windows system drive (`/mnt/c`), or the Windows home
+# directory with `--user` (which applies only without input).
 @category filesystem
 export def --env "win path" [
   --join (-j): list<string> = []
@@ -177,13 +178,14 @@ export def --env "win path" [
   --cd (-c)
   # Set the working directory to the windows path
   --user (-u)
-  # Use the user's home directory as the base path
+  # Use the user's home directory as the base path (when no path is piped)
   --edit (-e)
   # Open the resolved path with `$env.EDITOR`
   --posix (-p) = ($nu.os-info.name != windows)
   # Return the resolved path as a POSIX path
 ]: oneof<path, nothing> -> oneof<path, nothing> {
-  let p: path = if $user { win home } else { '/mnt/c' } | path join ...$join
+  let base: oneof<path, nothing> = $in
+  let p: path = if $base != null { $base } else if $user { win home } else { '/mnt/c' } | path join ...$join
   if not $edit and not $cd {
     return ($p | if $posix { path as-posix } else { path as-windows })
   } else if $edit {
