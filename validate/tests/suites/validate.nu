@@ -110,13 +110,21 @@ def "test union-type-rule-evaluation" []: nothing -> nothing {
 def "test validation-with-strict" []: nothing -> nothing {
   let data: record = $GOOD | insert typo 1 | insert doc.slugg x | update doc.rows [{name: x colour: red} {name: y flavour: mild}]
   assert equal ($data | hints) [] 'foreign keys pass without --strict'
-  assert compare {|a b| $a | zip $b | all ($'($it | first)' =~ $'ensure ($it | last) is spelled correctly') } ($data | hints --strict) [
-    typo
-    doc.slugg
-    doc.rows.colour
-    doc.rows.flavour
-  ] 'record with no declared children stays open'
+  let found = $data | validate rules $RULES --strict
+  assert equal ($found | get path) [$.typo $.doc.slugg $.doc.rows.colour $.doc.rows.flavour] 'undeclared keys are reported per container, in rule order; a record with no declared children (extra) stays open'
+  assert equal ($found | get rule | uniq) [foreign-key] 'undeclared keys are foreign-key failures'
+  assert equal $found.0?.hint 'ensure $.typo is a valid property' 'the foreign-key hint names the key'
   assert equal ($GOOD | update doc 7 | hints --strict) ['$.doc has type int; expected record'] 'containers under a failed container are not scanned'
+}
+
+def "test return-one-bails-on-the-first-failure" []: nothing -> nothing {
+  let bad = $GOOD | update version '2.0' | update doc.rows [{name: x} {size: big}]
+  assert equal ($bad | validate rules $RULES --return=one | select path rule) {path: $.version rule: enumerable} 'the first failing rule is returned as a record'
+  assert equal ($GOOD | update doc.rows nope | validate rules $RULES --return=one | select path rule) {path: $.doc.rows rule: typecheck} 'a mistyped table reports itself, not its rows'
+  assert equal ($GOOD | update doc.rows [{name: x} {size: big}] | validate rules $RULES --return=one | select path rule) {path: $.doc.rows.1.name rule: mandatory} 'table rows are judged in order'
+  assert equal ($GOOD | validate rules $RULES --return=one) null 'valid data returns null'
+  assert equal ($GOOD | insert typo 1 | validate rules $RULES --return=one --strict | select path rule) {path: $.typo rule: foreign-key} 'strict mode bails on the first undeclared key'
+  assert equal ($GOOD | insert doc.rows.0.colour red | validate rules $RULES --return=one --strict | select path rule) {path: $.doc.rows.colour rule: foreign-key} 'strict mode scans table columns'
 }
 
 def "test validation-with-errors" []: nothing -> nothing {
@@ -124,4 +132,55 @@ def "test validation-with-errors" []: nothing -> nothing {
   let raised = try { $GOOD | update version '2.0' | update doc.slug 9 | validate rules --errors $RULES --errors | ignore; null } catch {|e| $e.details.help }
   assert str contains $raised "version is `2.0`, which is not one of [1.0]" 'first reason in help text'
   assert str contains $raised "doc.slug has type int; expected string" 'second reason in help text'
+}
+
+# Dynamic rules: a named closure per path, run on scalars and once per element of a list or table.
+const DYNAMIC_DOC = {
+  tasks: [
+    {id: a labels: [':current'] issue: {state: OPEN status: Pending}}
+    {id: b labels: [] issue: null}
+    {id: c labels: [':ready'] issue: {state: CLOSED status: Complete}}
+  ]
+  count: 7
+}
+
+def "test dynamic-rule-runs-alone" []: nothing -> nothing {
+  let rules = [{path: $.count type: int dynamic: {even: {|v at| if $v mod 2 != 0 { error make --unspanned {msg: 'value is odd' help: $'($at) must be even'} } }}}]
+  let found = $DYNAMIC_DOC | validate rules $rules
+  assert length $found 1 'a rule with only `dynamic` is evaluated'
+  assert equal ($found.0? | select path rule reason hint data) {path: $.count rule: even reason: 'value is odd' hint: '$.count must be even' data: null} 'a raised error maps msg to reason and help to hint, with no data'
+  assert equal ($DYNAMIC_DOC | update count 8 | validate rules $rules) ($DYNAMIC_DOC | update count 8) 'a passing dynamic rule returns the input'
+}
+
+def "test dynamic-rule-per-row" []: nothing -> nothing {
+  let rules = [
+    {path: $.tasks type: table}
+    {path: $.tasks type: table dynamic: {focus-on-blocked: {|row at|
+      if ($row.labels has ':current' or $row.labels has ':ready') and $row.issue?.status? == Pending {
+        {reason: 'focus on blocked work' hint: $'($row.id) is Pending' task_id: $row.id fix: 'todoist.unlabel=:current'}
+      }
+    }}}
+  ]
+  let found = $DYNAMIC_DOC | validate rules $rules
+  assert length $found 1 'the closure runs once per row and reports only the rows that fail'
+  assert equal $found.0?.path $.tasks.0 'the failure path names the row'
+  assert equal $found.0?.rule focus-on-blocked 'the record key is the rule name'
+  assert equal $found.0?.hint 'a is Pending' 'a returned record maps hint'
+  assert equal $found.0?.data {task_id: a fix: 'todoist.unlabel=:current'} 'every other field of a returned record is kept as data'
+}
+
+def "test dynamic-rule-templates-see-data" []: nothing -> nothing {
+  let rules = [{path: $.tasks type: table dynamic: {closed: {|row at|
+    if $row.issue?.state? == CLOSED { {reason: 'pointer open, issue closed' hint: '{at}: complete {task_id}' task_id: $row.id} }
+  }}}]
+  let found = $DYNAMIC_DOC | validate rules $rules --colors=false
+  assert length $found 1 'one closed issue'
+  assert equal $found.0?.hint '$.tasks.2: complete c' 'templates are filled from the path and the returned data'
+  assert equal ($found | get rule) [closed] 'rule names are kept'
+}
+
+def "test table-row-rules-return-structured-rows" []: nothing -> nothing {
+  let found = $GOOD | update doc.rows [{name: x} {size: big}] | validate rules $RULES
+  assert equal ($found | columns) [path rule hint reason data] 'every failure row has the same columns, data included'
+  assert ($found | all {|r| $r.data == null }) 'preset rules carry no data'
 }

@@ -4,4 +4,4 @@
 # `skip [reason]` would otherwise shadow the builtin `skip` inside modules parsed after it.
 export use (path self ..)
 export use std/assert
-export use ($nu.data-dir | path basename --replace nupm/modules/test) skip
+export use nupm+/test skip
