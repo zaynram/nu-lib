@@ -11,7 +11,10 @@ export alias ls = kv list --universal
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
-# Remove a variable from the universal `kv` store.
+# Remove a variable from the universal `kv` store and return its value.
+#
+# Without a key, the last listed pair is removed; that is an error when the store is empty. A key that is not
+# stored returns null without an error, like a stored null value.
 export def pop [
   key?: string@_variable_names
   # The name of the variable to remove (if omitted, the `| last` pair will be dropped)
@@ -22,7 +25,10 @@ export def pop [
   }
 }
 
-# Assign one or more pairs to the universal `kv` store.
+# Assign one or more pairs to the universal `kv` store, in order (the input's pairs, then `key`/`value`).
+#
+# Returns the whole store as a record, or nothing with `--silent`. Having no pairs to set is an error, unless
+# `--silent` is given. `var set <key>` without a value stores null.
 export def set [
   key?: string@_variable_names
   # The name to store the variable under (or overwrite)
@@ -33,11 +39,12 @@ export def set [
 ]: oneof<nothing, record, table<key: string, value: any>> -> oneof<nothing, record> {
   match ($in | describe | split words | first) {
     nothing => []
-    table => { }
+    # an empty table describes as `list<any>`
+    table | list => { }
     record => { transpose key value }
   } | if $key != null { append {key: $key value: $value} } else { }
   | if $in != [] {
-    par-each --keep-order {|row| get value | kv set --universal $row.key }
+    each {|row| $row.value | kv set --universal $row.key } | ignore
     if not $silent { kv list --universal | transpose --ignore-titles --header-row --as-record }
   } else {
     if not $silent { error make --unspanned 'no key-value pairs were provided' }
