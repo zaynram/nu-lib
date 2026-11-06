@@ -100,8 +100,9 @@ def main [
       let sourced: record = with-env {PATH: ($base | uniq)} {
         bash-env --return=merge ($nu.home-dir | path join .profile)
       }
-      let work: oneof<nothing, string> = $env.work!? | default $sourced.WORK?
-      if $work == null { error make --unspanned 'WORK is not set (neither in the environment nor by ~/.profile)' }
+      let work: string = $env.work!?
+        | default $sourced.WORK?
+        | default { error make --unspanned 'WORK is not set (neither in the environment nor by ~/.profile)' }
       let dirs: record = $PROFILE_DIRS
         | items {|var key| {$key: ($sourced | get --optional $var)} }
         | into record

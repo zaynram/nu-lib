@@ -177,8 +177,9 @@ export def exec [
   --pipe (-p) # Return stdout parsed as nuon (error on non-zero exit) instead of the complete record
 ]: oneof<nothing, string> -> any {
   let piped: oneof<nothing, string> = $in
-  let program: oneof<nothing, string> = $code | default $piped
-  if $program == null { error make --unspanned {msg: 'no code given' help: 'pass the code as an argument or pipe it in'} }
+  let program: string = $code
+    | default $piped
+    | default { error make --unspanned {msg: 'no code given' help: 'pass the code as an argument or pipe it in'} }
   let cfg: record = $config | default { resolve $env.PWD {} }
   let res: record = spawn $cfg $program $vars
   if not $pipe { return $res }

@@ -143,8 +143,9 @@ export def --env define [
   --overwrite (-o)
   # Do not throw an error when overwriting existing module definition files
 ]: nothing -> path {
-  let base: oneof<nothing, path> = $directory | default $env.mods_home!?
-  if $base == null { error make --unspanned 'no directory: pass --directory or set $env.mods_home' }
+  let base: path = $directory
+    | default $env.mods_home!?
+    | default { error make --unspanned 'no directory: pass --directory or set $env.mods_home' }
   let directory: directory = $base | path expand --no-symlink | append $name | path join
   if not ($directory | path exists) { mkdir $directory }
   let path: path = $directory | path join mod.nu
@@ -286,9 +287,11 @@ export def --env main [
       | each {|m| define $m.name $m.definition }
     }
     record => {
-      let m: record = $input | default $name name | default false overwrite
-      if $m.definition? == null { error make --unspanned 'module definition is required' }
-      if $m.name == null { error make --unspanned 'name is required when defining a new module' }
+      let m: record = $input
+        | default $name name
+        | default false overwrite
+        | default { error make --unspanned 'module definition is required' } definition
+        | default { error make --unspanned 'name is required when defining a new module' } name
       define $m.name $m.definition --directory=$m.directory? --overwrite=$m.overwrite
     }
     $t => (error make --unspanned $"unsupported input: ($t)")

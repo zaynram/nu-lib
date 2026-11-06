@@ -52,11 +52,11 @@ export def edit [
     {|d| let stem: string = $d.rel | str replace --regex '\.nu$' ''; $stem == $t or ($stem ends-with $'/($t)') }
     {|d| $d.rel | str contains $t }
   ]
-  let found: oneof<nothing, path> = $tiers
+  let found: path = $tiers
     | each {|tier| $defs | where $tier | get 0?.file }
     | compact
     | get 0?
-  if $found == null { error make --unspanned $"no definition found for '($target)'" }
+    | default { error make --unspanned $"no definition found for '($target)'" }
   if $get { return ($found | path expand) }
   use edit
   $found | edit

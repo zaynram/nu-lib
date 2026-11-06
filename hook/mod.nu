@@ -287,21 +287,19 @@ export def --wrapped test [
 ]: nothing -> oneof<nothing, any> {
   if $condition { $.condition } else { $.code }
   | show --raw $ref $in
-  | if $in == null {
+  | default {
     error make {
       msg: $'no hook (if $condition { "condition" } else { "code" }) exists at the provided reference'
       code: 'internal::hook::invalid_cell-path_reference'
       label: {text: reference span: (metadata $ref).span}
     }
-  } else {
-    let h: oneof<string, closure> | (
-      match ($in | describe) {
-        closure => ($input | do --capture-errors $h ...$rest)
-        string => (
-          $input | to nuon --serialize --raw-strings
-          | ^$nu.current-exe --stdin --no-config-file --commands $"from nuon | ($h)"
-        )
-      }
+  }
+  | let h: oneof<string, closure>
+  | match ($in | describe) {
+    closure => ($input | do --capture-errors $h ...$rest)
+    string => (
+      $input | to nuon --serialize --raw-strings
+      | ^$nu.current-exe --stdin --no-config-file --commands $"from nuon | ($h)"
     )
   }
 }

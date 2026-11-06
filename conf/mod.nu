@@ -131,8 +131,9 @@ export def --env dir [
 ]: nothing -> oneof<nothing, path, record> {
   let s: record = scope $vendor
   if $target == null { return $s }
-  let p: oneof<nothing, path, list<path>> = $s | get --ignore-case --optional $target
-  if $p == null { error raise --code=config::dir::unresolved_target $"no directory named '($target)'" }
+  let p: oneof<path, list<path>> = $s
+    | get --ignore-case --optional $target
+    | default { error raise --code=config::dir::unresolved_target $"no directory named '($target)'" }
   if $return { return $p }
   if ($p | describe) =~ '^list' {
     error raise --code=config::dir::ambiguous_target $"'($target)' is a list of directories: use --return"

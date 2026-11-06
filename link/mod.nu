@@ -38,12 +38,12 @@ export def bin [
     }
     $type => { error raise --code=link::bin::link_exists $"a ($type) that is not a link already exists at '($config.link)'" }
   }
-  let source: oneof<nothing, path> = which --all $name
+  let source: path = which --all $name
     | where type == external and ($it.path | path dirname) not-in $config.skip
     | get --optional 0.path
-  if $source == null {
-    error raise --code=link::bin::source_not_found $"no external '($name)' found on PATH outside ($config.skip | str join ', ')"
-  }
+    | default {
+      error raise --code=link::bin::source_not_found $"no external '($name)' found on PATH outside ($config.skip | str join ', ')"
+    }
   match $os {
     windows => {
       mkdir ($config.link | path dirname)
