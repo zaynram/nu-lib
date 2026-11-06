@@ -1,482 +1,623 @@
-# Data-first test harness (the bash-env pattern, evolved).
+# Data-first test runner: suites are plain .nu files, results are a table.
 #
-# Suites are plain .nu files. A test is `def "test <name>" []` — or any
-# command marked with a `@test` attribute (`use std/testing ` makes the
-# attribute parse). A leading `ignore` in the description, or `@ignore`,
-# reports the test as skipped without running it. Optional hooks
-# `def "before each"` / `def "after each"` (or `@before-each`/`@after-each`)
-# wrap every test in the suite: before-each's output pipes into each test as
-# $in, so hooked suites declare tests with a matching input type.
+# Suites
+# - A test is `def "test <name>" []` or any command carrying the `@test` attribute (`use std/testing *` makes
+#   the attribute parse). Only commands *defined in the suite file* count: commands a suite imports are ignored,
+#   even when their names start with `test`.
+# - A description starting with `ignore`, or an `@ignore` attribute, reports the test as skipped without running it.
+# - `skip <reason>` inside a test aborts it and reports it as skipped (missing tool, wrong OS, no credentials, ...).
 #
-# Discovery and execution run in child interpreters — one per test by
-# default — so suites can never poison each other, the invoking session, or
-# the module state under test. Each test's literal command name is
-# interpolated into the child program: nushell has no string-eval, and a
-# `$name` in command position silently evaluates to the string instead of
-# invoking it (the vacuous-runner trap this harness replaces)
+# Hooks (optional; named `def "before all"` etc. or marked `@before-all` etc.)
+# - `before all`  runs once per child interpreter, before its tests; its output is the suite context.
+# - `before each` receives the suite context as $in; its output is the test context (default: the suite context).
+# - a test        receives the test context as $in (null when no hook produces one).
+# - `after each`  receives the test context; it runs even when the test fails.
+# - `after all`   receives the suite context, once per child interpreter, after its tests.
+# Hooks declared with `def --env` can change the environment the tests see. With `--isolation test`
+# (the default) every test gets its own child interpreter, so `before all`/`after all` run around each test.
+#
+# Isolation
+# Discovery and execution happen in child interpreters started with `--no-config-file`, so suites can never
+# poison each other or the invoking session. Children get a scrubbed environment (an allowlist plus the
+# configured `env`/`passthrough`), the configured library directories as `--include-path`, and the effective
+# configuration in `$env.NU_TEST`. Each test's literal command name is written into the child program: nushell
+# has no string-eval, and a `$name` in command position evaluates to the string instead of calling it.
+#
+# Configuration, lowest to highest precedence
+#   1. built-in defaults (`test config --defaults`)
+#   2. `$env.NU_TEST`: a record (or its nuon text), the global default/override; relative paths resolve from $env.PWD
+#   3. the nearest `nutest.nuon` above the suite file (above $env.PWD for `paths`); relative paths resolve from its directory
+#   4. command flags
+# Scalars take the highest layer that sets them. `lib-dirs` and `passthrough` accumulate (most specific first),
+# and `env` records merge. The directory holding this module is always appended to `lib-dirs`, so suites and
+# seams can `use test`.
 
-# TODO:
-# * Fix path resolution in `main`
-# * Fix hooks assignment in $results in `main`
-# * Ensure wiring is correct for the `--include-path`
+# nu-lint-ignore-file: missing_output_type, list_param_to_variadic
+# (sandbox and exec results are genuinely `any`; internal helpers take lists built by the runner)
 
-# ---
-# nu-lint-ignore-file: chained_str_transform
-# ---
+# ——— imports —————————————————————————————————————————————————————————————————
 
 use std-rfc/pb
-use std-rfc/kv [ "kv get" "kv set" "kv list" "kv drop" ]
 
-# Marks a result row on a child's stdout; test prints pass through untagged.
-const ROW: string = '#TEST-ROW#'
-const KV: string = 'test_config'
-const ROLES: list<string> = [
-  test
-  ignore
-  before-each
-  after-each
-  before-all
-  after-all
+# ——— constants ————————————————————————————————————————————————————————————————
+
+# Marks a result row on a child's stdout; anything a test prints passes through untagged.
+const ROW: string = '#NUTEST-ROW#'
+const PROJECT_FILE: string = 'nutest.nuon'
+# The library directory this module lives in, so children can resolve `use test`.
+const HOME: path = path self ..
+const HOOKS: list<string> = [before-all before-each after-each after-all]
+const ISOLATION: list<string> = [test suite]
+# A `def` line in suite source: the command name, double/single/back-quoted or bare.
+const DEF_RX: string = r#'(?m)^[ \t]*(?:export[ \t]+)?def[ \t]+(?:--[\w-]+[ \t]+)*(?:"(?<dq>[^"]+)"|'(?<sq>[^']+)'|`(?<bq>[^`]+)`|(?<bare>[^\s\[]+))'#
+const DEFAULTS: record = {
+  paths: [tests/suites] # Suite files or directories searched when no paths are given
+  lib-dirs: [] # Extra `--include-path` directories for child interpreters
+  isolation: test # Child interpreter per `test` (hermetic) or per `suite` (fast)
+  depth: 3 # Maximum directory depth searched below each suite directory
+  jobs: 1 # Tests run concurrently with `--isolation test`
+  scrub: true # Start children from an allowlisted environment instead of the caller's
+  passthrough: [] # Extra variable names (exact) kept when scrubbing
+  env: {} # Variables set in every child (applied after scrubbing)
+}
+# Variables kept when scrubbing: enough to find programs, locate home/temp, and render text.
+const KEEP: list<string> = [
+  PATH Path HOME USER USERNAME LOGNAME SHELL TERM COLORTERM LANG LANGUAGE TZ TMPDIR TEMP TMP
+  XDG_RUNTIME_DIR SYSTEMROOT SystemRoot WINDIR COMSPEC PATHEXT USERPROFILE APPDATA LOCALAPPDATA
 ]
 
-alias "ansi dgb" = ansi dark_gray_bold
-const TEMPLATE: string = $"(ansi dgb)[(ansi rst)(ansi cb){stem}(ansi rst)(ansi dgb)](ansi rst)"
-
-const LIB_STRAT: list<string> = [append prepend]
-const LIB_CURRENT: list<string> = [const env all]
-
-const SEAM: string = '' + r###'
-# Test seam to load module commands, avoid shadowing, and expose assertion commands to suites.
-export use (path self {module})
-export use std/assert
-export use test skip
-
-# Register additional NU_LIB_DIRS for subprocesses in the empty array below.
-export-env {{ use test register; register ...{include} }}
-'###
-
-const STUB: string = r###'
-# Test suite: {name}
-# {path}
-
-# The statement below loads the module commands and runs the seam to ensure module resolution.
-# * It is recommended to leave it alone unless you know what you are doing!
-
-use ../mod.nu
-
-# Configure setup and cleanup behaviors by uncommenting the methods below.
-# * Only defined methods will be used (opt-in).
-# * All methods here are run with `do --env` so environment changes will be reflected in test case scopes.
-#
-# If defined, the setup methods should return a record to set the `$ctx` variable.
-# * This is not strictly necessary; setup methods can be used for purely side effects.
-# * The `$ctx` variable is the result of `before all` in the rest of the methods.
-# * The `$ctx` variable is overwritten by `before each` before the `after [each|all]` scopes.
-#
-# def "before all" []: nothing -> record {{ default {{}} }}
-# def "before each" []: nothing -> record {{ default {{}} }}
-# def "after each" []: nothing -> nothing {{ }}
-# def "after all" []: nothing -> nothing {{ }}
-#
-# Add your test cases using the `assert` commands from the standard library; e.g.
-#
-# def "test addition" []: nothing -> nothing {{
-#   assert equal (1 + 1) 2, 'one plus one equals two'
-# }}
-#
-# Below is a template test case definition to get you started.
-# * Be sure to use descriptive names for test cases!
-
-def "test {name}-does-something" []: nothing -> nothing {{
-  # ...test logic goes here
-}}
-
-'###
-
-# Scaffold test suite directories with a seam stubbed automatically.
-export def init [
-  ...suites: string
-  # Names of test suite files to create stubs for
-  --include (-i): list<directory> = []
-  # Additional library directories to load for test suites
-  --directory (-d): directory = ./tests/suites
-  # Path to the directory to create the test suites in (the seam will be placed in the directory above)
-  --module (-m): string = ..
-  # Relative path to the module directory (with `mod.nu`) or file (suffixed with `.nu`)
-  --force (-f)
-  # Overwrite any existing files matching those created by this method
-]: nothing -> table {
-  let root: path = $directory | path expand
-  mkdir --verbose $root
-  let seam: path = $root | path basename --replace mod.nu
-  {include: $include module: $module} | format pattern $SEAM | save --force=$force $seam
-  let suites = $suites | default --empty [
-      $'($root | path basename --replace $module | path expand | path parse | get $.stem).nu'
-    ]
-  for s in $suites {
-    let p: path = $root | path join $s
-    {name: $s path: $p} | format pattern $STUB | save --force=$force $p
-  }
-  $root | path dirname | ls $in
-}
-
-# Register directories to be included in the `--include-path` of Nushell test subprocesses.
-export def register [
-  --current (-c): string@$LIB_CURRENT
-  # Add the values from the specified source(s)
-  --strategy (-s): string@$LIB_STRAT = prepend
-  # Whether to prepend or append directories added with `--current`
-  ...dirs: directory
-  # Directories to register for test subprocesses (appended to pipeline input)
-]: oneof<nothing, list<directory>> -> list<directory> {
-  if $strategy !~ '^(append|prepend)$' { error make --unspanned $"invalid strategy: '($strategy)'" }
-  alias add = run-internal $strategy
-  [...$in ...$dirs] | match $current {
-    null => ()
-    const => (add $NU_LIB_DIRS)
-    env => (add $env.NU_LIB_DIRS)
-    all => (add [...$NU_LIB_DIRS ...$env.NU_LIB_DIRS])
-    _ => { error make --unspanned $"'($current)' is not one of ($LIB_CURRENT)" }
-  } | compact --empty
-  | path expand
-  | uniq
-  | where ($it | path type) == dir
-  | kv set --return=input --table=$KV include_path
-}
-
-# View the currently registered directories for subprocess `--include-path`s.
-#
-# Command strings can be passed as pipeline input and will be evaluated with the test subprocess runner.
-# This is particularly useful for debugging module resolution.
-export def registry []: [
-  nothing -> list<path>
-  string -> record<exit_code: int, stdout: string, stderr: string>
-  list<string> -> table<exit_code: int, stdout: string, stderr: string>
-] {
-  match ($in | describe) {
-    nothing => (kv get --table=$KV include_path | default [])
-    string | list<string> => (each --flatten { subprocess $in })
-  }
-}
-
-# Run the suites at a path and return their results as a table.
-#
-# Progress renders on stderr; the return value is pure data, so it pipes:
-# `test tests/suites | where status == fail`.
-export def main [
-  ...search: path # Exact paths to suite files to run
-  --root (-r): directory = tests/suites # Root directory to search for test suites when none are provided
-  --include (-i): list<directory> = [] # Include these directories in NU_LIB_DIRS of subprocesses
-  --match (-m): string@_suite-stems = .+ # Only run suites whose basename matches this regex
-  --test (-t): string@_test-names = '' # Only run tests whose command name matches
-  --isolation: string@_isolation = test # Interpreter per 'test' (hermetic) or per 'suite' (fast)
-  --strict (-s) # Raise an error when any test fails, for CI and hooks
-  --verbose (-v) # Print captured errors under failing tests
-  --depth (-d): int = 3 # Maximum depth to recurse from the suites root to find test files
-  --debug (-D) # Print debug information (useful for collection errors)
-]: nothing -> table {
-  if $isolation not-in [test suite] {
-    error make --unspanned $"--isolation must be 'test' or 'suite', got '($isolation)'"
-  }
-  if $include != [] { register ...$include }
-  let suites: list<path> = $search | default --empty {||
-      $root | try {
-        path expand --strict
-        | if $debug { debug echo 'suites-root' } else { }
-        | match ($in | path type) {
-          file => (append [])
-          dir => (glob --no-dir --no-symlink --depth=3 $'($in)/**/*.nu')
-        } | where ($it | path basename) =~ $match
-      } catch {
-        error make --unspanned {
-          msg: 'unable to resolve test suites'
-          help: $"search path: '($root)'"
-        }
-      } | if $debug { debug echo 'discovered-suites' } else { }
-      | default --empty {||
-        error make --unspanned {
-          msg: 'no test suites matched the provided parameters'
-          help: $"searched for pattern: '($root)/**/*.nu'"
-        }
-      }
-    }
-  let results: table = $suites | each {|suite|
-      path parse | format pattern $TEMPLATE | print --stderr $in
-      let cmds: table = discover $suite
-      let stem: string = $suite | path parse | get $.stem
-      let hooks: record = $cmds
-        | reject $.ignore
-        | group-by --to-table --prune role
-        | select $.role $.items.name
-        | transpose --ignore-titles --header-row --as-record
-        | default [] before-each after-each before-all after-all
-      let wanted: table = $cmds | where role == test | if $test != '' { where name =~ $test } else { }
-      # Ignored tests surface as skips: invisible skips read as coverage.
-      let ignored: table = $wanted
-        | where $it.ignore
-        | select $.name
-        | par-each --keep-order {
-          let row = merge {status: skip error: 'ignored at discovery' duration: 0ms}
-          render $row $verbose
-          $row
-        }
-      let names: list = $wanted | where not $it.ignore | get name
-      let count: int = $names | length
-      let ran: table = match $isolation {
-        test => {
-          $names | enumerate | each --flatten {|row|
-            pb set-idx $row.index $count
-            let res = spawn $suite ($hooks | snippet $row.item)
-            for row in $res { render $row $verbose }
-            $res
-          }
-        }
-        suite => {
-          pb set 0
-          let all: list<string> = $names | par-each --keep-order {|n| $hooks | snippet $n }
-          let res = spawn $suite ...$all
-          pb set 100
-          for row in $res { render $row $verbose }
-          $res
-        }
-      }
-      [...$ran ...$ignored] | insert $.suite $stem
-    } | flatten
-  pb clear
-  summarize $results $strict
-  $results | select $.suite $.name $.status $.duration $.error
-}
+# ——— suite helpers (exported for suites) ——————————————————————————————————————
 
 # Abort the current test, reporting it as skipped instead of failed.
-# For runtime conditions: a missing external tool, absent credentials, ...
+#
+# For runtime conditions: a missing external tool, absent credentials, the wrong OS, ...
 export def skip [
-  reason: string # Why the test cannot run here; rendered in the skip report
-]: nothing -> error {
-  error make --unspanned $"SKIP: ($reason)"
+  reason: string # Why the test cannot run here; shown in the report
+]: any -> any {
+  error make --unspanned {msg: $"SKIP: ($reason)"}
 }
 
-# Run a closure against a throwaway sandbox directory, cleaning up after.
+# Run a closure against a throwaway sandbox directory, removing it afterwards (also on failure).
 #
-# The closure receives {root, home, data, code}: the seam record `sandboxed`
-# uses to redirect a child interpreter's $nu.home-dir and $nu.data-dir.
+# The closure receives {root, home, config, data, cache, state, code}: `home` is `root`, the XDG directories live
+# under it (`data` already contains the `nushell` directory that `std-rfc/kv` expects), and `code` is an empty
+# scratch directory. Pass the record to `sandboxed` to run nu code with its environment pointed into the sandbox.
 export def with-sandbox [
-  action: closure # Receives the sandbox context record {root, home, data, code}
-]: nothing -> oneof<nothing, any> {
-  let root: path = mktemp --directory --tmpdir test-sandbox-XXXXXX
+  action: closure # Receives the sandbox context record
+]: nothing -> any {
+  let root: path = mktemp --directory --tmpdir nutest-sandbox-XXXXXX
   let ctx: record = {
     root: $root
     home: $root
-    data: ($root | path join data)
+    config: ($root | path join .config)
+    data: ($root | path join .local share)
+    cache: ($root | path join .cache)
+    state: ($root | path join .local state)
     code: ($root | path join code)
   }
-  mkdir $ctx.data $ctx.code
-  let result: any = try { do $action $ctx } catch {|e|
-    rm --recursive --force $root
-    # Rethrow by message: the span is lost, the failure (and any SKIP) is not.
-    error make --unspanned $e.msg
-  }
+  mkdir $ctx.config ($ctx.data | path join nushell) $ctx.cache $ctx.state $ctx.code
+  let result: record = try { {value: (do $action $ctx)} } catch {|e| {error: $e} }
   rm --recursive --force $root
-  $result
+  if $result has error {
+    # Rethrow with the original message (the span is lost, the failure and any SKIP are not).
+    error make --unspanned {msg: $result.error.msg help: ($result.error | error-text)}
+  }
+  $result.value
 }
 
-# Run nu code inside a sandbox-scoped child interpreter.
+# Run nu code in a child interpreter whose HOME and XDG directories point into a `with-sandbox` context.
 #
-# HOME/XDG_* point into the sandbox, so parse-time consts derived from
-# $nu.home-dir / $nu.data-dir land there — the module under test runs
-# unmodified while the real session, data, and config stay untouched.
+# Parse-time paths derived from `$nu.home-dir`/`$nu.data-dir` land in the sandbox, so the module under test runs
+# unmodified while the real session, data and config stay untouched. The child uses the same library
+# directories and environment scrubbing as test children.
 export def sandboxed [
   ctx: record # A `with-sandbox` context
   code: string # The nu program to run
   --prelude: string = '' # Prepended to the code, e.g. `use <module> *`
-]: nothing -> record<stdout: string, stderr: string, exit_code: int> {
-  let commands: string = [$prelude $code] | str join (char newline)
-  with-env {
+  --vars (-e): record = {} # Additional variables for the child (override the sandbox's)
+  --pipe (-p) # Return the child's stdout parsed as nuon (error on non-zero exit) instead of the complete record
+]: nothing -> any {
+  let sandbox: record = {
     HOME: $ctx.home
-    XDG_CONFIG_HOME: ($ctx.home | path join .config)
+    XDG_CONFIG_HOME: $ctx.config
     XDG_DATA_HOME: $ctx.data
-  } { subprocess $commands }
+    XDG_CACHE_HOME: $ctx.cache
+    XDG_STATE_HOME: $ctx.state
+  } | merge $vars
+  [$prelude $code] | compact --empty | str join (char newline) | exec --vars=$sandbox --pipe=$pipe
 }
 
-# ——— utilities ————————————————————————————————————————————————————————————————
+# ——— configuration ————————————————————————————————————————————————————————————
 
-def "debug echo" [label: string]: oneof<nothing, any> -> oneof<nothing, any> {
-  debug | print $"(ansi y)[debug](ansi rst) ($label): ($in)"; return $in
+# Show the effective configuration for a location (default: the current directory).
+#
+# The record is exactly what child interpreters receive in `$env.NU_TEST`. `project` names the `nutest.nuon`
+# that contributed, if any.
+export def config [
+  location?: path # A suite file or directory whose nearest project file applies
+  --defaults # Return the built-in defaults only
+  --lib-dirs (-I): list<path> # As for `test`
+  --isolation: string@$ISOLATION # As for `test`
+  --depth (-d): int # As for `test`
+  --jobs (-j): int # As for `test`
+  --no-scrub # As for `test`
+]: nothing -> record {
+  if $defaults { return $DEFAULTS }
+  let flags: record = flag-layer --lib-dirs=$lib_dirs --isolation=$isolation --depth=$depth --jobs=$jobs --no-scrub=$no_scrub
+  resolve ($location | default $env.PWD) $flags
 }
 
-# Enumerate a suite's commands and their roles in a child interpreter.
+# Run nu code in a child interpreter configured like a test child.
+#
+# Useful for debugging module resolution: `test exec 'use mymodule; scope modules | get name'`. Code may also be
+# piped in.
+export def exec [
+  code?: string # The nu program to run (default: pipeline input)
+  --config (-c): record # Effective configuration (default: `test config`)
+  --vars (-e): record = {} # Additional variables for the child
+  --pipe (-p) # Return stdout parsed as nuon (error on non-zero exit) instead of the complete record
+]: oneof<nothing, string> -> any {
+  let piped: oneof<nothing, string> = $in
+  let program: oneof<nothing, string> = $code | default $piped
+  if $program == null { error make --unspanned {msg: 'no code given' help: 'pass the code as an argument or pipe it in'} }
+  let cfg: record = $config | default { resolve $env.PWD {} }
+  let res: record = spawn $cfg $program $vars
+  if not $pipe { return $res }
+  if $res.exit_code != 0 {
+    error make --unspanned {msg: $"child interpreter exited with code ($res.exit_code)" help: ($res.stderr | str trim)}
+  }
+  $res.stdout | from nuon
+}
+
+# ——— runner ———————————————————————————————————————————————————————————————————
+
+# Run test suites and return their results as a table.
+#
+# Paths may be suite files or directories (searched recursively for `*.nu`, skipping `mod.nu` seams); with no
+# paths, the configured `paths` are searched. Progress renders on stderr; the return value is pure data:
+# `test | where status != ok`.
+export def main [
+  ...paths: path # Suite files or directories to search (default: the configured `paths`)
+  --match (-m): string@_suite-stems = '' # Only run suites whose file stem matches this regex
+  --test (-t): string@_test-names = '' # Only run tests whose command name matches this regex
+  --isolation: string@$ISOLATION # Child interpreter per `test` (hermetic) or per `suite` (fast)
+  --lib-dirs (-I): list<path> # Extra library directories for child interpreters
+  --depth (-d): int # Maximum directory depth searched below each suite directory
+  --jobs (-j): int # Tests run concurrently with `--isolation test`
+  --no-scrub # Let children inherit the caller's environment
+  --strict (-s) # Raise an error when any test fails or errors (for CI and hooks)
+  --verbose (-v) # Print the error under every failing test
+  --debug (-D) # Print the effective configuration and generated child programs
+]: nothing -> table<suite: string, name: string, status: string, duration: duration, error: string, file: path> {
+  let flags: record = flag-layer --lib-dirs=$lib_dirs --isolation=$isolation --depth=$depth --jobs=$jobs --no-scrub=$no_scrub
+  let suites: list<path> = find-suites $paths $flags
+    | where $match == '' or (($it | path parse).stem =~ $match)
+  if ($suites | is-empty) {
+    error make --unspanned {msg: 'no test suites matched' help: $"--match: '($match)'"}
+  }
+  let started: datetime = date now
+  let opts: record = {test: $test verbose: $verbose debug: $debug}
+  let results: list = $suites | each {|suite| run-suite $suite (resolve $suite $flags) $opts } | flatten
+  if (is-terminal --stderr) { pb clear }
+  summarize $results ((date now) - $started) $strict
+  $results | select suite name status duration error file
+}
+
+# Enumerate the commands a suite defines and their roles, in a child interpreter.
+#
+# Returns one row per test or hook. Imported commands are excluded even when named like tests.
 export def discover [
-  suite: path # Path to a test suite to source
+  suite: path # Path to a suite file
+  --config (-c): record # Effective configuration (default: resolved for the suite)
 ]: nothing -> table<name: string, role: string, ignore: bool> {
-  let commands: string = (
-    $"source '($suite)'; "
-    + r#'scope commands
-      | where type == custom
-      | select $.name $.description $.attributes.name?
-      | rename --column={attributes.name: attrs}
-      | to nuon --serialize
-      '#
-  )
-  subprocess --pipe $commands
-  | rename --column={attributes.name: attrs}
-  | par-each --keep-order {|c|
-    | insert $.role {|row|
-      match ($row.name | split words | take 2) {
-        [test _] => 'test'
-        [$x $y] if [before after] has $x and [each all] has $y => $'($x)-($y)'
-        _ => ($row.attrs | where $ROLES has $it | first)
-      } | default 'none'
-    } | insert $.ignore ($in.description =~ '(?i)^\s*ignore' or 'ignore' in $in.attrs)
-    | select $.name $.role $.ignore
-  } | where role != 'none'
-  | reverse
+  let file: path = $suite | path expand
+  let cfg: record = $config | default { resolve $file {} }
+  let defined: list<string> = open --raw $file | defined-names
+  let program: string = [
+    $"source ($file | to nuon)"
+    'scope commands | where type == custom | select name description attributes'
+    '| update attributes { get --optional name | default [] } | to nuon --serialize'
+  ] | str join (char newline)
+  let res: record = spawn $cfg $program {}
+  if $res.exit_code != 0 {
+    error make --unspanned {msg: $"could not load suite ($file)" help: ($res.stderr | str trim)}
+  }
+  let found: table = $res.stdout | from nuon
+  # Definition order (the order of `def`s in the file), not scope order (alphabetical).
+  $defined | uniq | each {|n| $found | where name == $n | get --optional 0 } | compact
+  | each {|c| {name: $c.name role: (role $c) ignore: (($c.description | default '') =~ '(?i)^\s*ignore' or 'ignore' in $c.attributes)} }
+  | where role != null
 }
 
-# Generate the child program fragment that runs one test and emits its row.
-# The test's literal name is interpolated in: strings don't invoke, names do.
-export def snippet [name: string]: record -> string {
+const SEAM: string = r##'# Test seam: everything every suite in this directory needs, re-exported once.
+#
+# Suites load it with `use ../mod.nu *`. Import the module under test before anything that exports `skip`
+# would shadow the builtin `skip` inside it (modules parsed after the seam see the runner's `skip`).
+{module}
+export use std/assert
+export use test [ skip with-sandbox sandboxed ]
+'##
+
+const STUB: string = r##'# Test suite: {name}
+use ../mod.nu *
+
+# Optional hooks (see `help test`): define only the ones you need.
+#
+# def "before all" []: nothing -> any { }        # once per child interpreter; output = suite context
+# def "before each" []: any -> any { }           # receives the suite context; output = test context
+# def "after each" []: any -> nothing { }        # receives the test context; runs even if the test failed
+# def "after all" []: any -> nothing { }         # receives the suite context
+
+def "test {name} works" []: nothing -> nothing {
+  assert equal (1 + 1) 2 "replace with a real assertion"
+}
+'##
+
+# Scaffold a test layout: a project file, a seam, and suite stubs.
+#
+# Creates `nutest.nuon` in the current directory (unless one exists), the seam `<directory>/../mod.nu`, and one
+# stub per suite name in `<directory>`. Existing files are left alone unless `--force` is given.
+export def init [
+  ...suites: string # Suite names (`.nu` is appended); default: the name of the current directory
+  --directory (-d): path = tests/suites # Directory for the suites; the seam goes in its parent
+  --module (-m): path # Module under test (directory with mod.nu, or a .nu file) for the seam to re-export
+  --lib-dirs (-I): list<path> = [] # Library directories recorded in the project file
+  --force (-f) # Overwrite existing files
+]: nothing -> table<path: path, action: string> {
+  let dir: path = $directory | path expand
+  let seam: path = $dir | path dirname | path join mod.nu
+  mkdir $dir
+  let module_line: string = if $module == null { '' } else {
+    let target: path = $module | path expand --strict
+    $"\nexport use (relpath ($seam | path dirname) $target | to nuon)"
+  }
+  let project: record = {
+    paths: [(relpath $env.PWD $dir)]
+    lib-dirs: ($lib_dirs | each { relpath $env.PWD ($in | path expand) })
+  }
+  let names: list<string> = $suites | default --empty [($env.PWD | path basename)]
+  [
+    {path: ($env.PWD | path join $PROJECT_FILE) text: ($project | to nuon --indent 2)}
+    {path: $seam text: ($SEAM | str replace '{module}' $module_line)}
+    ...($names | each {|n| {path: ($dir | path join $"($n | str replace --regex '\.nu$' '').nu") text: ($STUB | str replace --all '{name}' $n)} })
+  ] | each {|f|
+    if ($f.path | path exists) and not $force { return {path: $f.path action: kept} }
+    $f.text | save --force $f.path
+    {path: $f.path action: written}
+  }
+}
+
+
+# ——— configuration internals ——————————————————————————————————————————————————
+
+def flag-layer [
+  --lib-dirs: oneof<nothing, list<path>>
+  --isolation: oneof<nothing, string>
+  --depth: oneof<nothing, int>
+  --jobs: oneof<nothing, int>
+  --no-scrub
+]: nothing -> record {
   {
-    name: $name
-    qname: ($name | to nuon)
-    row: $ROW
-    setup: ($in.before-all | str join '; ')
-    before: ($in.before-each | prepend '$ctx' | str join ' | ')
-    after: ($in.after-each | prepend '$ctx' | str join ' | ')
-    cleanup: ($in.after-all | str join '; ')
-  }
-  | format pattern r#'do {{
-  let start = date now
-  let ctx = do --env {{ {setup} }} | default {}
-  let row = try {{
-    let ctx = do --env {{ {before} }} | default {}
-    $ctx | {name}
-    do --env {{ {after} }} | ignore
-    {{name: {qname}, status: 'ok', error: null}}
-  }} catch {{|e|
-    {{
-      name: {qname}
-      status: (if $e.msg starts-with 'SKIP: ' {{ 'skip' }} else {{ 'fail' }})
-      error: (
-        match $e {{
-          {{rendered: $r}} => (
-            $r | lines | let ls
-            | where $it starts-with snippet
-            | str trim
-            | compact --empty
-            | str join (char newline)
-            | prepend ($ls | take 1 | str replace 'Error' 'reason')
-          )
-          _ => $e.msg
-        }}
-      )
-    }}
-  }}
-  let elapsed: duration = (date now) - $start
-  print $"{row}($row | merge {{duration: $elapsed}} | to nuon | encode base64)"
-  do --env {{ {cleanup} }} | ignore
-}}'#
+    lib-dirs: ($lib_dirs | each { path expand })
+    isolation: $isolation
+    depth: $depth
+    jobs: $jobs
+    scrub: (if $no_scrub { false })
+  } | compact-record | normalize-layer $env.PWD flags
 }
 
-# Source the suite plus the given fragments in a child; collect tagged rows.
-def spawn [suite: path ...snippets: string]: any -> list {
-  let program: string = [$"source ($suite | to nuon)"] | append $snippets | str join "\n"
-  let out: record = subprocess $program
-  # Rows travel base64-encoded: nuon keeps embedded newlines raw (rendered
-  # errors are multi-line), and a line-based protocol must stay single-line.
-  let rows: table = $out.stdout | lines
-    | where ($it | str starts-with $ROW)
-    | each { str replace $ROW '' | decode base64 | decode | from nuon }
-  if $out.exit_code != 0 and ($rows | length) < ($snippets | length) {
-    # The child died before emitting every row: an infrastructure failure,
-    # not a test failure (those are caught and always emit).
-    $rows | append {name: '(child)' status: error error: $out.stderr duration: 0sec}
+def compact-record []: record -> record {
+  transpose key value | where value != null | reduce --fold {} {|kv acc| $acc | insert $kv.key $kv.value }
+}
+
+# Validate a partial configuration layer and make its paths absolute relative to `base`.
+def normalize-layer [base: path source: string]: record -> record {
+  let layer: record = $in
+  let unknown: list<string> = $layer | columns | where $it not-in ($DEFAULTS | columns | append [resolved project])
+  if ($unknown | is-not-empty) {
+    error make --unspanned {
+      msg: $"unknown test configuration key\(s) in ($source): ($unknown | str join ', ')"
+      help: $"valid keys: ($DEFAULTS | columns | str join ', ')"
+    }
+  }
+  if ($layer.isolation? != null) and ($layer.isolation not-in $ISOLATION) {
+    error make --unspanned {msg: $"invalid isolation '($layer.isolation)' in ($source)" help: $"expected one of: ($ISOLATION | str join ', ')"}
+  }
+  # `path join` keeps an absolute right-hand side as is.
+  for key in [depth jobs] {
+    let v: any = $layer | get --optional $key
+    if $v != null and (($v | describe) != int or $v < 1) {
+      error make --unspanned {msg: $"invalid ($key) '($v)' in ($source)" help: 'expected an integer of at least 1'}
+    }
+  }
+  let absolute: closure = {|p|
+    let p: string = if ($p | str starts-with '~') { $p | path expand } else { $p }
+    $base | path join $p | path expand
+  }
+  $layer
+  | if $in.paths? != null { update paths { each {|p| do $absolute $p } } } else { }
+  | if $in.lib-dirs? != null { update lib-dirs { each {|p| do $absolute $p } } } else { }
+}
+
+# The `$env.NU_TEST` layer: a record, or nuon text as received by a child interpreter.
+def env-layer []: nothing -> record {
+  match ($env.NU_TEST? | describe) {
+    nothing => ({})
+    string => ($env.NU_TEST | from nuon)
+    $t if $t starts-with record => $env.NU_TEST
+    $t => { error make --unspanned {msg: $"$env.NU_TEST must be a record, got ($t)"} }
+  } | normalize-layer $env.PWD '$env.NU_TEST'
+}
+
+# The nearest project file at or above a directory, if any.
+def project-file [start: path]: nothing -> oneof<path, nothing> {
+  let dir: path = $start | path expand | if ($in | path type) == file { path dirname } else { }
+  generate {|d|
+    let up: path = $d | path dirname
+    if $up != $d { {out: $d next: $up} } else { {out: $d} }
+  } $dir
+  | each { path join $PROJECT_FILE }
+  | where ($it | path type) == file
+  | get --optional 0
+}
+
+def project-layer [file: oneof<path, nothing>]: nothing -> record {
+  if $file == null { return ({}) }
+  open --raw $file | from nuon | default {} | normalize-layer ($file | path dirname) $file | insert project $file
+}
+
+# Combine layers (lowest precedence first) into an effective configuration.
+def combine [...layers: record]: nothing -> record {
+  let merged: record = $layers | reduce --fold $DEFAULTS {|layer acc|
+    $acc
+    | merge ($layer | reject --optional lib-dirs passthrough env)
+    | update lib-dirs { prepend ($layer.lib-dirs? | default []) }
+    | update passthrough { prepend ($layer.passthrough? | default []) }
+    | update env { merge ($layer.env? | default {}) }
+  }
+  $merged
+  | update paths { path expand } # only the defaults can still be relative: they resolve from $env.PWD
+  | update lib-dirs { append $HOME | path expand | uniq }
+  | update passthrough { uniq }
+  | insert resolved true
+  | default null project
+}
+
+# Effective configuration for a suite (or directory) given flag overrides.
+def resolve [location: path flags: record]: nothing -> record {
+  let from_env: record = env-layer
+  # A child receives an already-resolved configuration: use it as is, so grandchildren behave identically.
+  if ($from_env.resolved? | default false) {
+    return (combine-resolved $from_env $flags)
+  }
+  combine $from_env (project-layer (project-file $location)) $flags
+}
+
+def combine-resolved [base: record flags: record]: nothing -> record {
+  $base
+  | merge ($flags | reject --optional lib-dirs)
+  | update lib-dirs { prepend ($flags.lib-dirs? | default []) | uniq }
+}
+
+# ——— suite discovery ——————————————————————————————————————————————————————————
+
+def find-suites [paths: list<path> flags: record]: nothing -> list<path> {
+  let roots: list<path> = if ($paths | is-not-empty) {
+    $paths | each {|p|
+      let full: path = $p | path expand
+      if not ($full | path exists) { error make --unspanned {msg: $"no such suite file or directory: ($p)"} }
+      $full
+    }
   } else {
-    $rows
+    let cfg: record = resolve $env.PWD $flags
+    let found: list<path> = $cfg.paths | where ($it | path exists)
+    if ($found | is-empty) {
+      error make --unspanned {
+        msg: 'no test suites found'
+        help: $"searched the configured paths: ($cfg.paths | str join ', ') \(set `paths` in ($PROJECT_FILE) or $env.NU_TEST, or pass paths)"
+      }
+    }
+    $found
+  }
+  let depth: int = $flags.depth? | default (resolve $env.PWD $flags).depth
+  $roots | each {|r|
+    match ($r | path type) {
+      file => [$r]
+      dir => (glob --no-dir --depth=$depth ($r | path join '**' '*.nu') | where ($it | path basename) != mod.nu | sort)
+      _ => []
+    }
+  } | flatten | uniq
+}
+
+# Names a suite file defines with `def` (quoted or bare), regardless of what it imports.
+def defined-names []: string -> list<string> {
+  parse --regex $DEF_RX | each {|m| [$m.dq? $m.sq? $m.bq? $m.bare?] | compact --empty | first }
+}
+
+# The runner role of a command: test, a hook, or null.
+def role [cmd: record]: nothing -> oneof<string, nothing> {
+  let hook: string = $cmd.name | str replace --all ' ' '-'
+  if ($cmd.name | str starts-with 'test ') or 'test' in $cmd.attributes {
+    'test'
+  } else if $hook in $HOOKS {
+    $hook
+  } else {
+    $cmd.attributes | where $it in $HOOKS | get --optional 0
   }
 }
 
-def color []: record<status: string> -> string {
-  match $in.status { ok => (ansi green) skip => (ansi yellow) _ => (ansi red) }
+# ——— execution ————————————————————————————————————————————————————————————————
+
+def run-suite [suite: path cfg: record opts: record]: nothing -> list {
+  let stem: string = $suite | path parse | get stem
+  print --stderr $"(ansi dark_gray_bold)[(ansi reset)(ansi cyan_bold)($stem)(ansi reset)(ansi dark_gray_bold)](ansi reset)"
+  if $opts.debug { print --stderr ($cfg | to nuon --indent 2) }
+  let annotate: closure = {|rows| $rows | each { insert suite $stem | insert file $suite } }
+  let found: record = try { {cmds: (discover $suite --config=$cfg)} } catch {|e| {error: ($e | error-text)} }
+  if $found has error {
+    let row: record = {name: '(discover)' status: error duration: 0sec error: $found.error}
+    render $row true
+    return (do $annotate [$row])
+  }
+  let cmds: table = $found.cmds
+  let hooks: record = $HOOKS | each {|h| {$h: ($cmds | where role == $h | get name)} } | into record
+  let wanted: table = $cmds | where role == test | where $opts.test == '' or $it.name =~ $opts.test
+  let ignored: list = $wanted | where ignore | each {|t| {name: $t.name status: skip duration: 0sec error: 'ignored'} }
+  let names: list<string> = $wanted | where not $it.ignore | get name
+  let rows: list = match $cfg.isolation {
+    suite => (run-child $suite $cfg $hooks $names $opts)
+    test => {
+      let total: int = $names | length
+      $names | enumerate | par-each --keep-order --threads=([$cfg.jobs 1] | math max) {|t|
+        if (is-terminal --stderr) and $cfg.jobs == 1 { pb set-idx $t.index $total }
+        run-child $suite $cfg $hooks [$t.item] $opts
+      } | flatten
+      # `after all` failures repeat once per child under test isolation: report them once.
+      | uniq-by name status error
+    }
+  }
+  for row in $ignored { render $row $opts.verbose }
+  do $annotate [...$rows ...$ignored]
+}
+
+# Run some of a suite's tests in one child interpreter; render and return their rows.
+def run-child [suite: path cfg: record hooks: record names: list<string> opts: record]: nothing -> list {
+  if ($names | is-empty) { return [] }
+  let program: string = program $suite $hooks $names
+  if $opts.debug { print --stderr $program }
+  let res: record = spawn $cfg $program {}
+  let rows: list = $res.stdout | lines
+    | where ($it | str starts-with $ROW)
+    | each { str substring ($ROW | str length).. | decode base64 | decode | from nuon }
+  # A child that dies (parse error, `exit`, crash) emits no row for the remaining tests: report each as an error.
+  let missing: list<string> = $names | where $it not-in ($rows | get name)
+  let crashed: list = $missing | each {|n|
+    {name: $n status: error duration: 0sec error: $"child interpreter exited with code ($res.exit_code) before reporting\n($res.stderr | str trim)"}
+  }
+  let all: list = [...$rows ...$crashed]
+  for row in $all { render $row $opts.verbose }
+  $all
+}
+
+# A hook chain as a pipeline over `$in` (`before each | other hook`); empty when there are no hooks.
+def chain [names: list<string>]: nothing -> string { $names | str join ' | ' }
+
+# The child program: source the suite, then run each test with its hooks and print one tagged row per test.
+# Rows are nuon, base64-encoded so multi-line errors cannot break the line protocol.
+def program [suite: path hooks: record names: list<string>]: nothing -> string {
+  let before_all: string = if ($hooks.before-all | is-empty) { 'null' } else { $"null | (chain $hooks.before-all)" }
+  let before_each: string = if ($hooks.before-each | is-empty) { '$__suite.ctx' } else { $"$__suite.ctx | (chain $hooks.before-each)" }
+  let after_each: string = if ($hooks.after-each | is-empty) { 'null' } else { $"try { $ctx | (chain $hooks.after-each) | ignore; null } catch {|e| $e }" }
+  let after_all: string = if ($hooks.after-all | is-empty) { '' } else {
+    $"if $__suite.ok { try { $__suite.ctx | (chain $hooks.after-all) | ignore } catch {|e| __nutest_emit {name: '\(after all\)' status: error duration: 0sec error: \(__nutest_text $e\)} } }"
+  }
+  let tests: list<string> = $names | each {|n|
+    let q: string = $n | to nuon
+    $"do {
+  let __start = date now
+  let __res = if not $__suite.ok { {status: error error: $\"before all failed: \($__suite.error\)\"} } else {
+    try {
+      let ctx = do --env { ($before_each) }
+      let __test = try { $ctx | ($n); null } catch {|e| $e }
+      let __after = ($after_each)
+      if $__test != null {
+        if \($__test.msg | str starts-with 'SKIP: '\) { {status: skip error: \($__test.msg | str substring 6..\)} } else { {status: fail error: \(__nutest_text $__test\)} }
+      } else if $__after != null {
+        {status: error error: $\"after each failed: \(__nutest_text $__after\)\"}
+      } else { {status: ok error: null} }
+    } catch {|e| {status: error error: $\"before each failed: \(__nutest_text $e\)\"} }
+  }
+  __nutest_emit \($__res | insert name ($q) | insert duration \(\(date now\) - $__start\)\)
+}"
+  }
+  [
+    $"source ($suite | to nuon)"
+    $"def __nutest_emit [row: record] { print $\"($ROW)\($row | to nuon | encode base64\)\" }"
+    'def __nutest_text [e]: nothing -> string {'
+    '  let d = $e.details? | default {msg: $e.msg labels: [] help: null inner: []}'
+    '  [$d.msg ...($d.labels? | default [] | get --optional text | default []) $d.help? ...($d.inner? | default [] | get --optional msg | default [])]'
+    '  | compact --empty | str join (char newline)'
+    '}'
+    $"let __suite = try { {ok: true ctx: \(do --env { ($before_all) }\)} } catch {|e| {ok: false error: \(__nutest_text $e\)} }"
+    ...$tests
+    $after_all
+  ] | str join (char newline)
+}
+
+# Start a child interpreter for a configuration; returns the `complete` record.
+def spawn [cfg: record program: string extra: record]: nothing -> record<stdout: string, stderr: string, exit_code: int> {
+  let vars: record = $cfg.env | merge $extra | merge {NU_TEST: ($cfg | to nuon)}
+  let child: closure = {||
+    ^$nu.current-exe --no-config-file --table-mode=none --error-style=plain --include-path=($cfg.lib-dirs | str join (char esep)) --commands=($program)
+    | complete
+  }
+  if not $cfg.scrub { return (with-env $vars $child) }
+  let keep: list<string> = $KEEP | append $cfg.passthrough
+  let hidden: list<string> = $env | columns | where {|k|
+    $k not-in $keep and $k !~ '^LC_' and $k not-in [PWD FILE_PWD CURRENT_FILE config]
+  }
+  do { hide-env ...$hidden; with-env $vars $child }
+}
+
+# ——— reporting ————————————————————————————————————————————————————————————————
+
+# Flatten a caught error into readable text: message, label texts, help, inner messages.
+def error-text []: record -> string {
+  let e: record = $in
+  let d: record = $e.details? | default {msg: $e.msg}
+  [$d.msg ...($d.labels? | default [] | get --optional text | default []) $d.help? ...($d.inner? | default [] | get --optional msg | default [])]
+  | compact --empty
+  | str join (char newline)
 }
 
 def render [row: record verbose: bool]: nothing -> nothing {
-  [
-    $"  ($row | color)[($row.status)](ansi rst) "
-    ($row.name | str replace --regex '^test ' '')
-    $" (ansi attr_dimmed)($row.duration)(ansi rst)"
-  ] | str join
-  | print --stderr $in
-  if $verbose and $row.status in [fail error] and $row.error != null {
-    $row.error
-    | lines
-    | par-each --keep-order { $"    ($in)" }
-    | str join (char newline)
-    | print --stderr $in
+  let color: string = match $row.status { ok => (ansi green) skip => (ansi yellow) _ => (ansi red) }
+  let name: string = $row.name | str replace --regex '^test ' ''
+  let reason: string = if $row.status == skip and $row.error != null { $" (ansi attr_dimmed)— ($row.error)(ansi reset)" } else { '' }
+  let ms: float = ($row.duration / 1ms) | math round --precision 1
+  print --stderr $"  ($color)[($row.status)](ansi reset) ($name) (ansi attr_dimmed)($ms)ms(ansi reset)($reason)"
+  if ($verbose or $row.status == error) and $row.status in [fail error] and $row.error != null {
+    $row.error | lines | each { $"      ($in)" } | str join (char newline) | print --stderr $in
   }
 }
 
-def summarize [results: table strict: bool]: nothing -> nothing {
-  let count: closure = {|status| $results | where status == $status | length }
-  let errors: int = (do $count fail) + (do $count error)
-  let total: duration = $results | get --optional duration | default [] | append 0sec | math sum
-  [
-    $"(ansi green)(do $count ok) passed(ansi rst)"
-    $"(ansi red)($errors) failed(ansi rst)"
-    $"(ansi yellow)(do $count skip) skipped(ansi rst)"
-    $"(ansi attr_dimmed)in ($total)(ansi rst)"
-  ] | str join ', '
-  | print --stderr $in
-  if $strict and $errors > 0 { error make --unspanned $"($errors) test\(s) failed" }
+def summarize [results: list elapsed: duration strict: bool]: nothing -> nothing {
+  let count: closure = {|s| $results | where status == $s | length }
+  let failed: int = (do $count fail) + (do $count error)
+  print --stderr ([
+    $"(ansi green)(do $count ok) passed(ansi reset)"
+    $"(ansi red)($failed) failed(ansi reset)"
+    $"(ansi yellow)(do $count skip) skipped(ansi reset)"
+    $"(ansi attr_dimmed)in (($elapsed / 1sec) | math round --precision 2)s(ansi reset)"
+  ] | str join ', ')
+  if $strict and $failed > 0 { error make --unspanned {msg: $"($failed) test\(s) failed"} }
 }
 
-alias noni = ^$nu.current-exe --table-mode=none --error-style=plain --no-config-file
+# ——— path helpers —————————————————————————————————————————————————————————————
 
-export def subprocess [
-  c: string
-  --pipe # Attempt to deserialize stdout (raises an error for non-zero exit codes)
-  --libs: list<directory> # Extra directories for the `--include-path` option
-]: nothing -> oneof<record<stdout: string, stderr: string, exit_code: int>, list, table, string, number, nothing> {
-  let i: string = kv get --table=$KV include_path
-    | if $libs != null { prepend $libs | path expand | uniq } else { default [] }
-    | str join (char esep)
-  noni --include-path=($i) --commands=($c) | complete | match $in.exit_code {
-    _ if not $pipe => ()
-    0 => (get $.stdout | from nuon)
-    $c => { error make --unspanned {msg: $'subprocess exited with code ($c)' help: $in.stderr} }
-  }
+# Relative path from directory `from` to `to` (both absolute).
+def relpath [from: path to: path]: nothing -> string {
+  let a: list<string> = $from | path expand | path split
+  let b: list<string> = $to | path expand | path split
+  let common: int = $a | zip $b | take while {|p| $p.0? == $p.1? } | length
+  let up: list<string> = 0..<(($a | length) - $common) | each { '..' }
+  # `skip` here would be this module's own `skip`; slice instead.
+  let rel: list<string> = [...$up ...($b | slice $common..)]
+  if ($rel | is-empty) { '.' } else { $rel | path join }
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————
 
-# Resolve the suite files visible to the command line being completed:
-# the first existing path token, or the `path` argument's default.
+# Suite files visible to the command line being completed: the path arguments typed so far, else the configured paths.
 def _suites-on-line [context: string]: nothing -> list<path> {
-  let path: any = $context
-    | split row --regex '\s+'
-    # `drop nth 0` sheds the command token; the module's own `skip` shadows
-    # the core command of that name here.
-    | drop nth 0
-    | compact --empty
-    | where $it !~ '^-' and ($it | path exists)
-    | get --optional 0
-    | default tests/suites
-  match ($path | path type) {
-    dir => (glob ($path | path join *.nu) | sort)
-    file => [$path]
-    _ => []
-  }
+  let typed: list<path> = $context | split row --regex '\s+' | drop nth 0 | where $it !~ '^-' and ($it | path exists)
+  try { find-suites $typed {} } catch { [] }
 }
 
 def _suite-stems [context: string]: nothing -> list<string> {
-  _suites-on-line $context | each { path parse | get stem }
+  _suites-on-line $context | each { path parse | get stem } | uniq
 }
 
 def _test-names [context: string]: nothing -> list<string> {
-  _suites-on-line $context
-  | each { open $in | parse --regex 'def "(?<name>test [^"]+)"' | get name }
-  | flatten
-  | sort
-}
-
-def _isolation []: nothing -> list<string> {
-  [test suite]
+  _suites-on-line $context | each { open --raw $in | defined-names | where $it starts-with 'test ' } | flatten | uniq | sort
 }

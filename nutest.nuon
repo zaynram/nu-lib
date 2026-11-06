@@ -1,0 +1,4 @@
+# Test runner configuration (see `help test`). Paths are relative to this file.
+{
+  lib-dirs: [.]
+}
