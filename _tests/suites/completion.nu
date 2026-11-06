@@ -242,7 +242,7 @@ def "test carapace-complete deserializes by shell" []: nothing -> nothing {
     }
     with-env {CARAPACE_STUB_OUT: "status S\nstash T"} {
       assert equal ([git st] | local carapace-complete git --shell zsh) [status stash] 'first word per line otherwise'
-      let custom = [git st] | local carapace-complete git --shell zsh --deserialize {|| lines | each { str upcase } }
+      let custom = [git st] | local carapace-complete git --shell zsh --deserialize {|| lines | each { str uppercase } }
       assert equal $custom ['STATUS S' 'STASH T'] 'a custom deserializer'
     }
   }

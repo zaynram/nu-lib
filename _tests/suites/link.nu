@@ -40,7 +40,7 @@ def sudo-calls [log: path]: nothing -> list<string> {
 
 # A fresh name with nothing at `/usr/bin/<name>`.
 def unused-name []: nothing -> string {
-  let name: string = $"nulib-link-test-(random chars --length 8 | str downcase)"
+  let name: string = $"nulib-link-test-(random chars --length 8 | str lowercase)"
   if ('/usr/bin' | path join $name | path type) != null { skip $"/usr/bin/($name) exists" }
   $name
 }
@@ -125,7 +125,7 @@ def "test a failed link raises with the command output" []: nothing -> nothing {
 
 def "test the windows link lives in the user bin directory" []: nothing -> nothing {
   if $nu.os-info.name != windows { skip 'Windows only' }
-  let name: string = $"nulib-link-test-(random chars --length 8 | str downcase)"
+  let name: string = $"nulib-link-test-(random chars --length 8 | str lowercase)"
   let err = try { link bin $name; null } catch {|e| $e.details }
   assert equal $err.code? link::bin::source_not_found 'nothing to link'
 }
