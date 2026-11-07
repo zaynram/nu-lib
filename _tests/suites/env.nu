@@ -470,7 +470,7 @@ def "test from bash survives functions named like the builtins the helper uses" 
   need-bash
   let shadows: string = [printf read local set continue return exit] | each { $"($in)\(\) { :; }" } | str join (char newline)
   let out: record = $"($shadows)\nexport SBFB_B=1\nSBFB_S=2\nf\(\) { export SBFB_F=3; }" | env from-bash --execute [f]
-  assert equal ($out | reject fn) {env: {SBFB_B: '1'} shellvars: {SBFB_S: '2'}} 'the script is read'
+  assert equal ($out | reject $.fn) {env: {SBFB_B: '1'} shellvars: {SBFB_S: '2'}} 'the script is read'
   assert equal $out.fn.f.env {SBFB_F: '3'} 'and so is a function run after it'
 }
 
@@ -486,7 +486,7 @@ def "test from bash needs neither jq nor more than bash and env" []: nothing -> 
   let out: record = with-sandbox {|ctx|
     let bin: path = $ctx.code | path join bin
     mkdir $bin
-    for tool in [bash env] { ^ln -s (which $tool | get 0.path) ($bin | path join $tool) }
+    for tool in [bash env] { ^ln -s (which $tool | get $.0.path) ($bin | path join $tool) }
     with-env {PATH: [$bin]} { 'export SBFB_A=1' | env from-bash }
   }
   assert equal $out {SBFB_A: '1'} 'bash and env are enough'

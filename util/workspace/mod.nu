@@ -10,7 +10,25 @@ use std/util null-device
 # ——— constants ————————————————————————————————————————————————————————————————
 
 export const LEVEL: list<string> = [major minor patch alpha beta rc release]
-const BUMPABLE: list<string> = [csv html json md kdl msgpack ndnuon nuon text toml msgpackz plist txt tsv yaml xml yml]
+const BUMPABLE: list<string> = [
+  csv
+  html
+  json
+  md
+  kdl
+  msgpack
+  ndnuon
+  nuon
+  text
+  toml
+  msgpackz
+  plist
+  txt
+  tsv
+  yaml
+  xml
+  yml
+]
 
 # ——— aliases ——————————————————————————————————————————————————————————————————
 
@@ -25,7 +43,7 @@ export alias reactivate = do --env { let cwd: path = pwd; cd $nu.temp-dir; cd $c
 
 # The file's extension, or an error when the file does not exist or `save` cannot write its format.
 def ensure-bumpable []: path -> oneof<string, error> {
-  let file: path = $in
+  let file: path;
   if not ($file | path exists) { error raise $"file not found: '($file)'" --kind not_found }
   let ext: string = $file | path parse | get $.extension
   if $BUMPABLE not-has $ext {
@@ -56,7 +74,7 @@ export def bump [
   --skip (-S) = true
   # Return missing files and unsupported formats with null `prev`/`curr` (the default); `--skip=false` raises
 ]: table<file: path, cell: cell-path> -> table<file: path, cell: cell-path, prev: any, curr: any> {
-  let rows: table = $in
+  let rows: table;
   # `--meta` replaces the build metadata of the spec too (`into semver` validates the result)
   let wanted: any = $spec | if $in == null { } else if $meta == null { into semver } else {
     $"($in | str replace --regex '\+.*$' '')+($meta)" | into semver

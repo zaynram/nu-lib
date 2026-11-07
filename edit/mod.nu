@@ -24,7 +24,7 @@ export def main [
   --depth (-d): int = 1 # Depth to recurse when expanding glob expressions
   ...rest: glob # Files or glob expressions for the files to edit
 ]: oneof<nothing, path, list<path>, record, table> -> nothing {
-  let input: any = $in
+  let input: any;
   cd $cd
   let items: list<string> = $input
     | append $rest
@@ -44,7 +44,7 @@ export def main [
 def resolve-item [depth: int]: oneof<nothing, glob, string, record> -> list<string> {
   let item: oneof<nothing, string> = match ($in | describe) {
     glob | string => ($in | into string)
-    _ => ($in | get --optional $.name $.path $.filename | compact | get --optional 0)
+    _ => ($in | get --optional $.name $.path $.filename | compact | first)
   }
   if $item == null { return [] }
   if $item =~ ':\d+$' { return [$item] }
@@ -62,12 +62,14 @@ def get-editor []: nothing -> list<string> {
 def get-editor-pane-id [program: string]: nothing -> oneof<nothing, string> {
   ^zellij action list-panes --json --command
   | from json
-  | where {|pane|
-    if $pane.is_plugin or $pane.is_suppressed { return false }
-    if $pane.title =~ '^(editor$|(E|e)diting:\s)' { return true }
-    # the program the pane runs (the command's first word, by basename), not a substring: `vi` is not in `vite dev`
-    ($pane.pane_command? | default '' | split row ' ' | first | path basename) == $program
-  } | get --optional $.0.id
+  # A visible terminal pane named like an editor, or running the program (the command's first word, by basename, not
+  # a substring: `vi` is not in `vite dev`).
+  | where (
+    not $it.is_plugin and not $it.is_suppressed and (
+      $it.title =~ '^(editor$|(E|e)diting:\s)' or ($it.pane_command? | default '' | split row ' ' | first | path basename) == $program
+    )
+  )
+  | get --optional $.0.id
   | if $in != null { $"terminal_($in)" }
 }
 

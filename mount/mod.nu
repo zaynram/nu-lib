@@ -40,7 +40,7 @@ export def is-mounted []: path -> bool {
 # A bind mount is removed with `umount` (which needs root); an sshfs mount (`--remote`) with `fusermount3 -u`.
 @category filesystem
 export def unmount [--remote]: path -> nothing {
-  let target: path = $in
+  let target: path;
   if not ($target | is-mounted) { return } else if $remote { ^fusermount3 -u $target } else { ^umount $target }
 }
 
@@ -83,7 +83,7 @@ export def main [
     error raise $"($program) exited with code ($result.exit_code)" --with={
       kind: external_failure
       help: (
-        [$result.stderr? $result.stdout?] | compact | str trim | compact --empty | get --optional 0 | default (
+        [$result.stderr? $result.stdout?] | compact | str trim | compact --empty | first | default (
           if $remote { 'ensure `sshd` is running on the remote host' }
         )
       )

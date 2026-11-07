@@ -78,6 +78,6 @@ export def main [
 def _variable_names []: nothing -> table {
   kv list --universal | if $in == [] { } else {
     rename --column={key: value value: description}
-    | update description { describe }
+    | update $.description { describe }
   }
 }

@@ -9,7 +9,7 @@ use ../mod.nu *
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 # Write an executable shell script `name` with `body` into `dir`.
-def stub [dir: path, name: path, body: string]: nothing -> path {
+def stub [dir: path name: path body: string]: nothing -> path {
   need-posix
   let file: path = $dir | path join $name
   $"#!/bin/sh\n($body)\n" | save --force $file
@@ -65,7 +65,7 @@ def with-win [body: closure]: nothing -> nothing {
     let vars: record = {PATH: ($env.PATH | prepend $stubs) WINPATH: [] USERPROFILE: $home}
     with-env $vars {
       for exe in [wslpath where.exe powershell.exe] {
-        assert equal (which --all $exe | get 0.path) ($stubs | path join $exe) $"the stub ($exe) shadows the real one"
+        assert equal (which --all $exe | get $.0.path) ($stubs | path join $exe) $"the stub ($exe) shadows the real one"
       }
       do $body {ctx: $ctx mnt: $mnt stubs: $stubs log: $log home: $home}
     }
@@ -344,7 +344,7 @@ def "test path uses the piped path as its base" []: nothing -> nothing {
 }
 
 def "test powershell aliases point at the windows executables" []: nothing -> nothing {
-  let aliases: record = scope aliases | where name in [pwsh powershell] | select name expansion | transpose --as-record --header-row
+  let aliases: record = scope aliases | where name in [pwsh powershell] | select $.name $.expansion | transpose --as-record --header-row
   assert equal $aliases.pwsh /mnt/c/progra~1/PowerShell/7/pwsh.exe 'PowerShell 7'
   assert equal $aliases.powershell /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe 'Windows PowerShell'
 }

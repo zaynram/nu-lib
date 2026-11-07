@@ -82,7 +82,7 @@ export def "into completions" [
     # Completers that pass `sort: false` (time, hook) rely on the input order surviving (`each` keeps it).
     completions: (
       $value | if $table {
-        update value $format
+        update $.value $format
       } else if $to_string == null and ($value | describe) == 'list<string>' {
         quote-strings $format
       } else { each $format }
@@ -95,7 +95,7 @@ export def "into completions" [
 # A regex costs about 7 us per element in a row condition and 0.2 us in `str replace`: 1.4k names, 6.1 ms to 0.9 ms.
 def quote-strings [format: closure]: list<string> -> list<string> {
   let value: list<string>;
-  let quoted: list<string> = $value | parse --regex $UNSAFE_ELEMENT | get capture0
+  let quoted: list<string> = $value | parse --regex $UNSAFE_ELEMENT | get $.capture0
   if ($quoted | str join '') =~ '["\\\x00-\x1f\x7f]' {
     $value | each $format
   } else { $value | str replace --regex $UNSAFE_ELEMENT '"$1"' }

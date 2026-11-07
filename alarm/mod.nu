@@ -110,7 +110,7 @@ export def main [
 
 # ——— completions —————————————————————————————————————————————————————————————
 
-def _alarms []: nothing -> list { list-alarms | get key }
+def _alarms []: nothing -> list { list-alarms | get $.key }
 
 def _suggest-when []: nothing -> list {
   let now = date now

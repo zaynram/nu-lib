@@ -23,7 +23,7 @@ const REGISTRY_BINS: list<string> = [rustup dprint brew claude cargo pipx pixi b
 
 # Replace every `@PLACEHOLDER@` key of `values` in a template with its value.
 def fill-in [values: record]: string -> string {
-  let template: string = $in
+  let template: string;
   $values | transpose key value | reduce --fold $template {|it acc| $acc | str replace --all $it.key $it.value }
 }
 
@@ -50,7 +50,7 @@ def with-sudo [ctx: record code: string]: nothing -> record {
   stub $bin apt-get $log
   let res: record = sandboxed $ctx $code --prelude 'use pman' --vars {PATH: ([$bin /usr/bin /bin] | str join (char esep))}
   let calls: list<string> = if ($log | path exists) { open --raw $log | lines } else { [] }
-  $res | insert calls $calls
+  $res | insert $.calls $calls
 }
 
 # The prelude of an `upgrade` grandchild: it refuses to run with a binary directory outside the sandbox, and it
@@ -130,7 +130,7 @@ def "test log lives in the cache dir" []: nothing -> nothing {
 }
 
 def "test bump nu is exported" []: nothing -> nothing {
-  let names: list<string> = scope commands | get name | where $it starts-with 'pman '
+  let names: list<string> = scope commands | get $.name | where $it starts-with 'pman '
   assert ('pman bump-nu' in $names) 'the nightly installer'
   assert not ($names | any $it =~ 'nightly') "the submodule's helpers stay private"
 }
@@ -215,7 +215,7 @@ def "test upgrade runs every registry entry" []: nothing -> nothing {
     let r: record = stubbed-upgrade $ctx 'pman upgrade'
     assert equal ($r.value | columns) $REGISTRY_BINS 'one result per binary'
     assert equal $r.value.rustup [{output: "rustup upgrade\n" success: true}] 'stdout of a successful call'
-    assert equal ($r.value.pixi | get output) ["pixi self-update\n" "pixi global update\n"] 'argument sets run in order'
+    assert equal ($r.value.pixi | get $.output) ["pixi self-update\n" "pixi global update\n"] 'argument sets run in order'
     assert equal ($r.calls | where $it starts-with bun) ['bun upgrade --canary' 'bun --global update'] 'every set runs, one after another, in order'
     assert not ($r.calls | any $it starts-with 'sudo') 'no system packages without --system'
   }
@@ -225,7 +225,7 @@ def "test upgrade reports failures with stderr" []: nothing -> nothing {
   with-sandbox {|ctx|
     let r: record = stubbed-upgrade $ctx 'pman upgrade' --failing [dprint]
     assert equal $r.value.dprint [{output: "dprint failed: upgrade\n" success: false}] 'stderr of a failed call'
-    assert equal ($r.value.brew | get success) [true] 'other binaries are unaffected'
+    assert equal ($r.value.brew | get $.success) [true] 'other binaries are unaffected'
   }
 }
 
@@ -259,7 +259,7 @@ def "test upgrade input overrides the registry" []: nothing -> nothing {
 def "test upgrade system runs apt get through sudo" []: nothing -> nothing {
   with-sandbox {|ctx|
     let r: record = stubbed-upgrade $ctx 'pman upgrade --system'
-    assert equal ($r.value.apt-get | get output) ["sudo apt-get update --yes\n" "sudo apt-get upgrade --yes\n"] 'update then upgrade'
+    assert equal ($r.value.apt-get | get $.output) ["sudo apt-get update --yes\n" "sudo apt-get upgrade --yes\n"] 'update then upgrade'
     assert equal ($r.calls | where $it starts-with 'sudo apt-get') ['sudo apt-get update --yes' 'sudo apt-get upgrade --yes'] "upgrade runs only after update (they share apt's lock)"
   }
 }
@@ -374,8 +374,8 @@ let r = try { {value: (pman bump-nu @FLAGS@)} } catch {|e|
 $r | to nuon | save --force @OUT@'#
 
 # Where the tests install, and the sandbox plugin registry.
-def bin-dir []: record -> path { get home | path join bin }
-def registry []: record -> path { get root | path join plugins.msgpackz }
+def bin-dir []: record -> path { get $.home | path join bin }
+def registry []: record -> path { get $.root | path join plugins.msgpackz }
 
 # The flags pointing `bump-nu` at the fixture server, the sandbox install directory and the sandbox registry.
 def flags [ctx: record url: string]: nothing -> string {
@@ -498,7 +498,7 @@ def with-server [ctx: record action: closure]: nothing -> record {
   job kill $job
   if $result has error { $result.error.raw }
   let requests: list = if ($log | path exists) { open --raw $log | lines } else { [] }
-  {value: $result.value requests: ($requests | each { split row "\t" | {path: ($in | first) auth: ($in | get 1? | default '')} })}
+  {value: $result.value requests: ($requests | each { split row "\t" | {path: ($in | first) auth: ($in | get $.1? | default '')} })}
 }
 
 # Run `pman bump-nu <flags>` in a grandchild started from a sandbox copy of `nu`, with HOME/XDG/TMPDIR in the
@@ -544,7 +544,7 @@ def nu-runs [ctx: record]: nothing -> list<string> {
 }
 
 # The request paths, without the leading slash.
-def paths []: record -> list<string> { get requests | get path | str replace --regex '^/' '' }
+def paths []: record -> list<string> { get $.requests | get $.path | str replace --regex '^/' '' }
 
 def "test parse assets reads the release naming" []: nothing -> nothing {
   let assets: list = [
@@ -554,11 +554,11 @@ def "test parse assets reads the release naming" []: nothing -> nothing {
     {name: SHA256SUMS browser_download_url: u4}
   ]
   let builds: table = $assets | nightly parse-assets
-  assert equal ($builds | get name) ($assets | get name | first 3) 'non-builds are dropped'
-  assert equal ($builds | get version) [0.116.2-nightly.33 0.116.2-nightly.33 0.116.0] 'nightly and plain versions'
-  assert equal ($builds | get target) [x86_64-unknown-linux-gnu aarch64-pc-windows-msvc aarch64-apple-darwin] 'the targets'
-  assert equal ($builds | get ext) [tar.gz msi tar.gz] 'the extensions'
-  assert equal ($builds | get digest) ['sha256:ab' null null] 'the digest, when listed'
+  assert equal ($builds | get $.name) ($assets | get $.name | first 3) 'non-builds are dropped'
+  assert equal ($builds | get $.version) [0.116.2-nightly.33 0.116.2-nightly.33 0.116.0] 'nightly and plain versions'
+  assert equal ($builds | get $.target) [x86_64-unknown-linux-gnu aarch64-pc-windows-msvc aarch64-apple-darwin] 'the targets'
+  assert equal ($builds | get $.ext) [tar.gz msi tar.gz] 'the extensions'
+  assert equal ($builds | get $.digest) ['sha256:ab' null null] 'the digest, when listed'
 }
 
 def "test host target follows the host" []: nothing -> nothing {
@@ -688,10 +688,10 @@ def "test bump nu installs the newest release" []: nothing -> nothing {
     }
     let asset: string = $'nu-($NEWER)-(nightly host-target $nu.os-info).tar.gz'
     let bin: path = $ctx | bin-dir
-    assert equal ($r.value.value | reject installed plugins) {current: null latest: $NEWER up_to_date: false asset: $asset} $'the newest release, listed last: ($r.value.output)'
+    assert equal ($r.value.value | reject $.installed $.plugins) {current: null latest: $NEWER up_to_date: false asset: $asset} $'the newest release, listed last: ($r.value.output)'
     assert equal $r.value.value.installed [($bin | path join nu) ($bin | path join nu_plugin_sbextra)] 'nu first, then the plugins'
     assert equal (open --raw ($bin | path join nu) | lines | first) '#!/bin/sh' "the archive's nu"
-    assert equal (ls --all $bin | get name | path basename | sort) [nu nu_plugin_sbextra] 'no LICENSE, README or staging files'
+    assert equal (ls --all $bin | get $.name | path basename | sort) [nu nu_plugin_sbextra] 'no LICENSE, README or staging files'
     assert equal ($r | paths) [releases.json $asset] 'the metadata, then the archive'
     assert equal (ls --all ($ctx.root | path join tmp)) [] 'the download is cleaned up'
   }
@@ -814,7 +814,7 @@ def "test bump nu never sends the github token elsewhere" []: nothing -> nothing
       run-bump $ctx $'(flags $ctx $url) --yes' --vars {GITHUB_TOKEN: sbtoken}
     }
     assert ($r.requests | is-not-empty) $'requests were made: ($r.value.output)'
-    assert equal ($r.requests | get auth | uniq) [''] 'no Authorization header'
+    assert equal ($r.requests | get $.auth | uniq) [''] 'no Authorization header'
   }
 }
 
@@ -827,7 +827,7 @@ def "test bump nu replaces the running binary atomically" []: nothing -> nothing
     let nubin: path = $ctx.code | path join nubin
     assert equal $r.value.value.installed [($nubin | path join nu)] $'the running nu is the default target: ($r.value.output)'
     assert equal (open --raw ($nubin | path join nu) | lines | first) '#!/bin/sh' 'it is replaced'
-    assert equal (ls --all $nubin | get name | path basename | sort) [nu nu.previous] 'by a rename, keeping the replaced nu: no staging file is left'
+    assert equal (ls --all $nubin | get $.name | path basename | sort) [nu nu.previous] 'by a rename, keeping the replaced nu: no staging file is left'
     assert ($r.value.output =~ 'replaced the running nu') 'and says how to pick it up'
   }
 }
@@ -885,7 +885,7 @@ def "test bump nu refuses a nu that does not run" []: nothing -> nothing {
     assert ($r.value.error =~ '^the new nu does not run') $'the message: ($r.value.error)'
     assert equal $r.value.help 'sbstub: broken' 'its stderr is the advice'
     assert not ($ctx | bin-dir | path exists) 'nothing is installed'
-    let archive: path = $r.value.error | parse --regex "kept at '(?<archive>[^']+)'" | get 0.archive
+    let archive: path = $r.value.error | parse --regex "kept at '(?<archive>[^']+)'" | get $.0.archive
     assert equal ($archive | path basename) $'nu-($NEWER)-(nightly host-target $nu.os-info).tar.gz' $'the message names the archive: ($r.value.error)'
     assert ($archive | path exists) 'which is kept'
     assert equal ($archive | path dirname | path dirname) ($ctx.root | path join tmp) 'in the temp dir'
@@ -963,7 +963,7 @@ def "test bump nu keeps the previous nu and plugins" []: nothing -> nothing {
     }
     let bin: path = $ctx | bin-dir
     assert equal ($r.value.bump.value.installed | path basename) [nu nu_plugin_sbship] $'installed: ($r.value.bump.output)'
-    assert equal (ls --all $bin | get name | path basename | sort) [nu nu.previous nu_plugin_sbship nu_plugin_sbship.previous] 'each replaced file is kept'
+    assert equal (ls --all $bin | get $.name | path basename | sort) [nu nu.previous nu_plugin_sbship nu_plugin_sbship.previous] 'each replaced file is kept'
     assert equal (^($bin | path join nu.previous) --version | str trim) $OLDER 'the previous nu'
     assert equal (^($bin | path join nu) --version | str trim) $NEWER 'next to the new one'
     assert ((open --raw ($bin | path join nu_plugin_sbship.previous)) =~ '"0.1.0"') 'the previous plugin'
@@ -981,12 +981,12 @@ def "test rollback restores the previous build and its plugins" []: nothing -> n
     }
     let bin: path = $ctx | bin-dir
     let shipped: path = $bin | path join nu_plugin_sbship
-    assert equal ($r.value.value | reject plugins) {current: $OLDER previous: $NEWER installed: [($bin | path join nu) $shipped]} $'the report: ($r.value.output)'
+    assert equal ($r.value.value | reject $.plugins) {current: $OLDER previous: $NEWER installed: [($bin | path join nu) $shipped]} $'the report: ($r.value.output)'
     assert equal $r.value.value.plugins [{name: sbship filename: $shipped action: updated message: null}] 'the plugin is re-registered from the restored copy'
     assert equal (^($bin | path join nu) --version | str trim) $OLDER 'the previous nu is back'
     assert equal (^($bin | path join nu.previous) --version | str trim) $NEWER 'the builds swap'
     assert equal (plugin-versions $ctx) {sbship: '0.1.0'} 'the registry holds the restored plugin'
-    assert equal (ls --all $bin | get name | path basename | sort) [nu nu.previous nu_plugin_sbship nu_plugin_sbship.previous] 'no staging files'
+    assert equal (ls --all $bin | get $.name | path basename | sort) [nu nu.previous nu_plugin_sbship nu_plugin_sbship.previous] 'no staging files'
     assert equal ($r | paths) [releases.json $'nu-($NEWER)-(nightly host-target $nu.os-info).tar.gz'] 'the rollback fetches nothing'
     assert not ($r.value.output =~ 'replaced the running nu') 'the running nu was not the target'
   }
@@ -1036,7 +1036,7 @@ def "test upgrade reports a bump that refused the build" []: nothing -> nothing 
     assert ($row.output =~ 'sbstub: broken') 'with its advice'
     assert equal (^($nubin | path join nu) --version | str trim) '0.100.0' 'the stable build stays'
     assert not ($nubin | path join nu.previous | path exists) 'nothing was replaced'
-    assert equal ($r.value.bun | get success) [true true] 'the other upgrades still ran'
+    assert equal ($r.value.bun | get $.success) [true true] 'the other upgrades still ran'
   }
 }
 
@@ -1113,7 +1113,7 @@ def "test a new nu that cannot check plugins does not abort the bump" []: nothin
       run-bump $ctx $'(flags $ctx $url) --yes --no-smoke'
     }
     assert equal ($r.value.value.installed | length) 1 $'installed: ($r.value.output)'
-    assert equal ($r.value.value.plugins | get action) [failed] 'the plugin is reported'
+    assert equal ($r.value.value.plugins | get $.action) [failed] 'the plugin is reported'
     assert equal (registered $ctx) $before 'and left registered'
   }
 }
@@ -1137,7 +1137,7 @@ def "test bump nu installs after confirmation" []: nothing -> nothing {
       run-bump $ctx (flags $ctx $url) --pty ['\[y/N\]' 'y\r']
     }
     assert ($r.value.output =~ 'install nu-.* \(1 binaries\) into') $'the prompt: ($r.value.output)'
-    assert ($ctx | bin-dir | path join nu | path exists) $'installed: ($r.value | reject output)'
+    assert ($ctx | bin-dir | path join nu | path exists) $'installed: ($r.value | reject $.output)'
   }
 }
 

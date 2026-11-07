@@ -83,13 +83,13 @@ def module-file-shorthand []: [
   $env.mods_refs?
   | default ($SHORT | reverse | build-mods-refs)
   | if $p == null { } else {
-    where ($p == $it.find or $p starts-with ($it.find | path join '')) | get 0?
+    where ($p == $it.find or $p starts-with ($it.find | path join '')) | first
   }
 }
 
 # Replace a path's prefix with its shorthand (`~`, `@` for mods_home, `$` for nupm modules).
 def shorten []: path -> path {
-  let p: path = $in
+  let p: path;
   match ($p | module-file-shorthand) {
     null => $p
     {find: $f replace: $r} => ($r + ($p | str substring ($f | str length)..))
@@ -102,7 +102,7 @@ def shorten []: path -> path {
 # registers the `use`/`hide` tracking hook once (re-`use` adds nothing).
 export-env {
   if $env.mods_home!? == null {
-    let home: oneof<nothing, path> = $env.NU_LIB_DIRS? | default [] | where ($it | path exists) | get 0?
+    let home: oneof<nothing, path> = $env.NU_LIB_DIRS? | default [] | where ($it | path exists) | first
     if $home != null { $env.mods_home = $home }
   }
   if $env.mods_refs!? == null { $env.mods_refs = module-file-shorthand }
@@ -257,7 +257,7 @@ export def --env list [
       if $in ends-with mod.nu { path dirname } else { }
       | if $absolute { } else { shorten }
     } | reject --optional $.module.extra_description
-    | if $commands { flatten module } else { get module | rename --column={file: location} }
+    | if $commands { flatten module } else { get $.module | rename --column={file: location} }
   } | if $name != null { first } else { sort }
 }
 
@@ -287,7 +287,7 @@ export def --env main [
   record -> oneof<path, list<path>>
   closure -> path
 ] {
-  let input: any = $in
+  let input: any;
   list --update --short | ignore
   match ($input | describe | str replace --regex '<.*' '') {
     closure if $name == null => {
@@ -304,12 +304,12 @@ export def --env main [
     }
     record => {
       let m: record = $input
-        | default $name name
-        | default false overwrite
-        | default { error raise 'module definition is required' --kind invalid_argument } definition
+        | default $name $.name
+        | default false $.overwrite
+        | default { error raise 'module definition is required' --kind invalid_argument } $.definition
         | default {
           error raise 'name is required when defining a new module' --kind invalid_argument
-        } name
+        } $.name
       define $m.name $m.definition --directory=$m.directory? --overwrite=$m.overwrite
     }
     $t => {

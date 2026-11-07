@@ -52,7 +52,7 @@ export def upgrade [
   --silent (-s) # Do not return the results record after completion
   --system # Include the system package manager (needs a sudo prompt, so not with `--async`)
 ]: oneof<record, nothing> -> oneof<record, nothing> {
-  let input: oneof<nothing, record> = $in
+  let input: oneof<nothing, record>;
   if $async {
     if $system {
       error raise '`--system` cannot run in the background' --with={
@@ -99,7 +99,7 @@ export def upgrade [
     } | into record
     | if $in has cargo { merge (restore-nightly) } else { }
     | try {
-      let res: record = $in
+      let res: record;
       mkdir $nu.cache-dir
       $res | save --force $LOG.upgrade
       if not $silent { $res }
@@ -113,7 +113,7 @@ export def upgrade [
 # build over it): `{nu: [{output success}]}` with the bump's outcome, or `{}` while the installed `nu` is a nightly.
 # The installed binary is asked, not the running one: the running shell is still the nightly that was overwritten.
 def restore-nightly []: nothing -> record {
-  let installed: string = try { ^$nu.current-exe --version | complete | get stdout | str trim } catch { '' }
+  let installed: string = try { ^$nu.current-exe --version | complete | get $.stdout | str trim } catch { '' }
   if $installed =~ nightly { return {} }
   let stable: string = if $installed == '' { 'a nu that does not run' } else { $'nu ($installed)' }
   let outcome: record = try {
@@ -222,9 +222,9 @@ def _apt [buffer: string]: nothing -> oneof<list, table> {
 
 def _plugin-names []: nothing -> table {
   plugin list
-  | select name filename version
-  | insert description {|row|
+  | select $.name $.filename $.version
+  | insert $.description {|row|
     $'[($row.version)] ($row.filename)'
   } | rename --column={name: value}
-  | select value description
+  | select $.value $.description
 }

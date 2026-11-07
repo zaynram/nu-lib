@@ -113,7 +113,7 @@ export def --env sync [
 
 # Whether the cached focus must be recomputed: none yet, or its HEAD file names another branch.
 def is-stale-focus []: oneof<nothing, record> -> bool {
-  let focus: oneof<nothing, record> = $in
+  let focus: oneof<nothing, record>;
   if $focus == null or $focus not-has root { return true }
   $focus.root != null and (try { read-branch $focus.head } catch { null }) != $focus.branch
 }
@@ -121,7 +121,7 @@ def is-stale-focus []: oneof<nothing, record> -> bool {
 # Whether the input path is `root` or inside it (false when `root` is null).
 # nu-lint-ignore: unused_helper_functions
 def is-within [root: oneof<nothing, path>]: path -> bool {
-  let p: path = $in
+  let p: path;
   $root != null and ($p == $root or ($p | str starts-with ($root | path join '')))
 }
 

@@ -105,7 +105,7 @@ def override-path [file: oneof<nothing, path>]: nothing -> oneof<nothing, path> 
 # include path and `NU_MACHINE_CONFIG` empty (so a script may `use conf` without loading itself again):
 # `run <file> | to nuon`, whose stdout is the record and whose stderr is passed on.
 def load [file: path]: nothing -> record {
-  let value: any = match ($file | path parse | get extension) {
+  let value: any = match ($file | path parse | get $.extension) {
     nuon => {
       try { open $file } catch {|e|
         $e | error raise $"'($file)' is not valid nuon" --kind invalid_argument
@@ -158,7 +158,7 @@ def override-record [file: path --no-cache]: nothing -> record<value: record, ca
   let cached: any = if $no_cache { null } else { try { open $CACHE } catch { null } }
   let hit: bool = if ($cached | describe) =~ '^record' and $cached.key? == $key {
     # A static file is its own record; a script's record is trusted for a day.
-    ($file | path parse | get extension) == 'nuon' or (($cached.at? | describe) == 'datetime' and (date now) - $cached.at < $CACHE_TTL)
+    ($file | path parse | get $.extension) == 'nuon' or (($cached.at? | describe) == 'datetime' and (date now) - $cached.at < $CACHE_TTL)
   } else { false }
   if $hit { return {value: $cached.value cache: hit} }
   let value: record = load $file | check $file
@@ -269,7 +269,7 @@ def main [
   }
   $DEFAULT
   | get $mode
-  | if $mode == vendor { update binaries (if $os == windows { $WINDOWS_APPS } else { '/usr/bin' }) } else { }
+  | if $mode == vendor { update $.binaries (if $os == windows { $WINDOWS_APPS } else { '/usr/bin' }) } else { }
   | merge deep --strategy=$strategy ($override | get --optional $mode | default {})
   | merge deep --strategy=$strategy ($with | get --optional $mode | default {})
   | record each {|key value| {$key: (if ($value | describe) =~ '^list' { $value | uniq } else { $value })} }

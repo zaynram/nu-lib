@@ -9,7 +9,7 @@ use ../mod.nu *
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 # Write an executable shell script `name` with `body` into `dir`.
-def stub [dir: path, name: path, body: string]: nothing -> path {
+def stub [dir: path name: path body: string]: nothing -> path {
   need-posix
   let file: path = $dir | path join $name
   $"#!/bin/sh\n($body)\n" | save --force $file
@@ -186,7 +186,7 @@ def "test zellij focuses an existing editor pane first" []: nothing -> nothing {
       {id: 4 is_plugin: false is_suppressed: false title: 'Editing: x, ...'}
     ] | to json | save --force $t.panes
     with-env {ZELLIJ: '0'} { edit top.txt }
-    assert equal (zellij-calls $t.log | get 1) 'action focus-pane-id terminal_4' 'skips plugin and suppressed panes'
+    assert equal (zellij-calls $t.log | get $.1) 'action focus-pane-id terminal_4' 'skips plugin and suppressed panes'
   }
 }
 
@@ -195,7 +195,7 @@ def "test zellij recognises a pane running the editor" []: nothing -> nothing {
     [{id: 7 is_plugin: false is_suppressed: false title: work pane_command: 'editor notes.md'}]
     | to json | save --force $t.panes
     with-env {ZELLIJ: '0'} { edit top.txt }
-    assert equal (zellij-calls $t.log | get 1) 'action focus-pane-id terminal_7' 'matched by command'
+    assert equal (zellij-calls $t.log | get $.1) 'action focus-pane-id terminal_7' 'matched by command'
   }
 }
 
@@ -208,6 +208,6 @@ def "test zellij matches the editor by program, not by substring" []: nothing ->
       {id: 8 is_plugin: false is_suppressed: false title: work pane_command: '/usr/bin/vi notes.md'}
     ] | to json | save --force $t.panes
     with-env {ZELLIJ: '0'} { edit top.txt }
-    assert equal (zellij-calls $t.log | get 1) 'action focus-pane-id terminal_8' '`vi` is not running in `vite dev`; a full program path counts'
+    assert equal (zellij-calls $t.log | get $.1) 'action focus-pane-id terminal_8' '`vi` is not running in `vite dev`; a full program path counts'
   }
 }

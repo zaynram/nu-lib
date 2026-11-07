@@ -35,7 +35,7 @@ export def status []: nothing -> record<state: string, spawned: oneof<datetime, 
   | first
   | parse --regex '^Active: (?<state>.+?)(?: since (?<spawned>[^;]+)(?:;.*)?)?$'
   | first
-  | update spawned {|row|
+  | update $.spawned {|row|
     if ($row.spawned | is-empty) { null } else { try { $row.spawned | into datetime } catch { $row.spawned } }
   }
 }
@@ -50,7 +50,7 @@ export def serve []: nothing -> record {
   let dir: path = home
   let id: int = job spawn --description='ipex-llm-ollama_serve' { cd $dir; ^bash start-ollama.sh out+err>| job send 0 }
   print $'server started; its output arrives with `job recv` when it exits'
-  job list | where id == $id | get --optional 0 | default {id: $id description: 'ipex-llm-ollama_serve'}
+  job list | where id == $id | first | default {id: $id description: 'ipex-llm-ollama_serve'}
 }
 
 # ——— environment ——————————————————————————————————————————————————————————————

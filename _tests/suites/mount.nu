@@ -8,7 +8,7 @@ use ../mod.nu *
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 # Write an executable shell script `name` with `body` into `dir`.
-def stub [dir: path, name: path, body: string]: nothing -> path {
+def stub [dir: path name: path body: string]: nothing -> path {
   need-posix
   let file: path = $dir | path join $name
   $"#!/bin/sh\n($body)\n" | save --force $file
@@ -21,7 +21,7 @@ const REMOTE: record = {user: u0_a1 ipv4: 10.0.0.2 auth: /keys/id port: 8022}
 # Run `body` with logging stubs of the mount programs first on PATH (`--mounted` adds a `mountpoint` stub that
 # reports every path as mounted; `--sshfs` sets the stub sshfs's body). The closure receives {ctx, dir, log}:
 # `dir` is an empty directory to mount on.
-def with-stubs [body: closure, --mounted, --sshfs: string = 'exit 0']: nothing -> nothing {
+def with-stubs [body: closure --mounted --sshfs: string = 'exit 0']: nothing -> nothing {
   if $nu.os-info.name != linux { skip 'mount points are checked with Linux tools' }
   with-sandbox {|ctx|
     let stubs: path = $ctx.code | path join stubs
@@ -33,7 +33,7 @@ def with-stubs [body: closure, --mounted, --sshfs: string = 'exit 0']: nothing -
     if $mounted { stub $stubs mountpoint 'exit 0' | ignore }
     with-env {PATH: ($env.PATH | prepend $stubs)} {
       for p in [umount fusermount3 mount sshfs] {
-        let found: string = which --all $p | where type == external | get 0.path
+        let found: string = which --all $p | where type == external | get $.0.path
         assert equal $found ($stubs | path join $p) $"the stub ($p) shadows the real one"
       }
       if (which mountpoint findmnt | is-empty) { skip 'neither mountpoint nor findmnt is installed' }
@@ -49,7 +49,7 @@ def calls [log: path]: nothing -> list<string> {
 # ——— surface ——————————————————————————————————————————————————————————————————
 
 def "test every command carries a category" []: nothing -> nothing {
-  let missing = scope commands | where name =~ '^mount( |$)' and category == '' | get name
+  let missing = scope commands | where name =~ '^mount( |$)' and category == '' | get $.name
   assert equal $missing [] 'commands without @category'
 }
 

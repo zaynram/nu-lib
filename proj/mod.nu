@@ -194,7 +194,7 @@ export def kind [
       name: $kind
       root: (workspace | path join $kind)
       description: ($KIND | get $kind)
-      projects: (rows-of $kind | each {|p| $p | insert kind $kind })
+      projects: (rows-of $kind | each {|p| $p | insert $.kind $kind })
     }
     nothing if not $all => {
       error raise 'a kind must be provided without `--all`' --kind invalid_argument
@@ -222,11 +222,11 @@ export def meta [key?: string@_meta_keys]: nothing -> oneof<nothing, string, int
   }
   let counts: record = $KIND | columns | each {|k| {$"($k)_count": ($snap | rows-of-snapshot $k | length)} } | into record
   let all: record = $counts
-    | insert total_count ($counts | values | math sum)
-    | insert last_scan $snap.last_scan
-    | insert stamp ($snap.stamp | insert age ((date now) - $snap.stamp.at))
-    | insert hydrating (is-hydrating)
-    | merge ($snap | select --optional pruned_at | record where value != null)
+    | insert $.total_count ($counts | values | math sum)
+    | insert $.last_scan $snap.last_scan
+    | insert $.stamp ($snap.stamp | insert $.age ((date now) - $snap.stamp.at))
+    | insert $.hydrating (is-hydrating)
+    | merge ($snap | select --optional $.pruned_at | record where value != null)
   if $key == null { $all } else { $all | get --optional $key }
 }
 
@@ -239,7 +239,7 @@ export def list [
 ]: nothing -> list<ProjectInfo> {
   let snap: oneof<nothing, record> = snapshot-for-reading
   $KIND | columns
-  | each --flatten {|k| $snap | rows-of-snapshot $k | each {|p| $p | insert kind $k } }
+  | each --flatten {|k| $snap | rows-of-snapshot $k | each {|p| $p | insert $.kind $k } }
   | if $env.project_testing!? != null { append (fixture-rows) } else { }
   | if $kind == null { } else { where kind == $kind }
   | if $long { } else { reject $.kind }
@@ -326,7 +326,7 @@ def snapshot-for-reading []: nothing -> oneof<nothing, record> {
 }
 
 def write-snapshot []: record -> nothing {
-  let snap: record = $in
+  let snap: record;
   set-meta snapshot $snap | ignore
 }
 
@@ -341,7 +341,7 @@ def rows-of [kind: string]: nothing -> list<record> { snapshot-for-reading | row
 # The projects registered by the `test` fixture, with its kind.
 def fixture-rows []: nothing -> list<record> {
   let kind: string = $env.project_testing.kind
-  kv list --universal --table=$env.project_testing.table | get $.value? | compact | each {|p| $p | insert kind $kind }
+  kv list --universal --table=$env.project_testing.table | get $.value? | compact | each {|p| $p | insert $.kind $kind }
 }
 
 # The stamp of a snapshot taken now: when, and the fingerprint of the kind directories.
@@ -386,15 +386,15 @@ def hydrate []: nothing -> nothing { # nu-lint-ignore: unused_helper_functions
 # Rename the projects whose directory has an alias in `$env.project_aliases!` (by absolute path first, then by
 # directory name, as on intake); a project already registered under the alias name wins.
 def apply-aliases []: record -> record {
-  let kinds: record = $in
+  let kinds: record;
   let map: record = $env.project_aliases!? | default {}
   if $map == {} { return $kinds }
   $kinds | record each {|kind rows|
-    let named: list<record> = $rows | each {|r| $r | insert alias ($map | alias-for $r.path | default $r.name) }
-    let kept: list<record> = $named | where alias == $it.name | each {|r| $r | reject alias }
+    let named: list<record> = $rows | each {|r| $r | insert $.alias ($map | alias-for $r.path | default $r.name) }
+    let kept: list<record> = $named | where alias == $it.name | each {|r| $r | reject $.alias }
     let moved: list<record> = $named
       | where alias != $it.name and alias not-in ($kept | each {|r| $r.name })
-      | each {|r| $r | update name $r.alias | reject alias }
+      | each {|r| $r | update $.name $r.alias | reject $.alias }
     {$kind: ($kept | append $moved)}
   }
 }
@@ -410,7 +410,7 @@ def intake-kind [
   kind: string # The kind being scanned
   --known: list<record> = [] # Its registered projects, kept as they are
 ]: list<path> -> record<kind: string, rows: list<record>, found: int, added: int> {
-  let roots: list<path> = $in
+  let roots: list<path>;
   let map: record = $env.project_aliases!? | default {}
   let names: list<string> = $known | each {|r| $r.name }
   let new: list<record> = $roots
@@ -457,7 +457,7 @@ def prune-missing-dirs []: nothing -> int {
   let kinds: record = $snap.kinds | record each {|k rows| {$k: ($rows | where ($it.path | path exists))} }
   let removed: int = ($snap.kinds | count) - ($kinds | count)
   # The stamp stays: it names the directory state the rows were computed from, and nothing was inspected here.
-  $snap | update kinds $kinds | upsert pruned_at (date now) | write-snapshot
+  $snap | update $.kinds $kinds | upsert $.pruned_at (date now) | write-snapshot
   $removed
 }
 

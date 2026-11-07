@@ -24,7 +24,7 @@ export def contains [
 @example 'a datetime' { (2020-01-02T03:04:05Z) | timestamp } --result '2020-01-02T03:04:05+00:00'
 @example 'an ISO string' { '2020-01-02T03:04:05+02:00' | timestamp } --result '2020-01-02T03:04:05+02:00'
 export def timestamp []: oneof<nothing, string, datetime> -> string {
-  let input: any = $in
+  let input: any;
   match ($input | describe) {
     nothing => (date now)
     string => (try { $input | into datetime } catch { $input | date from-human })

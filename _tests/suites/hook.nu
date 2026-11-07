@@ -40,13 +40,13 @@ def "test import leaves the list and record defaults in place" []: nothing -> no
 
 def "test main returns the hooks of a type" []: nothing -> nothing {
   assert equal (hook pre_prompt | length) 2 'both pre_prompt hooks'
-  assert equal (hook pre_prompt 1 | get name) named 'by index'
+  assert equal (hook pre_prompt 1 | get $.name) named 'by index'
   assert equal (hook pre_prompt 9) null 'an index out of range is null'
 }
 
 def "test main accepts a dotted text target" []: nothing -> nothing {
-  assert equal (hook env_change.PWD | get name) [pwd] 'env_change.PWD as text (H2)'
-  assert equal (hook $.env_change.PWD 0 | get name) pwd 'and as a cell-path'
+  assert equal (hook env_change.PWD | get $.name) [pwd] 'env_change.PWD as text (H2)'
+  assert equal (hook $.env_change.PWD 0 | get $.name) pwd 'and as a cell-path'
 }
 
 def "test main raises for an unknown type" []: nothing -> nothing {
@@ -88,7 +88,7 @@ def "test with modifies the hook only inside the closure" []: nothing -> nothing
 }
 
 def "test with by reference" []: nothing -> nothing {
-  let inside = hook with --hook=$.pre_prompt.1 {disabled: true extra: 1} {|| hook pre_prompt 1 | select disabled extra }
+  let inside = hook with --hook=$.pre_prompt.1 {disabled: true extra: 1} {|| hook pre_prompt 1 | select $.disabled $.extra }
   assert equal $inside {disabled: true extra: 1} 'any record is merged'
   assert equal (hook pre_prompt 1 | columns) [name code] 'unchanged afterwards'
 }
@@ -144,9 +144,9 @@ def "test reference finds named and unnamed hooks" []: nothing -> nothing {
 
 def "test show serializes closures" []: nothing -> nothing {
   let h = hook show $.pre_prompt.0
-  assert equal ($h | select name code disabled ref) {name: 'pre_prompt[0]' code: "{|| 'plain' }" disabled: false ref: $.pre_prompt.0} 'the flattened hook'
+  assert equal ($h | select $.name $.code $.disabled $.ref) {name: 'pre_prompt[0]' code: "{|| 'plain' }" disabled: false ref: $.pre_prompt.0} 'the flattened hook'
   assert equal $h.condition '{|| is-enabled $ref }' 'an unnamed closure gets an is-enabled condition'
-  assert equal (hook show $.pre_prompt.0 --raw | get code | describe) closure '--raw keeps the closure'
+  assert equal (hook show $.pre_prompt.0 --raw | get $.code | describe) closure '--raw keeps the closure'
 }
 
 def "test show selects a cell and defaults" []: nothing -> nothing {
@@ -157,29 +157,29 @@ def "test show selects a cell and defaults" []: nothing -> nothing {
   let e = caught { hook show $.pre_prompt.9 --strict }
   assert equal $e.msg "no hook at '$.pre_prompt.9'" 'strict raises'
   assert equal $e.code 'hook::show::not_found' 'the derived code'
-  assert equal ($e.labels | get text) [reference] 'the reference is labelled'
+  assert equal ($e.labels | get $.text) [reference] 'the reference is labelled'
 }
 
 def "test list flattens the enabled hooks" []: nothing -> nothing {
-  let names: list<string> = hook list | get name
+  let names: list<string> = hook list | get $.name
   assert equal $names ['pre_prompt[0]' named pwd display_output] 'every type, the disabled one left out'
-  assert equal (hook list | where name == pwd | get ref) [$.env_change.PWD.0] 'with references'
+  assert equal (hook list | where name == pwd | get $.ref) [$.env_change.PWD.0] 'with references'
 }
 
 def "test list by name includes disabled hooks" []: nothing -> nothing {
-  assert equal (hook list off named | get name | sort) [named off] 'named hooks, disabled or not'
+  assert equal (hook list off named | get $.name | sort) [named off] 'named hooks, disabled or not'
   assert equal (hook list nope) [] 'nothing for an unknown name'
   let e = caught { hook list nope other --strict }
   assert equal $e.msg "no hook named 'nope', 'other'" 'unless --strict: every name is listed'
   assert equal $e.code 'hook::list::not_found' 'the derived code'
-  assert equal ($e.labels | get text) ['name(s)'] 'the names are labelled'
+  assert equal ($e.labels | get $.text) ['name(s)'] 'the names are labelled'
 }
 
 # ——— edit, del ————————————————————————————————————————————————————————————————
 
 def "test edit update merges a record" []: nothing -> nothing {
   let h = hook edit $.pre_prompt.1 --update {disabled: true}
-  assert equal ($h | select name disabled) {name: named disabled: true} 'returns the edited hook'
+  assert equal ($h | select $.name $.disabled) {name: named disabled: true} 'returns the edited hook'
   assert not (hook is-enabled --name=named) 'and stores it'
 }
 
@@ -201,7 +201,7 @@ def "test edit overwrite stores text and records" []: nothing -> nothing {
   hook edit $.pre_prompt.0 --overwrite 'print hi' | ignore
   assert equal (hook pre_prompt 0) 'print hi' 'text'
   hook edit $.pre_prompt.0 --overwrite {condition: {|| false } code: 'x'} | ignore
-  assert equal (hook pre_prompt 0 | get code) x 'a record'
+  assert equal (hook pre_prompt 0 | get $.code) x 'a record'
 }
 
 def "test edit errors" []: nothing -> nothing {
@@ -221,7 +221,7 @@ def "test edit update refuses a single valued hook" []: nothing -> nothing {
   assert str contains $e.help '--overwrite' 'the advice names the remedy'
   hook add $.command_not_found {|cmd| null }
   assert equal (caught { hook edit $.command_not_found --update {disabled: true} }).code 'hook::edit::invalid_argument' 'command_not_found too'
-  assert equal (hook list | get name) ['pre_prompt[0]' named pwd display_output command_not_found] 'both are untouched and still listable'
+  assert equal (hook list | get $.name) ['pre_prompt[0]' named pwd display_output command_not_found] 'both are untouched and still listable'
 }
 
 def "test edit refuses a hook list" []: nothing -> nothing {
@@ -232,14 +232,14 @@ def "test edit refuses a hook list" []: nothing -> nothing {
     assert str contains $e.help '$.pre_prompt.0' 'the advice shows an entry reference'
     assert equal (caught { hook edit $ref --overwrite {|| 1 } }).code 'hook::edit::invalid_argument' 'overwrite too'
   }
-  assert equal (hook list | get name) ['pre_prompt[0]' named pwd display_output] 'nothing changed'
+  assert equal (hook list | get $.name) ['pre_prompt[0]' named pwd display_output] 'nothing changed'
 }
 
 def "test with refuses a hook list" []: nothing -> nothing {
   for ref in [$.pre_prompt $.env_change.PWD] {
     assert equal (caught { hook with --hook=$ref {disabled: true} {|| 'ran' } }).code 'hook::edit::invalid_argument' $'the edit raises before the closure runs: ($ref)'
   }
-  assert equal (hook list | get name) ['pre_prompt[0]' named pwd display_output] 'nothing changed'
+  assert equal (hook list | get $.name) ['pre_prompt[0]' named pwd display_output] 'nothing changed'
 }
 
 def "test edit overwrite replaces a single valued hook" []: nothing -> nothing {
@@ -251,7 +251,7 @@ def "test edit overwrite replaces a single valued hook" []: nothing -> nothing {
 
 def "test del removes a hook" []: nothing -> nothing {
   assert (hook del $.pre_prompt.0) 'removed'
-  assert equal (hook pre_prompt | get name) [named] 'the other one remains'
+  assert equal (hook pre_prompt | get $.name) [named] 'the other one remains'
   assert not (hook del $.pre_prompt.9) 'nothing to remove'
 }
 
@@ -278,7 +278,7 @@ def "test test raises without code or condition" []: nothing -> nothing {
   let code = caught { hook test $.pre_prompt.9 }
   assert equal $code.msg "no hook code at '$.pre_prompt.9'" 'missing code'
   assert equal $code.code 'hook::test::not_found' 'the derived code'
-  assert equal ($code.labels | get text) [reference] 'the reference is labelled'
+  assert equal ($code.labels | get $.text) [reference] 'the reference is labelled'
   let cond = caught { hook test $.pre_prompt.1 --condition }
   assert equal $cond.msg "no hook condition at '$.pre_prompt.1'" 'missing condition'
 }
@@ -298,7 +298,7 @@ def "test add inserts at an index" []: nothing -> nothing {
 
 def "test add takes a piped list" []: nothing -> nothing {
   [{name: a code: {|| 1 }} {name: b code: {|| 2 }}] | hook add $.pre_execution {name: c code: {|| 3 }}
-  assert equal (hook pre_execution | get name) [off a b c] 'input first, then the value'
+  assert equal (hook pre_execution | get $.name) [off a b c] 'input first, then the value'
 }
 
 def "test add without a value does nothing" []: nothing -> nothing {

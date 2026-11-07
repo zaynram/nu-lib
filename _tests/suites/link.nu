@@ -8,7 +8,7 @@ use ../mod.nu *
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 # Write an executable shell script `name` with `body` into `dir`.
-def stub [dir: path, name: path, body: string]: nothing -> path {
+def stub [dir: path name: path body: string]: nothing -> path {
   need-posix
   let file: path = $dir | path join $name
   $"#!/bin/sh\n($body)\n" | save --force $file
@@ -20,7 +20,7 @@ def stub [dir: path, name: path, body: string]: nothing -> path {
 #
 # The closure receives {ctx, bin, log}: `bin` is a PATH directory for source binaries, `log` the file that
 # collects one line of arguments per `sudo` call.
-def with-stub-sudo [body: closure, --code: int = 0, --output: string = '']: nothing -> nothing {
+def with-stub-sudo [body: closure --code: int = 0 --output: string = '']: nothing -> nothing {
   if $nu.os-info.name != linux { skip 'the link path is Linux-specific' }
   with-sandbox {|ctx|
     let stubs: path = $ctx.code | path join stubs
@@ -29,7 +29,7 @@ def with-stub-sudo [body: closure, --code: int = 0, --output: string = '']: noth
     mkdir $stubs $bin
     stub $stubs sudo $"printf '%s\\n' \"$*\" >> '($log)'\nprintf '%s' '($output)'\nexit ($code)" | ignore
     with-env {PATH: ($env.PATH | prepend [$stubs $bin])} {
-      assert equal (which sudo | get 0.path) ($stubs | path join sudo) 'the stub sudo shadows the real one'
+      assert equal (which sudo | get $.0.path) ($stubs | path join sudo) 'the stub sudo shadows the real one'
       do $body {ctx: $ctx bin: $bin log: $log}
     }
   } | ignore
@@ -68,7 +68,7 @@ def "test links the first external on PATH into usr bin" []: nothing -> nothing 
 
 def "test an existing resolving link is returned unchanged" []: nothing -> nothing {
   with-stub-sudo {|t|
-    let found: list<string> = ls /usr/bin | where type == symlink and ($it.name | path exists) | get name
+    let found: list<string> = ls /usr/bin | where type == symlink and ($it.name | path exists) | get $.name
     if ($found | is-empty) { skip 'no resolving symlink in /usr/bin' }
     let name: string = $found | first | path basename
     assert equal (link bin $name) $"/usr/bin/($name)" 'returns the existing link'
@@ -78,7 +78,7 @@ def "test an existing resolving link is returned unchanged" []: nothing -> nothi
 
 def "test a dangling link is removed before linking" []: nothing -> nothing {
   with-stub-sudo {|t|
-    let found: list<string> = ls /usr/bin | where type == symlink and not ($it.name | path exists) | get name
+    let found: list<string> = ls /usr/bin | where type == symlink and not ($it.name | path exists) | get $.name
     if ($found | is-empty) { skip 'no dangling symlink in /usr/bin' }
     let name: string = $found | first | path basename
     let source: path = stub $t.bin $name 'exit 0'
@@ -89,7 +89,7 @@ def "test a dangling link is removed before linking" []: nothing -> nothing {
 
 def "test a regular file at the link path is an error" []: nothing -> nothing {
   with-stub-sudo {|t|
-    let found: list<string> = ls /usr/bin | where type == file and ($it.name | path basename) =~ '^[a-z][a-z0-9_-]+$' | get name
+    let found: list<string> = ls /usr/bin | where type == file and ($it.name | path basename) =~ '^[a-z][a-z0-9_-]+$' | get $.name
     if ($found | is-empty) { skip 'no regular file in /usr/bin' }
     let name: string = $found | first | path basename
     stub $t.bin $name 'exit 0' | ignore

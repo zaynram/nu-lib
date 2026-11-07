@@ -60,16 +60,16 @@ def task-json [...contents: string]: nothing -> string {
 # ——— registration —————————————————————————————————————————————————————————————
 
 def "test import registers the named hooks once" []: record -> nothing {
-  let t = $in
+  let t: record;
   with-sandbox {|ctx|
     let hooks = sandboxed $ctx 'use track; use track; $env.config.hooks | to nuon --serialize' --pipe
-    assert equal ($hooks.pre_execution | get name) ['track::sync'] 'one pre_execution hook named track::sync (T4)'
-    assert equal ($hooks.env_change.PWD | get name) ['track::focus'] 'one env_change.PWD hook named track::focus'
+    assert equal ($hooks.pre_execution | get $.name) ['track::sync'] 'one pre_execution hook named track::sync (T4)'
+    assert equal ($hooks.env_change.PWD | get $.name) ['track::focus'] 'one env_change.PWD hook named track::focus'
   }
 }
 
 def "test a disabled hook is not added again" []: record -> nothing {
-  let t = $in
+  let t: record;
   with-sandbox {|ctx|
     let code = 'use hook; hook edit (hook reference track::sync) --update {disabled: true} | ignore; use track; $env.config.hooks.pre_execution | to nuon --serialize'
     let hooks = sandboxed $ctx $code --prelude 'use track' --pipe
@@ -106,17 +106,17 @@ def "test the pwd hook honours its disabled flag" []: nothing -> nothing {
 # ——— focus ————————————————————————————————————————————————————————————————————
 
 def "test focus in a repository" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   let f = track focus --refresh
-  assert equal ($f | select root repo branch task) {root: $t.repo repo: $t.name branch: $BRANCH task: null} 'focus in a repository without a matching task'
+  assert equal ($f | select $.root $.repo $.branch $.task) {root: $t.repo repo: $t.name branch: $BRANCH task: null} 'focus in a repository without a matching task'
   assert equal $f.head ($t.repo | path join .git HEAD) 'the HEAD file'
   assert equal $f.tags [$'#($t.name)' $BRANCH] 'tags fall back to the branch'
   assert equal (track focus) $f 'cached focus'
 }
 
 def "test focus is kept per shell" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   let f = track focus --refresh
   assert equal $env.TRACK $f 'cached in $env.TRACK (T5)'
@@ -128,25 +128,25 @@ def "test focus without a refresh is null in a new shell" []: nothing -> nothing
 }
 
 def "test focus on a detached head uses the short hash" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   let sha: string = ^git rev-parse HEAD | str trim
   ^git switch -q --detach HEAD
-  assert equal (track focus --refresh | get branch) ($sha | str substring 0..<8) 'eight characters of the commit'
+  assert equal (track focus --refresh | get $.branch) ($sha | str substring 0..<8) 'eight characters of the commit'
 }
 
 def "test focus outside a repository" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   track focus --refresh | ignore
   cd $t.dir
   let f = track focus --refresh
-  assert equal ($f | reject matches) {root: null} 'only root, set to null (T6)'
+  assert equal ($f | reject $.matches) {root: null} 'only root, set to null (T6)'
   assert equal ($f.matches | columns) [$'($t.name)@($BRANCH)'] 'the match cache survives'
 }
 
 def "test focus tags the matched task" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   $env.TD_TASKS = task-json hooks-placement unrelated-work
   let f = track focus --refresh
@@ -156,7 +156,7 @@ def "test focus tags the matched task" []: record -> nothing {
 }
 
 def "test focus caches matches for an hour" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   track focus --refresh | ignore
   track focus --refresh | ignore
@@ -168,7 +168,7 @@ def "test focus caches matches for an hour" []: record -> nothing {
 }
 
 def "test focus keeps the stamp of a cached match" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   track focus --refresh | ignore
   let key: string = $'($t.name)@($BRANCH)'
@@ -180,7 +180,7 @@ def "test focus keeps the stamp of a cached match" []: record -> nothing {
 }
 
 def "test focus refresh re-enables tracking" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   kv set --universal --table=track disabled true
   track focus --refresh | ignore
@@ -190,73 +190,73 @@ def "test focus refresh re-enables tracking" []: record -> nothing {
 # ——— sync —————————————————————————————————————————————————————————————————————
 
 def "test sync starts and re-focuses on checkout" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   let f = track focus --refresh
   track sync
-  assert equal (time active | get tags) $f.tags 'sync starts the interval'
+  assert equal (time active | get $.tags) $f.tags 'sync starts the interval'
   track sync
   assert equal (time list | length) 1 'same focus does not restart'
   sleep 1100ms # timew drops zero-length intervals, so let the first one age past a second
   ^git -C $t.repo switch -q -c feat/other
   track sync
-  assert equal (time active | get tags) [$'#($t.name)' feat/other] 'checkout re-focuses on the next command (T1)'
+  assert equal (time active | get $.tags) [$'#($t.name)' feat/other] 'checkout re-focuses on the next command (T1)'
   assert equal (time list | length) 2 'checkout starts a new interval'
 }
 
 def "test sync without a focus refreshes it first" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   track sync
   assert equal $env.TRACK.repo $t.name 'focus computed by sync'
-  assert equal (time active | get tags) [$'#($t.name)' $BRANCH] 'and tracked'
+  assert equal (time active | get $.tags) [$'#($t.name)' $BRANCH] 'and tracked'
 }
 
 def "test sync restarts when the open interval has other tags" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   time start --at=((date now) - 1hr) elsewhere | ignore
   track sync
-  assert equal (time active | get tags) [$'#($t.name)' $BRANCH] 'the focus wins'
+  assert equal (time active | get $.tags) [$'#($t.name)' $BRANCH] 'the focus wins'
   assert equal (time list | length) 2 'the other interval is closed, not replaced'
 }
 
 def "test idle gap closes the abandoned interval" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   track focus --refresh | ignore
   track sync
   sleep 1100ms
   track sync # advances the stamp past the interval start
-  let stamped: datetime = ls (time db | path join track.stamp) | first | get modified
+  let stamped: datetime = ls (time db | path join track.stamp) | first | get $.modified
   sleep 2200ms
   track sync --idle=2sec
   assert equal (time list | length) 2 'idle gap closes the abandoned interval and starts a new one'
-  assert (((time list | where end != null | last | get end) - $stamped | math abs) < 1sec) 'abandoned interval ends at the stamp'
-  assert equal (time active | get tags) [$'#($t.name)' $BRANCH] 'new interval keeps the focus tags'
+  assert (((time list | where end != null | last | get $.end) - $stamped | math abs) < 1sec) 'abandoned interval ends at the stamp'
+  assert equal (time active | get $.tags) [$'#($t.name)' $BRANCH] 'new interval keeps the focus tags'
 }
 
 def "test sync touches the stamp" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   track sync
   assert (time db | path join track.stamp | path exists) 'the stamp exists in the database root'
 }
 
 def "test outside a repository nothing changes" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   track focus --refresh | ignore
   track sync
   cd $t.dir
-  assert equal (track focus --refresh | get root) null 'outside a repository'
+  assert equal (track focus --refresh | get $.root) null 'outside a repository'
   track sync
   assert equal (time list | length) 1 'the last focus keeps accruing'
-  assert equal (time active | get tags) [$'#($t.name)' $BRANCH] 'with its tags'
+  assert equal (time active | get $.tags) [$'#($t.name)' $BRANCH] 'with its tags'
 }
 
 def "test outside a repository sync does not ask git again" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   cd $t.dir
   track focus --refresh | ignore
@@ -272,7 +272,7 @@ def "test outside a repository sync does not ask git again" []: record -> nothin
 }
 
 def "test while disabled sync does nothing" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   track focus --refresh | ignore
   kv set --universal --table=track disabled true
@@ -280,11 +280,11 @@ def "test while disabled sync does nothing" []: record -> nothing {
   assert equal (time active) null 'no interval while disabled'
   track focus --refresh | ignore
   track sync
-  assert equal (time active | get tags) [$'#($t.name)' $BRANCH] 'tracking resumes after a refresh'
+  assert equal (time active | get $.tags) [$'#($t.name)' $BRANCH] 'tracking resumes after a refresh'
 }
 
 def "test a timew failure disables tracking everywhere with one line" []: record -> nothing {
-  let t = $in
+  let t: record;
   with-sandbox {|ctx|
     let db: path = $ctx.code | path join not-a-dir
     'x' | save $db
@@ -300,7 +300,7 @@ def "test a timew failure disables tracking everywhere with one line" []: record
 }
 
 def "test a deleted repository refreshes instead of failing" []: record -> nothing {
-  let t = $in
+  let t: record;
   enter $t
   track focus --refresh | ignore
   cd $t.dir

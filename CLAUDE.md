@@ -47,8 +47,24 @@ or a new external dependency.
   definitions/commands, environment, completions.
 - Every exported command has a one-line description comment, typed parameters with doc comments, and an explicit
   input/output signature. `@category` attributes group commands for `help`.
-- Cell paths are written with the `$.` prefix (`get $.name`, `insert $.role …`). The `!` suffix means
-  case-insensitive access and `?` means optional.
+- Cell-path arguments carry the `$.` prefix: `get $.name`, `select $.a $.b`, `reject --optional $.kind`,
+  `default null $.repo? $.vcs?`, `update $.size {…}`, `insert $.role x`, `upsert $.path y`. The `!` suffix means
+  case-insensitive access and `?` means optional. Row conditions are the exception (see Data shaping): there the
+  column is named bare.
+- `first`/`last` for the first or last element, never `get $.0?`, `get --optional $.0` or `last 1 | get $.0?`
+  (both return `null` on an empty list); a nested path keeps `get` (`get $.0?.path`).
+- A block's input reaches its **first statement** implicitly: `let x: T;` binds it (typed, no `= $in`), and a first
+  statement that starts with a command is piped into (`ls | do { let paths = get $.name | path expand; $paths }`).
+  `= $in` remains only when `$in` starts a multi-line pipeline (`let x: T = $in` then `| …` lines). Later
+  statements get no implicit input (`let x: T;` binds `null`, a leading command sees an empty pipeline); they reach
+  the block's input through `$in` (`ls | do { let max = date now | $in - 1day; $in | where modified < $max }`).
+- An `if` or `match` that is not the first statement and uses the input is written `$in | if ($in | …) { … }` /
+  `$in | match ($in | …) { … }` when binding it is unnecessary: on a later statement the condition may see the input
+  while the body's `$in` is empty (verified on 0.116.2-nightly.33: `if ($in | is-empty) { … } else { $in | length }`
+  answers 0 for a two-element input), and nightlies have been inconsistent here.
+- Signatures have no commas between parameters or between input/output entries (`[name: string --force]`,
+  `]: [nothing -> list string -> list]`); commas stay inside types (`record<a: int, b: int>`, `oneof<…>`).
+- A constant list longer than the line limit has one item per line.
 - Errors are raised with `error raise <message> [--kind <kind>] [--with {kind help code …}] [...labels]` from the
   `error` module; the code `<namespace>::<command>::<kind>` is derived from the raise site (`_docs/errors.md`).
   Write the message literal at the raise site (lowercase start, no trailing period, values in single quotes), pick a
@@ -101,6 +117,9 @@ or a new external dependency.
   - `into record` turns a list of `[key value]` pairs into a record. Given a table it *merges the rows* (union of
     columns, later rows win), which exists so a single-row table such as `"k=v" | parse "{key}={value}"` becomes a
     record; it is not a key/value conversion for `[[k v]; …]` tables.
+  - A key/value table (`kv list`, `parse '{key}={value}'`, `transpose key value`) becomes a record with
+    `transpose --ignore-titles --header-row --as-record`: 3.2 ms for 2,000 rows against 5.3 ms for
+    `each {|r| [$r.key $r.value] } | into record` (0.116.2-nightly.33). `record each` is the record-to-record map.
   - `rotate` is a matrix rotation for tables: on a record it puts values before keys (`rotate key value` labels
     them backwards) and `--ccw` reverses the order. Use `transpose` for records.
 - Predicates are row conditions, not closures: `where name =~ $re`, `where size? > 1kb`, `take until name == $x`,

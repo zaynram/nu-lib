@@ -111,7 +111,7 @@ def locate [target: path]: nothing -> path {
   include-dirs
   | each {|dir| $dir | path join $target }
   | where (($it | path type) == file or ($it | path join mod.nu | path exists))
-  | get --optional 0
+  | first
   | default $target
 }
 
@@ -157,7 +157,7 @@ def collect-tree [ctx: record]: nothing -> list<record> {
   let root = $ctx.root | default $raw.module.name
   let name = [$root] | append $ctx.path | str join ' '
   let file = if ($raw.module.file | path exists) { $raw.module.file } else { $ctx.file }
-  [($raw | reject submodules | update module { update name $name | update file $file })]
+  [($raw | reject $.submodules | update $.module { update $.name $name | update $.file $file })]
   | append (
     $raw.submodules | each {|sub|
       collect-tree {
@@ -207,8 +207,8 @@ def io-of []: record -> table {
   values
   | each {|rows|
     {
-      input: ($rows | where parameter_type == input | get --optional 0.syntax_shape | default any)
-      output: ($rows | where parameter_type == output | get --optional 0.syntax_shape | default any)
+      input: ($rows | where parameter_type == input | get --optional $.0.syntax_shape | default any)
+      output: ($rows | where parameter_type == output | get --optional $.0.syntax_shape | default any)
     }
   }
 }
@@ -217,14 +217,14 @@ def io-of []: record -> table {
 # parameter list is identical across overloads, so it comes from the first;
 # io keeps every overload's pair.
 def normalize []: record -> record {
-  let raw = $in
+  let raw: record;
   {
     name: $raw.name
     description: ($raw.description | strip-directives)
     extra_description: ($raw.extra_description | strip-directives)
     search_terms: $raw.search_terms
     category: $raw.category
-    params: ($raw.signatures | values | get --optional 0 | default [] | params-of)
+    params: ($raw.signatures | values | first | default [] | params-of)
     io: ($raw.signatures | io-of)
     examples: $raw.examples
     is_const: $raw.is_const
@@ -247,7 +247,7 @@ def normalize []: record -> record {
 # module (`main` shown as the module name). Persist the diffable IR snapshot
 # by piping through `to nuon`.
 @example "collect a library module and list its command names" {
-  collect completion | first | get commands.name
+  collect completion | first | get $.commands.name
 }
 @example "persist a module directory's model as a nuon snapshot" {
   collect ./docgen | to nuon --indent 2 | save docs/api.nuon
@@ -268,11 +268,11 @@ export def collect [
     {
       module: (
         $raw.module
-        | update description { strip-directives }
-        | update extra_description { strip-directives }
+        | update $.description { strip-directives }
+        | update $.extra_description { strip-directives }
       )
       commands: ($raw.commands | each { normalize })
-      aliases: ($raw.aliases | update description { strip-directives })
+      aliases: ($raw.aliases | update $.description { strip-directives })
       constants: $raw.constants
     }
   }

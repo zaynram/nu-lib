@@ -29,7 +29,7 @@ const PROFILE_DIRS: record = {
 
 # The user scope on Linux.
 def linux-user []: nothing -> record {
-  let base: list<path> = [/usr/bin /bin ...(which bash env | where type == external | get path | path dirname)]
+  let base: list<path> = [/usr/bin /bin ...(which bash env | where type == external | get $.path | path dirname)]
   let sourced: record = with-env {PATH: ($base | uniq)} {
     from-bash --return=merge ($nu.home-dir | path join .profile)
   }

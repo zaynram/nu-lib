@@ -8,7 +8,7 @@ use ../mod.nu *
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 # Write an executable shell script `name` with `body` into `dir`.
-def stub [dir: path, name: path, body: string]: nothing -> path {
+def stub [dir: path name: path body: string]: nothing -> path {
   need-posix
   let file: path = $dir | path join $name
   $"#!/bin/sh\n($body)\n" | save --force $file
@@ -19,14 +19,14 @@ def stub [dir: path, name: path, body: string]: nothing -> path {
 # `ipex-llm-ollama status` against a stub `systemctl` that prints `output` and exits with `code`: `{status calls}`,
 # or `{error calls}` with the error's details when it raised (caught here: `with-sandbox` re-raises failures
 # without their details).
-def status-of [output: string, --code: int = 0]: nothing -> record {
+def status-of [output: string --code: int = 0]: nothing -> record {
   with-sandbox {|ctx|
     let log: path = $ctx.code | path join calls.log
     stub $ctx.code systemctl $"echo \"$*\" >> '($log)'\ncat <<'EOF'\n($output)\nEOF\nexit ($code)" | ignore
     with-env {PATH: ($env.PATH | prepend $ctx.code)} {
-      assert equal (which systemctl | get 0.path) ($ctx.code | path join systemctl) 'the stub systemctl is used'
+      assert equal (which systemctl | get $.0.path) ($ctx.code | path join systemctl) 'the stub systemctl is used'
       let result: record = try { {status: (ipex-llm-ollama status)} } catch {|e| {error: $e.details} }
-      $result | insert calls (open $log | lines)
+      $result | insert $.calls (open $log | lines)
     }
   }
 }
@@ -125,7 +125,7 @@ def "test serve runs start ollama in the home and sends its output" []: nothing 
     mkdir $home $stubs
     stub $stubs bash 'echo "cwd:$(pwd) args:$*"' | ignore
     with-env {PATH: ($env.PATH | prepend $stubs) IPEX_LLM_OLLAMA_HOME: $home} {
-      assert equal (which bash | get 0.path) ($stubs | path join bash) 'the stub bash is used'
+      assert equal (which bash | get $.0.path) ($stubs | path join bash) 'the stub bash is used'
       let job = ipex-llm-ollama serve
       assert equal $job.description? ipex-llm-ollama_serve 'returns the job'
       let message = job recv --timeout 10sec

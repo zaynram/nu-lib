@@ -32,8 +32,8 @@ type HookInfo = oneof<record<ref: cell-path name: string, condition: oneof<nothi
 # Nushell that stops doing so.
 export-env {
   $env.config.hooks = $env.config.hooks
-    | default [] pre_prompt pre_execution
-    | default {} env_change
+    | default [] $.pre_prompt $.pre_execution
+    | default {} $.env_change
 }
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
@@ -62,7 +62,7 @@ def hook-type []: cell-path -> string { into string | split row . | skip | first
 # single-valued type (`$.display_output`), whose value is a record, closure or string? A hook type's list
 # (`$.pre_prompt`, `$.env_change.PWD`) and the `env_change` record are not one hook.
 def names-one-hook []: cell-path -> bool {
-  let ref: cell-path = $in
+  let ref: cell-path;
   let entry: bool = ($ref | split cell-path | length) > 1 or ($ref | hook-type) in [display_output command_not_found]
   $entry and ($env.config.hooks | get --optional --ignore-case $ref | describe) =~ '^(record|closure|string)'
 }
@@ -70,7 +70,7 @@ def names-one-hook []: cell-path -> bool {
 # Does a target name a hook list to add to: a hook type (`$.pre_prompt`, also the single-valued types) or an
 # `env_change` variable (`$.env_change.PWD`)? An entry of a list (`$.pre_prompt.0`) is not one.
 def names-hook-list []: cell-path -> bool {
-  match ($in | split cell-path | get value) {
+  match ($in | split cell-path | get $.value) {
     [$type] => ($type in $HOOK_TYPES)
     [env_change _] => true
     _ => false
@@ -94,10 +94,10 @@ def add-descriptions [
       record if ($x.name? | is-not-empty) => $x.name
       _ => $default
     } | wrap description
-    | insert value { $it | if $value != null { do --capture-errors $value } else { } }
+    | insert $.value { $it | if $value != null { do --capture-errors $value } else { } }
   } | compact description
   | flatten --all value
-  | if $display != null { insert display {|row| $row.value | do --ignore-errors $display } } else { }
+  | if $display != null { insert $.display {|row| $row.value | do --ignore-errors $display } } else { }
 }
 
 def hook-defaults [prefix: string]: [
@@ -110,7 +110,7 @@ def hook-defaults [prefix: string]: [
     let name: string = $"($prefix)[($row.index)]"
     $row.item | match ($in | describe | str replace --regex '<.*' '') {
       string | closure => { wrap code | merge {name: $name disabled: false condition: {|| is-enabled $ref } ref: $ref} }
-      record => { default false disabled | default $ref ref | default $name name }
+      record => { default false $.disabled | default $ref $.ref | default $name $.name }
     }
   } | compact
 }
@@ -244,7 +244,7 @@ export def show [
   let found: list = flatten-hooks --only=$ref
     | if $raw { } else {
       let stringify: closure = {|| if $in == null { } else { to nuon --serialize --raw-strings | str trim --char='"' } }
-      $in | each {|| upsert code $stringify | upsert condition $stringify }
+      $in | each {|| upsert $.code $stringify | upsert $.condition $stringify }
     }
   if $found == [] and $strict {
     error raise $"no hook at '($ref)'" --with={
@@ -252,7 +252,7 @@ export def show [
       labels: [{text: reference span: (metadata $ref).span}]
     } | do $in
   }
-  $found | get $.0? | if $cell == null { } else { get --optional=(not $strict) $cell } | default $default
+  $found | first | if $cell == null { } else { get --optional=(not $strict) $cell } | default $default
 }
 
 # Retrieve one or more hooks by name, as a table.
@@ -375,7 +375,7 @@ export def --env add [
   # Skip hook records whose name is already registered (enabled or disabled)
 ]: oneof<nothing, list<HookType>> -> nothing {
   # bound first: only the first pipeline of the block receives the input
-  let given: oneof<nothing, list<HookType>> = $in
+  let given: oneof<nothing, list<HookType>>;
   if not ($target | names-hook-list) {
     error raise $"'($target)' is not a hook type or an env_change variable" --with={
       kind: invalid_argument
@@ -416,7 +416,7 @@ const _options = {
 
 def _hook-types []: nothing -> record {
   [
-    ...($env.config.hooks | reject --optional env_change | columns)
+    ...($env.config.hooks | reject --optional $.env_change | columns)
     ...($env.config.hooks.env_change | columns | where $it !~ ^__\w+ | str replace --regex '^' 'env_change.')
   ]
   | sort-by --custom {|a b| $a not-has . and $b has . }
@@ -429,7 +429,7 @@ def _hook-types []: nothing -> record {
 
 def _possible-hook-types []: nothing -> record {
   [
-    ...($env.config.hooks | reject --optional env_change | columns)
+    ...($env.config.hooks | reject --optional $.env_change | columns)
     ...($env | columns | where $it !~ ^__\w+ | str replace --regex '^' 'env_change.')
   ]
   | sort-by --custom {|a b| $a not-has . and $b has . }
@@ -447,7 +447,7 @@ def _hook-indices [
 ]: nothing -> oneof<list, record> {
   let cell: cell-path = structure $buffer
     | where kind == string
-    | get text
+    | get $.text
     | split row '.'
     | flatten
     | into cell-path
@@ -465,9 +465,9 @@ def _hook-indices [
 
 def _hook-refs []: nothing -> oneof<list, record> {
   flatten-hooks
-  | select ref name
+  | select $.ref $.name
   | rename --column={ref: value name: description}
-  | update value { into string | str replace '$.' '' }
+  | update $.value { into string | str replace '$.' '' }
   | into completions {
     sort: true
     completion_algorithm: substring
@@ -476,7 +476,7 @@ def _hook-refs []: nothing -> oneof<list, record> {
 }
 
 def _hook-names []: nothing -> oneof<list, record> {
-  _hook-refs | update completions { rename --column={value: description description: value} }
+  _hook-refs | update $.completions { rename --column={value: description description: value} }
 }
 
 def _cell-paths []: nothing -> oneof<list, record> {

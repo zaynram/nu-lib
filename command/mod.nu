@@ -33,7 +33,7 @@ export def post-complete [
   --empty (-e): oneof<nothing, string> = '(no output)'
   # Text to show in the error help when the command printed nothing on stdout and stderr
 ]: oneof<closure, record<stdout: string, stderr: string, exit_code: int>> -> oneof<nothing, any, error> {
-  let input: any = $in
+  let input: any;
   # the signature already rejects other input types, including records without the three fields
   let result: any = if ($input | describe) == closure { $input | run-captured } else { $input }
   if ($result.exit_code? | describe) != int {
@@ -75,7 +75,7 @@ export def --wrapped attempt [
   --merge
   # Merge `stderr` into `stdout` (`stderr` is then always empty)
 ]: oneof<nothing, string> -> oneof<string, record<stdout: string, stderr: string, exit_code: int>> {
-  let input: any = $in
+  let input: any;
   let found: list = which --all $command | where type == external
   if $found == [] { error raise $"command not found: '($command)'" --kind not_found }
   let p: path = $found | get $.0.path
@@ -92,7 +92,7 @@ export def --wrapped attempt [
 
 # Run a closure and capture its external command's result (see `post-complete`); null when there is none.
 def run-captured []: closure -> oneof<nothing, record> {
-  let action: closure = $in
+  let action: closure;
   if (view source $action) =~ '\|\s*complete\s*\}$' {
     do --ignore-errors $action
   } else {
@@ -104,7 +104,7 @@ def run-captured []: closure -> oneof<nothing, record> {
 # trimmed at the end and joined by a newline, so a stdout without a trailing newline does not run into stderr), or
 # by `empty` when both are blank.
 def output-help [--empty: oneof<nothing, string>]: record -> string {
-  let result: record = $in
+  let result: record;
   let output: string = [($result.stdout? | default '') ($result.stderr? | default '')]
     | each { str trim --right }
     | compact --empty

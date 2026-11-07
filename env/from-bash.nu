@@ -137,7 +137,7 @@ def failure-of [failure: record<phase: string, status: string> stderr: string]: 
   let cause: string = if $phase == '' {
     $err | lines | each $strip | str join (char newline) | str trim --right --char (char newline)
   } else {
-    $err | lines | get 0? | default '' | do $strip $in
+    $err | lines | first | default '' | do $strip $in
   }
   {
     what: (if $phase == '' { 'the script' } else { $"function '($phase)'" })
@@ -204,7 +204,7 @@ export def --env main [
       help: '--execute returns every change (preserve)'
     }
   }
-  let script: oneof<string, binary> = $texts | get 0? | default {
+  let script: oneof<string, binary> = $texts | first | default {
       let path: path = $file | default {
           error raise 'no script was given' --with={
             kind: invalid_argument
@@ -216,16 +216,16 @@ export def --env main [
     }
   let bash: path = which bash
     | where type == external
-    | get 0?.path
+    | get $.0?.path
     | default { error raise '`bash` is not on PATH' --kind missing_dependency }
   let res: record = $script | ^$bash --noprofile --norc -c $HELPER bash ...$execute | complete
   let records: list<string> = $res.stdout | text | split row (char nul)
-  let marks: list<int> = $records | enumerate | where ($it.item | str starts-with '=') | get index
+  let marks: list<int> = $records | enumerate | where ($it.item | str starts-with '=') | get $.index
   let sections: list<record<mark: string, items: list<string>>> = $marks
     | append ($records | length)
     | window 2
     | each {|w| {mark: ($records | get ($w | first)) items: ($records | slice (($w | first) + 1)..<($w | last))} }
-  let failure: oneof<nothing, list<string>> = $sections | where mark == '=error' | get 0?.items
+  let failure: oneof<nothing, list<string>> = $sections | where mark == '=error' | get $.0?.items
   if $failure != null {
     let f: record = failure-of ($failure | to-vars) ($res.stderr | text)
     error raise $"($f.what) failed with status ($f.status)($f.cause)" --kind external_failure
@@ -253,7 +253,7 @@ export def --env main [
   let mode: string = if $execute != [] { 'preserve' } else { $return | default merge }
   let result: record = match $mode {
     preserve if $execute == [] => $main
-    preserve => ($main | insert fn ($execute | zip ($comparisons | skip 1) | into record))
+    preserve => ($main | insert $.fn ($execute | zip ($comparisons | skip 1) | into record))
     merge => ($main.shellvars | merge $main.env)
     _ => ($main | get $mode)
   } | if $mode == preserve or $keep_empty { } else { compact --empty }

@@ -8,7 +8,25 @@ use error
 
 # ——— constants ——————————————————————————————————————————————————————————————
 
-const COMMANDS: list<string> = [task project label section comment completed today upcoming inbox filter reminder activity stats auth accounts config help]
+const COMMANDS: list<string> = [
+  task
+  project
+  label
+  section
+  comment
+  completed
+  today
+  upcoming
+  inbox
+  filter
+  reminder
+  activity
+  stats
+  auth
+  accounts
+  config
+  help
+]
 
 # ——— definitions —————————————————————————————————————————————————————————————
 
@@ -37,7 +55,7 @@ export def list [
   --since: datetime # Requires `--completed`: lower bound (default: today; at most three months back)
 ]: nothing -> table<id: string, content: string, description: string, labels: list<string>, project: string, parent: oneof<nothing, string>, due: oneof<nothing, datetime>, priority: int, url: string> {
   let open_only: list<string> = {label: $label parent: $parent filter: $filter} | transpose flag value
-    | where value != null | get flag
+    | where value != null | get $.flag
   if $completed and $open_only != [] {
     let flags: string = $open_only | each { $'`--($in)`' } | str join ', '
     error raise $"`--completed` cannot be combined with ($flags)" --with={
@@ -161,7 +179,7 @@ export def find [
   --threshold: float = 0.5 # Minimum overlap for a fuzzy match
 ]: oneof<nothing, table> -> oneof<nothing, record<id: string, content: string, score: float, url: string>> {
   default { list --project ($project | default { repo-name }) }
-  | insert score {|row| score $slug $row.content }
+  | insert $.score {|row| score $slug $row.content }
   | where score >= $threshold
   | sort-by --reverse score
   | let scored: table;
@@ -221,9 +239,10 @@ def "into options" [
 ]: record -> list<string> {
   transpose name value
   | where value not-in [null false]
-  | update name { if $in starts-with '--' { } else { $"--($in)" } }
-  | update value { match ($in | describe) { bool => null _ => { into string } } }
-  | reduce --fold=($fold | compact --empty) {|row| append [$row.name $row.value] | compact }
+  | update $.name { if $in starts-with '--' { } else { $"--($in)" } }
+  | update $.value { match ($in | describe) { bool => null _ => { into string } } }
+  | each --flatten {|row| [$row.name $row.value] | compact }
+  | prepend ($fold | compact --empty)
 }
 
 # Labels as `td`'s comma-separated value; null for none (no flag).
@@ -266,7 +285,7 @@ def score [slug: string content: string]: nothing -> float {
 
 # Rows of `td` task JSON: project name (`$name` when given, otherwise resolved), `due` as a datetime, app priority.
 def hydrate [name: oneof<nothing, string> --long = false]: table -> table {
-  let rows: table = $in
+  let rows: table;
   # one `td project list` call, and only when a name has to be resolved
   let projects: table = if $name == null and ($rows | is-not-empty) { projects } else { [] }
   $rows | if $long {
@@ -275,7 +294,7 @@ def hydrate [name: oneof<nothing, string> --long = false]: table -> table {
     select $.id $.content $.description? $.labels? $.projectId? $.parentId? $.due?.date? $.priority $.url?
     | rename --column={projectId: project parentId: parent due.date: due}
   }
-  | default [] labels
+  | default [] $.labels
   | update $.project {|row| $name | default { $projects | where id == $row.project | get $.0?.name } }
   | update $.priority { into int | 5 - $in }
   # `--long` keeps `due` as the raw record
@@ -290,16 +309,16 @@ def _td [buffer: string]: nothing -> oneof<list, record> {
   | default --empty { if ($line | split row --regex '\s+' | length) <= 2 { $COMMANDS } else { [] } }
 }
 def _projects []: nothing -> record {
-  projects | select name url
+  projects | select $.name $.url
   | rename value description
   | into completions {completion_algorithm: substring}
 }
 def _labels []: nothing -> record {
-  labels | get name
+  labels | get $.name
   | into completions {completion_algorithm: substring}
 }
 def _tasks []: nothing -> record {
-  list | select content project
+  list | select $.content $.project
   | rename value description
   | into completions {completion_algorithm: substring match_description: true}
 }

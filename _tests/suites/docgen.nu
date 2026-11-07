@@ -12,7 +12,7 @@ def sample-model []: nothing -> record {
 }
 
 def "test collect-extracts-module-metadata" []: nothing -> nothing {
-  let module = sample-model | get module
+  let module = sample-model | get $.module
   assert equal $module.name sample
   assert equal $module.description "A tiny module exercising every metadata surface the collector extracts."
   assert equal $module.extra_description ""
@@ -22,11 +22,11 @@ def "test collect-extracts-module-metadata" []: nothing -> nothing {
 def "test collect-lists-exports-prefixed-and-sorted" []: nothing -> nothing {
   # exact equality also proves `main` surfaces as the module name and the
   # private `hidden` helper stays invisible
-  assert equal (sample-model | get commands.name) [sample "sample greet" "sample total"]
+  assert equal (sample-model | get $.commands.name) [sample "sample greet" "sample total"]
 }
 
 def "test collect-normalizes-parameters" []: nothing -> nothing {
-  let params = sample-model | get commands | where name == "sample greet" | first | get params
+  let params = sample-model | get $.commands | where name == "sample greet" | first | get $.params
   assert equal $params [
     {
       name: name
@@ -62,29 +62,29 @@ def "test collect-normalizes-parameters" []: nothing -> nothing {
 }
 
 def "test collect-extracts-io-signatures" []: nothing -> nothing {
-  let commands = sample-model | get commands
-  assert equal ($commands | where name == "sample greet" | first | get io) [
+  let commands = sample-model | get $.commands
+  assert equal ($commands | where name == "sample greet" | first | get $.io) [
     {input: nothing, output: string}
   ]
-  assert equal ($commands | where name == "sample total" | first | get io) [
+  assert equal ($commands | where name == "sample total" | first | get $.io) [
     {input: list<int>, output: int}
   ]
 }
 
 def "test collect-captures-authored-examples" []: nothing -> nothing {
-  let commands = sample-model | get commands
-  assert equal ($commands | where name == "sample greet" | first | get examples) [
+  let commands = sample-model | get $.commands
+  assert equal ($commands | where name == "sample greet" | first | get $.examples) [
     {
       description: "greet politely"
       example: "greet world --polite"
       result: "Hello, world!"
     }
   ]
-  assert equal ($commands | where name == "sample total" | first | get examples) []
+  assert equal ($commands | where name == "sample total" | first | get $.examples) []
 }
 
 def "test collect-carries-search-terms" []: nothing -> nothing {
-  let greet = sample-model | get commands | where name == "sample greet" | first
+  let greet = sample-model | get $.commands | where name == "sample greet" | first
   assert equal $greet.search_terms "hello, salutation"
   assert equal $greet.extra_description "The long form: greetings default to casual unless --polite is given."
 }
@@ -158,7 +158,7 @@ def "test collect-treats-dot-targets-and-existing-names-as-paths" []: nothing ->
     cp --recursive ($FX | path join sample) $ctx.code
     mkdir ($ctx.code | path join sample inner)
     cd ($ctx.code | path join sample inner)
-    let up = collect .. | first | get module
+    let up = collect .. | first | get $.module
     assert equal [$up.name $up.file] [sample ($ctx.code | path join sample mod.nu)] '`..` is the parent directory'
   }
   cd $FX
@@ -166,7 +166,7 @@ def "test collect-treats-dot-targets-and-existing-names-as-paths" []: nothing ->
 }
 
 # A module at `<root>/<rel>` with one command, `name`.
-def write-module [root: path, rel: path, name: string]: nothing -> path {
+def write-module [root: path rel: path name: string]: nothing -> path {
   let dir: path = $root | path join $rel
   mkdir $dir
   $"# A fixture.\nexport def ($name) []: nothing -> string { 'x' }\n" | save ($dir | path join mod.nu)
@@ -181,8 +181,8 @@ def "test collect-resolves-missing-slash-targets-through-the-lib-dirs" []: nothi
     let model = collect zzpkg/sub | first
     assert equal $model.module.file $file 'found under a lib dir'
     assert equal $model.commands.name ['sub from-lib'] 'its commands'
-    assert equal (collect zzpkg/sub/mod.nu | first | get module.file) $file 'a mod.nu path too'
-    let root = collect completion/local | first | get module
+    assert equal (collect zzpkg/sub/mod.nu | first | get $.module.file) $file 'a mod.nu path too'
+    let root = collect completion/local | first | get $.module
     assert equal [$root.name $root.file] [local ($ROOT | path join completion local mod.nu)] 'library modules from outside the repository root'
   }
 }
@@ -217,35 +217,35 @@ def nested-model []: nothing -> table {
 
 def "test collect-emits-submodules-as-qualified-rows" []: nothing -> nothing {
   let rows = nested-model
-  assert equal ($rows | get module.name) [nested "nested sub" "nested sub leaf"]
+  assert equal ($rows | get $.module.name) [nested "nested sub" "nested sub leaf"]
   # submodules report no file of their own and inherit the parent's
-  assert equal ($rows | get module.file | uniq) [($FX | path join nested mod.nu)]
+  assert equal ($rows | get $.module.file | uniq) [($FX | path join nested mod.nu)]
 }
 
 def "test collect-names-nested-exports-as-imported" []: nothing -> nothing {
   # nested exports are callable only after `use nested sub`, and are named accordingly
-  let names = nested-model | get commands | each { get name }
+  let names = nested-model | get $.commands | each { get $.name }
   assert equal $names [["nested single shout" "nested top"] [sub "sub inner"] ["leaf tip"]] 'names per row'
 }
 
 def "test collect-lists-aliases-and-constants" []: nothing -> nothing {
   let rows = nested-model
-  assert equal ($rows | get aliases | each { select name expansion }) [
+  assert equal ($rows | get $.aliases | each { select $.name $.expansion }) [
     [{name: "nested short", expansion: "ls -a"}]
     [{name: "sub al", expansion: inner}]
     []
   ]
-  assert equal ($rows | get constants) [[{name: LIMIT, type: int}] [{name: DEEP, type: string}] []]
+  assert equal ($rows | get $.constants) [[{name: LIMIT, type: int}] [{name: DEEP, type: string}] []]
   # the sample fixture has neither
-  assert equal (sample-model | get aliases) []
-  assert equal (sample-model | get constants) []
+  assert equal (sample-model | get $.aliases) []
+  assert equal (sample-model | get $.constants) []
 }
 
 def "test collect-strips-linter-and-formatter-directives" []: nothing -> nothing {
   let rows = nested-model
-  assert equal ($rows | first | get module.description) "A module whose surface lives in aliases, constants, and submodules."
-  assert equal ($rows | first | get commands | where name == "nested top" | first | get description) "A top-level command."
-  assert equal ($rows | first | get aliases | first | get description) "Shorthand for a hidden listing."
+  assert equal ($rows | first | get $.module.description) "A module whose surface lives in aliases, constants, and submodules."
+  assert equal ($rows | first | get $.commands | where name == "nested top" | first | get $.description) "A top-level command."
+  assert equal ($rows | first | get $.aliases | first | get $.description) "Shorthand for a hidden listing."
 }
 
 def "test collect-folds-re-exported-modules-into-the-parent" []: nothing -> nothing {
@@ -253,7 +253,7 @@ def "test collect-folds-re-exported-modules-into-the-parent" []: nothing -> noth
   # (`nested single shout` is callable after `use nested`), so it gets no row
   let rows = nested-model
   assert equal ($rows | where module.name =~ single | length) 0
-  assert ("nested single shout" in ($rows | first | get commands.name))
+  assert ("nested single shout" in ($rows | first | get $.commands.name))
 }
 
 # The shapes fixture's collected rows.
@@ -262,23 +262,23 @@ def shapes-model []: nothing -> table {
 }
 
 def "test collect-keeps-every-signature-of-an-overloaded-command" []: nothing -> nothing {
-  let multi = shapes-model | first | get commands | where name == 'shapes multi' | first
+  let multi = shapes-model | first | get $.commands | where name == 'shapes multi' | first
   assert equal $multi.io [{input: int output: string} {input: nothing output: string}] 'one io row per signature'
-  assert equal ($multi.params | get name) [loud] 'parameters come from one signature'
+  assert equal ($multi.params | get $.name) [loud] 'parameters come from one signature'
 }
 
 def "test collect-emits-submodules-without-commands-of-their-own" []: nothing -> nothing {
   let rows = shapes-model
-  assert equal ($rows | get module.name) [shapes 'shapes consts' 'shapes holder' 'shapes holder inner' 'shapes odd name'] 'every submodule gets a row'
+  assert equal ($rows | get $.module.name) [shapes 'shapes consts' 'shapes holder' 'shapes holder inner' 'shapes odd name'] 'every submodule gets a row'
   let consts = $rows | where module.name == 'shapes consts' | first
   assert equal [$consts.commands $consts.constants] [[] [{name: C type: int}]] 'only constants'
   let holder = $rows | where module.name == 'shapes holder' | first
   assert equal [$holder.commands $holder.constants] [[] []] 'only a submodule'
   let inner = $rows | where module.name == 'shapes holder inner' | first
-  assert equal ($inner.commands | get name) ['inner deep'] 'named as imported with `use holder inner`'
+  assert equal ($inner.commands | get $.name) ['inner deep'] 'named as imported with `use holder inner`'
 }
 
 def "test collect-quotes-submodule-names-in-the-child-imports" []: nothing -> nothing {
   let odd = shapes-model | where module.name == 'shapes odd name' | first
-  assert equal ($odd.commands | get name) ['odd name hi'] 'a name with a space'
+  assert equal ($odd.commands | get $.name) ['odd name hi'] 'a name with a space'
 }

@@ -26,7 +26,7 @@ export def rejoin [
   string -> path
   list<string> -> list<path>
 ] {
-  let input: oneof<nothing, string, list<string>> = $in
+  let input: oneof<nothing, string, list<string>>;
   match ($input | describe | str replace --regex '<.*' '') {
     nothing if ($segments | is-empty) => {
       error raise 'nothing to join' --with={
@@ -53,7 +53,7 @@ export def truncate [
   table<name: string> -> table<name: string>
   list<oneof<path, string>> -> list<oneof<path, string>>
 ] {
-  let queue: any = $in
+  let queue: any;
   if $n == 0 {
     error raise 'cannot keep zero segments' --with={
       kind: invalid_argument
@@ -79,7 +79,7 @@ export def truncate [
       | if $n < 0 { $in } else { append $n | math min }
     let path: path = $list | do $trim $keep | path join
     if $glob { return $path }
-    $item | update name $path
+    $item | update $.name $path
   } | collect
 }
 
@@ -93,7 +93,7 @@ export def select [
   oneof<list, table> -> oneof<nothing, path>
   nothing -> nothing
 ] {
-  let items: any = $in
+  let items: any;
   if ($items | is-not-empty) {
     let prompt: string = $"open file with ($env.EDITOR? | default editor)"
     let choice: any = $items | input list --fuzzy ($prompt | style paint dark_gray)

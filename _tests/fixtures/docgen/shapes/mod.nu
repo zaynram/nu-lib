@@ -3,7 +3,7 @@
 # A command with two signatures.
 export def multi [
   --loud # shout it
-]: [nothing -> string, int -> string] { if $loud { 'X' } else { 'x' } }
+]: [nothing -> string int -> string] { if $loud { 'X' } else { 'x' } }
 
 # A submodule whose name needs quoting in a `use` statement.
 export module "odd name" {

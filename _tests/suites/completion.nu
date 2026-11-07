@@ -42,67 +42,67 @@ def "zz annotated" []: nothing -> nothing { }
 # ——— completion: into completions ———————————————————————————————————————————————
 
 def "test formats elements by type" []: nothing -> nothing {
-  let actual = [abc 1 1.5 3KiB 2min 2026-09-14T00:00:00+00:00 true] | completion into completions | get completions
+  let actual = [abc 1 1.5 3KiB 2min 2026-09-14T00:00:00+00:00 true] | completion into completions | get $.completions
   let expected = [abc "1" "1.5" "3 KiB" "2 min" "2026-09-14T00:00:00+00:00" "true"]
   assert equal $actual $expected 'input order is preserved'
 }
 
 def "test quotes only strings that misparse as bare arguments and compacts empties" []: nothing -> nothing {
   let quoted = ["b c" "a'b" 'a"b' "a(b" "a[b" "a{b" "a|b" "a;b" "$a" "-x" "--" "-1" "true" "null" "#a" "#"]
-  assert equal ($quoted | completion into completions | get completions | where $it !~ '^"') [] 'every misparsing word is quoted'
+  assert equal ($quoted | completion into completions | get $.completions | where $it !~ '^"') [] 'every misparsing word is quoted'
   let bare = [abc "1" "1.5" "3KiB" "2026-09-13_x" foo-bar x.nu "a#b" "a=b" "a:b" "a,b" "~/x" "*" "." "-" pre_execution.0 true1]
-  assert equal ($bare | completion into completions | get completions) $bare 'bare words stay bare'
-  assert equal (["" "b c" null a] | completion into completions | get completions) ['"b c"' a] 'empty and null elements are dropped'
-  assert equal ([[value description]; ["b c" z]] | completion into completions | get completions) [[value description]; ['"b c"' z]] 'table values are quoted too'
+  assert equal ($bare | completion into completions | get $.completions) $bare 'bare words stay bare'
+  assert equal (["" "b c" null a] | completion into completions | get $.completions) ['"b c"' a] 'empty and null elements are dropped'
+  assert equal ([[value description]; ["b c" z]] | completion into completions | get $.completions) [[value description]; ['"b c"' z]] 'table values are quoted too'
 }
 
 def "test a leading hash is quoted on every path" []: nothing -> nothing {
   # a bare `#a` after a space starts a comment and swallows the completion
-  assert equal (["#a" "a#b"] | completion into completions | get completions) ['"#a"' 'a#b'] 'vectorised string pass'
-  assert equal (["#a" 1] | completion into completions | get completions) ['"#a"' '1'] 'per-element formatter'
-  assert equal (["#a" 'a"b'] | completion into completions | get completions) ['"#a"' '"a\"b"'] 'formatter fallback for escapes'
-  assert equal ([[value]; ["#a"]] | completion into completions | get completions) [[value]; ['"#a"']] 'table values'
+  assert equal (["#a" "a#b"] | completion into completions | get $.completions) ['"#a"' 'a#b'] 'vectorised string pass'
+  assert equal (["#a" 1] | completion into completions | get $.completions) ['"#a"' '1'] 'per-element formatter'
+  assert equal (["#a" 'a"b'] | completion into completions | get $.completions) ['"#a"' '"a\"b"'] 'formatter fallback for escapes'
+  assert equal ([[value]; ["#a"]] | completion into completions | get $.completions) [[value]; ['"#a"']] 'table values'
 }
 
 def "test a string list quotes the same with and without escapes" []: nothing -> nothing {
   # every element is a string, so the vectorised pass runs; one escape-needing element sends the list to the formatter
   let plain = [abc "b c" "[" "-x" "true" "it's" "ünï cödé" " lead" "a\\b" "#x"]
-  assert equal ($plain | completion into completions | get completions) ($plain | nuon-quoted) 'quoted as `to nuon` quotes'
+  assert equal ($plain | completion into completions | get $.completions) ($plain | nuon-quoted) 'quoted as `to nuon` quotes'
   for hard in ['a"b' "a\tb" "a\nb\nc" "-\n"] {
     let l = $plain | append $hard
-    assert equal ($l | completion into completions | get completions) ($l | nuon-quoted) $"escaped as `to nuon` escapes: ($hard | to nuon)"
+    assert equal ($l | completion into completions | get $.completions) ($l | nuon-quoted) $"escaped as `to nuon` escapes: ($hard | to nuon)"
   }
 }
 
 def "test options merge over defaults and null restores the default" []: nothing -> nothing {
-  let got = [1] | completion into completions {match_description: true sort: null} | get options
+  let got = [1] | completion into completions {match_description: true sort: null} | get $.options
   assert equal $got {case_sensitive: false completion_algorithm: prefix match_description: true} 'merged, null removed'
-  let defaults = [1] | completion into completions | get options
+  let defaults = [1] | completion into completions | get $.options
   assert equal $defaults {sort: true case_sensitive: false completion_algorithm: prefix match_description: false} 'defaults'
 }
 
 def "test a long list keeps its order" []: nothing -> nothing {
   let big = 1..500 | each { $"w($in)" }
-  assert equal ($big | completion into completions {sort: false} | get completions) $big 'order survives the per-element formatter'
+  assert equal ($big | completion into completions {sort: false} | get $.completions) $big 'order survives the per-element formatter'
 }
 
 def "test generic types reach the text fallback" []: nothing -> nothing {
-  let actual = [[1 2] {a: 1}] | completion into completions | get completions
+  let actual = [[1 2] {a: 1}] | completion into completions | get $.completions
   let expected = [([1 2] | to text) ({a: 1} | to text)]
   assert equal $actual $expected 'describe output is not normalised before matching'
 }
 
 def "test repr and to-string overrides" []: nothing -> nothing {
-  assert equal ([255 90sec] | completion into completions --repr {number: $.lowerhex duration: sec} | get completions) ["0xff" "90 sec"] 'number and duration'
-  assert equal ([2026-01-02T03:04:05+00:00] | completion into completions --repr {datetime: '%F'} | get completions) ["2026-01-02"] 'the datetime key'
-  assert equal ([2KiB] | completion into completions --repr {filesize: B} | get completions) ["2048 B"] 'filesize'
-  assert equal ([1 2] | completion into completions --to-string {|| $"<($in)>" } | get completions) ["<1>" "<2>"] 'a custom formatter'
+  assert equal ([255 90sec] | completion into completions --repr {number: $.lowerhex duration: sec} | get $.completions) ["0xff" "90 sec"] 'number and duration'
+  assert equal ([2026-01-02T03:04:05+00:00] | completion into completions --repr {datetime: '%F'} | get $.completions) ["2026-01-02"] 'the datetime key'
+  assert equal ([2KiB] | completion into completions --repr {filesize: B} | get $.completions) ["2048 B"] 'filesize'
+  assert equal ([1 2] | completion into completions --to-string {|| $"<($in)>" } | get $.completions) ["<1>" "<2>"] 'a custom formatter'
 }
 
 def "test a table formats only its value column" []: nothing -> nothing {
-  let got = [[value description extra]; [1.0 one 2] ["b c" two 3]] | completion into completions | get completions
+  let got = [[value description extra]; [1.0 one 2] ["b c" two 3]] | completion into completions | get $.completions
   assert equal $got [[value description extra]; ["1" one 2] ['"b c"' two 3]] 'description and extra columns pass through'
-  let custom = [[value description]; [1 one]] | completion into completions --to-string {|| $"<($in)>" } | get completions
+  let custom = [[value description]; [1 one]] | completion into completions --to-string {|| $"<($in)>" } | get $.completions
   assert equal $custom [[value description]; ["<1>" one]] 'to-string applies to the value column'
 }
 
@@ -111,15 +111,15 @@ def "test a table without a value column is an error" []: nothing -> nothing {
 }
 
 def "test empty input gives no completions" []: nothing -> nothing {
-  assert equal ([] | completion into completions | get completions) [] 'empty list'
-  assert equal ([null ""] | completion into completions | get completions) [] 'only empties'
+  assert equal ([] | completion into completions | get $.completions) [] 'empty list'
+  assert equal ([null ""] | completion into completions | get $.completions) [] 'only empties'
 }
 
 def "test the examples hold" []: nothing -> nothing {
-  let examples = scope commands | where name == 'completion into completions' | first | get examples
-  assert equal ([1 2 3] | completion into completions) ($examples | get 0.result) 'list example'
+  let examples = scope commands | where name == 'completion into completions' | first | get $.examples
+  assert equal ([1 2 3] | completion into completions) ($examples | get $.0.result) 'list example'
   let table = [[description value]; ['/tmp/a b.nu' 'a b.nu']] | completion into completions {match_description: true}
-  assert equal $table ($examples | get 1.result) 'table example'
+  assert equal $table ($examples | get $.1.result) 'table example'
 }
 
 # ——— completion: into spans / structure ———————————————————————————————————————
@@ -139,7 +139,7 @@ def "test trailing whitespace appends an empty token unless raw" []: nothing -> 
 def "test long returns the structure table" []: nothing -> nothing {
   let rows = 'ls  ' | completion into spans --long
   assert equal ($rows | columns) [text kind span] 'structure columns'
-  assert equal ($rows | first | get span) {start: 0 end: 2} 'byte span of the first token'
+  assert equal ($rows | first | get $.span) {start: 0 end: 2} 'byte span of the first token'
   assert equal ($rows | last) {text: '' kind: none span: {start: 3 end: 3}} 'the appended empty token'
 }
 
@@ -152,13 +152,13 @@ def "test unalias replaces the first token with the alias expansion" []: nothing
 }
 
 def "test structure is re-exported" []: nothing -> nothing {
-  assert equal (completion structure 'ls -a' | get text) [ls -a] 'std/util structure'
+  assert equal (completion structure 'ls -a' | get $.text) [ls -a] 'std/util structure'
 }
 
 # ——— completion/local: surface ————————————————————————————————————————————————————
 
 def "test local re-exports completion" []: nothing -> nothing {
-  let names = scope commands | where name starts-with 'local ' | get name | sort
+  let names = scope commands | where name starts-with 'local ' | get $.name | sort
   let expected = [
     'local carapace-complete' 'local carapace-complete runtime-env' 'local fish-complete'
     'local fish-complete parse-output' 'local into completions' 'local into spans' 'local run-completer'
@@ -181,19 +181,19 @@ def "test parse-output quotes existing paths with special characters" []: nothin
     let d = $ctx.code
     for name in ['a b' 'c\d' 'q"q' plain] { mkdir ($d | path join $name) }
     let lines = [$"($d)/a b" $"($d)/c\\d" $"($d)/q\"q" $"($d)/plain" 'no such/a b'] | each { $"($in)\tD" } | str join "\n"
-    let got = $lines | local fish-complete parse-output | get value
+    let got = $lines | local fish-complete parse-output | get $.value
     assert equal $got [$'"($d)/a b"' $'"($d)/c\\d"' $'"($d)/q\"q"' $"($d)/plain" 'no such/a b'] 'quoted with \ and " escaped'
   }
 }
 
 def "test parse-output always expands a leading tilde" []: nothing -> nothing {
-  let got = "~/zz-missing\tD\n~\tH\na~b\tX" | local fish-complete parse-output | get value
+  let got = "~/zz-missing\tD\n~\tH\na~b\tX" | local fish-complete parse-output | get $.value
   assert equal $got [($nu.home-dir | path join zz-missing) $nu.home-dir 'a~b'] 'leading ~ only, existing or not'
 }
 
 def "test fish-complete escapes the buffer for a fish single-quoted string" []: nothing -> nothing {
   with-stubs {|ctx|
-    let got = [echo] | local fish-complete "echo it's a\\" | get value
+    let got = [echo] | local fish-complete "echo it's a\\" | get $.value
     assert equal $got ["complete '--do-complete=echo it\\'s a\\\\'"] 'backslash and quote escaped'
   }
 }
@@ -201,9 +201,9 @@ def "test fish-complete escapes the buffer for a fish single-quoted string" []: 
 def "test fish-complete keeps only values extending the final span" []: nothing -> nothing {
   with-stubs {|ctx|
     with-env {FISH_STUB_OUT: "status\tS\nstash\tT\nst\tX\nother\tO\n~/stx\tH"} {
-      assert equal ([git st] | local fish-complete 'git st' | get value) [status stash] 'prefix kept, exact match dropped'
+      assert equal ([git st] | local fish-complete 'git st' | get $.value) [status stash] 'prefix kept, exact match dropped'
       assert equal ([git] | local fish-complete 'git' | length) 6 'no final span: no filter'
-      assert equal ([git '~/st'] | local fish-complete 'git ~/st' | get value) [($nu.home-dir | path join stx)] 'filtered before ~ is expanded'
+      assert equal ([git '~/st'] | local fish-complete 'git ~/st' | get $.value) [($nu.home-dir | path join stx)] 'filtered before ~ is expanded'
     }
   }
 }
@@ -239,7 +239,7 @@ def "test carapace-complete passes spans and the runtime env to carapace" []: no
 def "test carapace-complete deserializes by shell" []: nothing -> nothing {
   with-stubs {|ctx|
     with-env {CARAPACE_STUB_OUT: "status\tS\nstash\tT"} {
-      assert equal ([git st] | local carapace-complete git --shell fish | get value) [status stash] 'fish output'
+      assert equal ([git st] | local carapace-complete git --shell fish | get $.value) [status stash] 'fish output'
     }
     with-env {CARAPACE_STUB_OUT: "status S\nstash T"} {
       assert equal ([git st] | local carapace-complete git --shell zsh) [status stash] 'first word per line otherwise'
@@ -283,10 +283,10 @@ def "test the completer routes to fish or carapace" []: nothing -> nothing {
       $env.fish_commands = [git]
       local set-completer
       let complete = $env.config.completions.external.completer
-      assert equal (do $complete 'git f' | get value) [fish-said] 'listed commands go to fish'
-      assert equal (do $complete 'ls x' | get value) ['ls nushell ls x'] 'others go to carapace'
+      assert equal (do $complete 'git f' | get $.value) [fish-said] 'listed commands go to fish'
+      assert equal (do $complete 'ls x' | get $.value) ['ls nushell ls x'] 'others go to carapace'
       $env.fish_commands = []
-      assert equal (do $complete 'git f' | get value) ['git nushell git f'] 'read at completion time'
+      assert equal (do $complete 'git f' | get $.value) ['git nushell git f'] 'read at completion time'
     }
   }
 }
@@ -296,8 +296,8 @@ def "test the completer completes the command under the cursor" []: nothing -> n
     $env.fish_commands = []
     local set-completer
     let complete = $env.config.completions.external.completer
-    assert equal (do $complete 'ls | zzx a' {command: [zzx a]} | get value) ['zzx nushell zzx a'] 'place.command, not the whole buffer'
-    assert equal (do $complete 'ls | zzx a' | get value) ['ls nushell ls | zzx a'] 'a buffer alone is tokenised whole'
+    assert equal (do $complete 'ls | zzx a' {command: [zzx a]} | get $.value) ['zzx nushell zzx a'] 'place.command, not the whole buffer'
+    assert equal (do $complete 'ls | zzx a' | get $.value) ['ls nushell ls | zzx a'] 'a buffer alone is tokenised whole'
     assert equal ('echo 1 | zzx a ' | commandline complete) ['zzx nushell zzx a '] 'as Nushell calls it'
   }
 }
@@ -308,9 +308,9 @@ def "test the completer resolves aliases before routing" []: nothing -> nothing 
     $env.fish_commands = []
     local set-completer
     let complete = $env.config.completions.external.completer
-    assert equal (do $complete 'zzc x' | get value) ['git nushell git x'] 'carapace gets the expansion'
+    assert equal (do $complete 'zzc x' | get $.value) ['git nushell git x'] 'carapace gets the expansion'
     $env.fish_commands = [git]
-    let got = do $complete 'zzc  ' {command: [zzc ""]} | get value
+    let got = do $complete 'zzc  ' {command: [zzc ""]} | get $.value
     assert equal $got ["complete '--do-complete=git '"] 'fish gets the expanded command line'
   }
 }
@@ -375,10 +375,10 @@ def "test an empty buffer completes to nothing" []: nothing -> nothing {
 def "test run-completer prefers the positional over pipeline input" []: nothing -> nothing {
   with-stubs {|ctx|
     $env.fish_commands = []
-    assert equal ('zzz q' | local run-completer 'ls x' | get value) ['ls nushell ls x'] 'the positional wins'
-    assert equal ('ls y' | local run-completer | get value) ['ls nushell ls y'] 'pipeline input without a positional'
-    assert equal (['ls a' 'ls b'] | local run-completer | each { get value.0 }) ['ls nushell ls a' 'ls nushell ls b'] 'each piped buffer'
-    assert equal (local run-completer 'echo 1 | ls x' | get value) ['ls nushell ls x'] 'the command at the end of the buffer'
+    assert equal ('zzz q' | local run-completer 'ls x' | get $.value) ['ls nushell ls x'] 'the positional wins'
+    assert equal ('ls y' | local run-completer | get $.value) ['ls nushell ls y'] 'pipeline input without a positional'
+    assert equal (['ls a' 'ls b'] | local run-completer | each { get $.value.0 }) ['ls nushell ls a' 'ls nushell ls b'] 'each piped buffer'
+    assert equal (local run-completer 'echo 1 | ls x' | get $.value) ['ls nushell ls x'] 'the command at the end of the buffer'
   }
 }
 
@@ -388,7 +388,7 @@ def "test run-completer uses the configured completer and leaves the session unc
   with-stubs {|ctx|
     $env.fish_commands = []
     $env.config.completions.external.completer = null
-    assert equal (local run-completer 'ls x' | get value) ['ls nushell ls x'] 'installed when unset'
+    assert equal (local run-completer 'ls x' | get $.value) ['ls nushell ls x'] 'installed when unset'
     assert equal $env.config.completions.external.completer null 'installing for one call is scoped to it'
   }
 }
@@ -399,7 +399,7 @@ def "test run-completer uses the configured completer and leaves the session unc
 def child [prelude: string code: string --vars: record = {}]: nothing -> record {
   with-sandbox {|ctx|
     let bin = $ctx.config | path join carapace bin
-    sandboxed $ctx $"($code) | to nuon" --prelude $prelude --vars $vars --pipe | insert bin $bin
+    sandboxed $ctx $"($code) | to nuon" --prelude $prelude --vars $vars --pipe | insert $.bin $bin
   }
 }
 

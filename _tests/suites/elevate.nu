@@ -9,7 +9,7 @@ use ../mod.nu *
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 # Write an executable shell script `name` with `body` into `dir`.
-def stub [dir: path, name: path, body: string]: nothing -> path {
+def stub [dir: path name: path body: string]: nothing -> path {
   need-posix
   let file: path = $dir | path join $name
   $"#!/bin/sh\n($body)\n" | save --force $file
@@ -21,14 +21,14 @@ const PRINT_ARGS: string = 'for a in "$@"; do echo "ARG:$a"; done'
 
 # Run `body` with a stub `sudo` first on PATH: `--mode print` echoes `ARG:<arg>` lines, `--mode run` runs its
 # arguments. The closure receives {ctx, stubs, path}: the sandbox, the stub directory and the PATH used.
-def with-sudo [body: closure, --mode: string = print]: nothing -> nothing {
+def with-sudo [body: closure --mode: string = print]: nothing -> nothing {
   with-sandbox {|ctx|
     let stubs: path = $ctx.code | path join stubs
     mkdir $stubs
     stub $stubs sudo (if $mode == print { $PRINT_ARGS } else { 'exec "$@"' }) | ignore
     let path: list<string> = $env.PATH | prepend $stubs
     with-env {PATH: $path} {
-      assert equal (which sudo | get 0.path) ($stubs | path join sudo) 'the stub sudo shadows the real one'
+      assert equal (which sudo | get $.0.path) ($stubs | path join sudo) 'the stub sudo shadows the real one'
       do $body {ctx: $ctx stubs: $stubs path: $path}
     }
   } | ignore
@@ -51,7 +51,7 @@ def auth-stubs [dir: path]: nothing -> nothing {
 # ——— elevate ——————————————————————————————————————————————————————————————————
 
 def "test every command carries a category" []: nothing -> nothing {
-  let missing = scope commands | where name =~ '^elevate( |$)' and category == '' | get name
+  let missing = scope commands | where name =~ '^elevate( |$)' and category == '' | get $.name
   assert equal $missing [] 'commands without @category'
 }
 

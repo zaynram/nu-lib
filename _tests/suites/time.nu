@@ -23,22 +23,22 @@ def "test fresh database" []: record -> nothing {
 }
 
 def "test start closes the previous interval" []: record -> nothing {
-  let t = $in
+  let t: record;
   $env.TIMEWARRIORDB = $t.db
   let a = time start '#repo' alpha --at=($t.now - 3hr)
   assert equal $a.tags ['#repo' alpha] 'start returns the interval'
   assert equal $a.end null 'open interval has no end'
-  assert equal (time active | get id) 1 'active is the open interval'
+  assert equal (time active | get $.id) 1 'active is the open interval'
   let b = time start beta --at=($t.now - 1hr)
   assert equal $b.tags [beta] 'start closes the previous interval'
   let rows = time list
   assert equal ($rows | length) 2 'both intervals exported'
-  assert equal ($rows | where tags == [beta] | first | get end) null 'beta is still open'
-  assert ((($rows | where tags == ['#repo' alpha] | first | get span) - 2hr | math abs) < 1sec) 'span of the closed interval'
+  assert equal ($rows | where tags == [beta] | first | get $.end) null 'beta is still open'
+  assert ((($rows | where tags == ['#repo' alpha] | first | get $.span) - 2hr | math abs) < 1sec) 'span of the closed interval'
 }
 
 def "test stop at" []: record -> nothing {
-  let t = $in
+  let t: record;
   $env.TIMEWARRIORDB = $t.db
   time start beta --at=($t.now - 1hr) | ignore
   let s = time stop --at=($t.now - 10min)
@@ -47,7 +47,7 @@ def "test stop at" []: record -> nothing {
 }
 
 def "test modify" []: record -> nothing {
-  let t = $in
+  let t: record;
   $env.TIMEWARRIORDB = $t.db
   seed $t.now
   let m = time modify 1 --tags=[gamma] --annotate=note
@@ -58,7 +58,7 @@ def "test modify" []: record -> nothing {
 }
 
 def "test list ranges and tag filter" []: record -> nothing {
-  let t = $in
+  let t: record;
   $env.TIMEWARRIORDB = $t.db
   seed $t.now
   time modify 1 --tags=[gamma] | ignore
@@ -72,10 +72,10 @@ def "test list ranges and tag filter" []: record -> nothing {
 }
 
 def "test tags and passthrough" []: record -> nothing {
-  let t = $in
+  let t: record;
   $env.TIMEWARRIORDB = $t.db
   seed $t.now
-  assert ('#repo' in (time tags | get name)) 'tags reads tags.data'
+  assert ('#repo' in (time tags | get $.name)) 'tags reads tags.data'
   assert equal (time get dom.tracked.count | str trim) '2' 'raw passthrough'
 }
 
@@ -96,7 +96,7 @@ def "test tags of a fresh database is empty" []: record -> nothing {
 }
 
 def "test tags counts uses" []: record -> nothing {
-  let t = $in
+  let t: record;
   $env.TIMEWARRIORDB = $t.db
   seed $t.now
   time start alpha --at=($t.now - 5min) | ignore
@@ -105,20 +105,20 @@ def "test tags counts uses" []: record -> nothing {
 }
 
 def "test list rows are typed" []: record -> nothing {
-  let t = $in
+  let t: record;
   $env.TIMEWARRIORDB = $t.db
   seed $t.now
   time start open --at=($t.now - 5min) | ignore
   let rows = time list
   assert equal ($rows | columns) [id start end span tags annotation] 'the columns'
-  assert equal ($rows | get id | sort) [1 2 3] 'ids'
-  assert equal ($rows | where tags == [open] | first | get end) null 'the open interval has no end'
-  assert equal ($rows | get start | each { describe } | uniq) [datetime] 'local datetimes'
-  assert equal ($rows | get span | each { describe } | uniq) [duration] 'spans'
+  assert equal ($rows | get $.id | sort) [1 2 3] 'ids'
+  assert equal ($rows | where tags == [open] | first | get $.end) null 'the open interval has no end'
+  assert equal ($rows | get $.start | each { describe } | uniq) [datetime] 'local datetimes'
+  assert equal ($rows | get $.span | each { describe } | uniq) [duration] 'spans'
 }
 
 def "test list from alone ends now" []: record -> nothing {
-  let t = $in
+  let t: record;
   $env.TIMEWARRIORDB = $t.db
   seed $t.now
   assert equal (time list --from=($t.now - 2hr) | length) 2 'beta, and alpha overlapping the range'
@@ -126,7 +126,7 @@ def "test list from alone ends now" []: record -> nothing {
 }
 
 def "test list passes hints and requires every tag" []: record -> nothing {
-  let t = $in
+  let t: record;
   $env.TIMEWARRIORDB = $t.db
   seed $t.now
   assert equal (time list '#repo' alpha | length) 1 'both tags'
@@ -135,18 +135,18 @@ def "test list passes hints and requires every tag" []: record -> nothing {
 }
 
 def "test today and week" []: record -> nothing {
-  let t = $in
+  let t: record;
   let now: record = $t.now | into record
   if $now.hour == 0 and $now.minute < 10 { skip 'too close to midnight for :day' }
   $env.TIMEWARRIORDB = $t.db
   time start x --at=($t.now - 5min) | ignore
-  assert equal (time today | get tags) [[x]] 'the interval of today'
-  assert equal (time week | get tags) [[x]] 'and of this week'
+  assert equal (time today | get $.tags) [[x]] 'the interval of today'
+  assert equal (time week | get $.tags) [[x]] 'and of this week'
 }
 
 def "test start without tags and in the future" []: record -> nothing {
   $env.TIMEWARRIORDB = $in.db
-  assert equal (time start | get tags) [] 'an untagged interval'
+  assert equal (time start | get $.tags) [] 'an untagged interval'
   let err: record = try { time start --at=((date now) + 1hr) x; {} } catch {|e| $e }
   assert ($err.msg =~ '^timew start exited with code \d+$') $'the message names the subcommand: ($err.msg)'
   assert equal $err.details?.help? 'Time tracking cannot be set in the future.' 'timew stderr is the advice'
@@ -154,7 +154,7 @@ def "test start without tags and in the future" []: record -> nothing {
 }
 
 def "test stop returns the closed interval" []: record -> nothing {
-  let t = $in
+  let t: record;
   $env.TIMEWARRIORDB = $t.db
   time start beta --at=($t.now - 1hr) | ignore
   let s = time stop
@@ -163,12 +163,12 @@ def "test stop returns the closed interval" []: record -> nothing {
 }
 
 def "test modify start and empty tags" []: record -> nothing {
-  let t = $in
+  let t: record;
   $env.TIMEWARRIORDB = $t.db
   seed $t.now
   let m = time modify 2 --start=($t.now - 4hr)
   assert ((($m.start - ($t.now - 4hr)) | math abs) < 1sec) 'modify moves the start'
-  assert equal (time modify 1 --tags=[] | get tags) [] 'an empty tag set untags'
+  assert equal (time modify 1 --tags=[] | get $.tags) [] 'an empty tag set untags'
 }
 
 def "test modify an unknown id raises" []: record -> nothing {

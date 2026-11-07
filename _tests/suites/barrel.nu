@@ -86,7 +86,7 @@ def "test elevate is not flattened" []: nothing -> nothing {
 
 def "test flattened names do not shadow builtins" []: nothing -> nothing {
   with-sandbox {|ctx|
-    let builtins: list<string> = scope commands | where type in [built-in keyword plugin] | get name
+    let builtins: list<string> = scope commands | where type in [built-in keyword plugin] | get $.name
     let added: list<string> = plain $ctx '(scope commands | where type == custom | get name) ++ (scope aliases | get name)'
     assert equal ($added | where $it in $builtins) [] 'no custom command or alias takes a builtin name'
   }
@@ -300,7 +300,7 @@ def "test the generated file loads without the root on the include path" []: not
     let probe: string = '{alarm: (scope commands | where name == "alarm set" | is-not-empty) libs: $env.NU_LIB_DIRS}'
     # A fresh machine: no `--include-path`, no NU_LIB_DIRS, a working directory outside the repository (`use` also
     # looks there), a sandboxed HOME.
-    let res: record = with-env (sandbox-env $ctx | insert NU_LIB_DIRS null) {
+    let res: record = with-env (sandbox-env $ctx | insert $.NU_LIB_DIRS null) {
       cd $ctx.code
       '' | ^$nu.current-exe --no-config-file --commands $"source ($target | to nuon)\n($probe) | to nuon" | complete
     }

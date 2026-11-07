@@ -18,7 +18,7 @@ def _keys []: nothing -> oneof<list, record> {
   # Filter out underscore-prefixed keys since they are often used only internally
   | where value !~ '^_+[_a-z\-]+$'
   # Show the native type of complex values instead of a huge serialization.
-  | update description {||
+  | update $.description {||
     describe | if $in ends-with > { return $in }
     $in | to text | str trim
   } | into completions
@@ -79,7 +79,7 @@ export def --env add [
   let vars: record = default {}
     | merge $merge
     | if $name != null { upsert $name $value } else { }
-  let added: record = $conversions | default [] | each {|c| {$c.name: ($c | select to_string from_string)} } | into record
+  let added: record = $conversions | default [] | each {|c| {$c.name: ($c | select $.to_string $.from_string)} } | into record
   let e: record = if $default {
       $vars | reject ...($vars | columns | where (null | has --nullable=false $it))
     } else { $vars }
@@ -120,7 +120,7 @@ export def has [
     let key: oneof<nothing, string> = $env
       | columns
       | where (if $ignore_case { $it | str lowercase } else { $it }) == $wanted
-      | get 0?
+      | first
     $key != null and ($nullable or ($env | get $key) != null)
   }
   # a single positional name returns its bool alone; a piped list always returns a list

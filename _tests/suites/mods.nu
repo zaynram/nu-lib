@@ -15,7 +15,7 @@ use ../mod.nu *
 
 def "after each" []: any -> nothing {
   for table in [used_modules hidden_modules] {
-    for key in (kv list --table=$table | get --optional key | default []) { kv drop --table=$table $key | ignore }
+    for key in (kv list --table=$table | get --optional $.key | default []) { kv drop --table=$table $key | ignore }
   }
 }
 
@@ -29,7 +29,7 @@ def value [ctx: record code: string --vars: record = {} --prelude: string = 'use
 }
 
 def module-id [name: string]: nothing -> int {
-  scope modules | where name == $name | get 0.module_id
+  scope modules | where name == $name | get $.0.module_id
 }
 
 # ——— refresh ——————————————————————————————————————————————————————————————————

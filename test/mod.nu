@@ -154,7 +154,7 @@ def new-sandbox []: nothing -> record {
 
 # The variables that point a child's home and XDG directories into a sandbox.
 def sandbox-vars []: record -> record {
-  let ctx: record = $in
+  let ctx: record;
   {
     HOME: $ctx.home
     XDG_CONFIG_HOME: $ctx.config
@@ -196,7 +196,7 @@ export def exec [
   --vars (-e): record = {} # Additional variables for the child
   --pipe (-p) # Return stdout parsed as nuon (error on non-zero exit) instead of the complete record
 ]: oneof<nothing, string> -> any {
-  let piped: oneof<nothing, string> = $in
+  let piped: oneof<nothing, string>;
   let program: string = $code
     | default $piped
     | default { error make --unspanned {msg: 'no code given' help: 'pass the code as an argument or pipe it in'} }
@@ -244,11 +244,11 @@ export def main [
   # so test output is plain.
   let opts: record = {test: $test verbose: $verbose debug: $debug colors: (style colors) limiter: (timeout-program)}
   let runs: table<suite: path, cfg: record> = $suites | each {|suite| {suite: $suite cfg: (resolve $suite $flags)} }
-  warn-unbounded ($runs | get cfg) $opts
-  let results: list = $runs | each {|r| run-suite $r.suite $r.cfg $opts } | flatten
+  warn-unbounded ($runs | get $.cfg) $opts
+  let results: list = $runs | each --flatten {|r| run-suite $r.suite $r.cfg $opts }
   if (is-terminal --stderr) { pb clear }
   summarize $results ((date now) - $started) $strict $opts.colors
-  $results | select suite name status duration error file
+  $results | select $.suite $.name $.status $.duration $.error $.file
 }
 
 # Enumerate the commands a suite defines and their roles, in a child interpreter.
@@ -283,7 +283,7 @@ export def discover [
   }
   let found: table = $payloads | last
   # Definition order (the order of `def`s in the file), not scope order (alphabetical).
-  $defined | uniq | each {|n| $found | where name == $n | get --optional 0 } | compact
+  $defined | uniq | each {|n| $found | where name == $n | first } | compact
   | each {|c| {name: $c.name role: (role $c) ignore: (($c.description | default '') =~ $IGNORE or 'ignore' in $c.attributes) positional: $c.signatures} }
   | where role != null
 }
@@ -374,7 +374,7 @@ def compact-record []: record -> record { record where value != null }
 # Validate a partial configuration layer and make its paths absolute relative to `base`. `--internal` also admits the
 # keys the runner adds to a resolved configuration (`resolved`, `project`).
 def normalize-layer [base: path source: string --internal]: record -> record {
-  let layer: record = $in
+  let layer: record;
   let known: list<string> = $DEFAULTS | columns | if $internal { append [resolved project] } else { }
   let unknown: list<string> = $layer | columns | where $it not-in $known
   if ($unknown | is-not-empty) {
@@ -393,7 +393,7 @@ def normalize-layer [base: path source: string --internal]: record -> record {
       error make --unspanned {msg: $"invalid ($key) '($v)' in ($source)" help: 'expected true or false'}
     }
   }
-  let t: any = $layer | get --optional timeout
+  let t: any = $layer | get --optional $.timeout
   if $t != null and (($t | describe) != duration or $t < 0sec) {
     error make --unspanned {msg: $"invalid timeout '($t)' in ($source)" help: 'expected a duration such as 30sec (0sec: no limit)'}
   }
@@ -409,7 +409,7 @@ def normalize-layer [base: path source: string --internal]: record -> record {
       error make --unspanned {msg: $"invalid ($key) '($v)' in ($source)" help: 'expected a list of strings such as [tests/suites]'}
     }
   }
-  let e: any = $layer | get --optional env
+  let e: any = $layer | get --optional $.env
   if $e != null and not (($e | describe) starts-with record) {
     error make --unspanned {msg: $"invalid env '($e)' in ($source)" help: 'expected a record of variable names to values such as {LOG: run.log}'}
   }
@@ -418,8 +418,8 @@ def normalize-layer [base: path source: string --internal]: record -> record {
     $base | path join $p | path expand
   }
   $layer
-  | if $in.paths? != null { update paths { each {|p| do $absolute $p } } } else { }
-  | if $in.lib-dirs? != null { update lib-dirs { each {|p| do $absolute $p } } } else { }
+  | if $in.paths? != null { update $.paths { each {|p| do $absolute $p } } } else { }
+  | if $in.lib-dirs? != null { update $.lib-dirs { each {|p| do $absolute $p } } } else { }
 }
 
 # The `$env.NU_TEST` layer: a record, or nuon text as received by a child interpreter. Empty text counts as unset
@@ -450,29 +450,29 @@ def project-file [start: path]: nothing -> oneof<path, nothing> {
   } $dir
   | each { path join $PROJECT_FILE }
   | where ($it | path expand | path type) == file
-  | get --optional 0
+  | first
 }
 
 def project-layer [file: oneof<path, nothing>]: nothing -> record {
   if $file == null { return ({}) }
-  open --raw $file | from nuon | default {} | normalize-layer ($file | path dirname) $file | insert project $file
+  open --raw $file | from nuon | default {} | normalize-layer ($file | path dirname) $file | insert $.project $file
 }
 
 # Combine layers (lowest precedence first) into an effective configuration.
 def combine [...layers: record]: nothing -> record {
   let merged: record = $layers | reduce --fold $DEFAULTS {|layer acc|
     $acc
-    | merge ($layer | reject --optional lib-dirs passthrough env)
-    | update lib-dirs { prepend ($layer.lib-dirs? | default []) }
-    | update passthrough { prepend ($layer.passthrough? | default []) }
-    | update env { merge ($layer.env? | default {}) }
+    | merge ($layer | reject --optional $.lib-dirs $.passthrough $.env)
+    | update $.lib-dirs { prepend ($layer.lib-dirs? | default []) }
+    | update $.passthrough { prepend ($layer.passthrough? | default []) }
+    | update $.env { merge ($layer.env? | default {}) }
   }
   $merged
-  | update paths { path expand } # only the defaults can still be relative: they resolve from $env.PWD
-  | update lib-dirs { append $HOME | path expand | uniq }
-  | update passthrough { uniq }
-  | insert resolved true
-  | default null project
+  | update $.paths { path expand } # only the defaults can still be relative: they resolve from $env.PWD
+  | update $.lib-dirs { append $HOME | path expand | uniq }
+  | update $.passthrough { uniq }
+  | insert $.resolved true
+  | default null $.project
 }
 
 # Effective configuration for a suite (or directory) given flag overrides.
@@ -487,8 +487,8 @@ def resolve [location: path flags: record]: nothing -> record {
 
 def combine-resolved [base: record flags: record]: nothing -> record {
   $base
-  | merge ($flags | reject --optional lib-dirs)
-  | update lib-dirs { prepend ($flags.lib-dirs? | default []) | uniq }
+  | merge ($flags | reject --optional $.lib-dirs)
+  | update $.lib-dirs { prepend ($flags.lib-dirs? | default []) | uniq }
 }
 
 # ——— suite discovery ——————————————————————————————————————————————————————————
@@ -524,7 +524,7 @@ def find-suites [paths: list<path> flags: record]: nothing -> list<path> {
 # Names a suite file defines with `def` (quoted or bare), regardless of what it imports.
 def defined-names []: string -> list<string> {
   parse --regex $DEF_RX | each {|m|
-    let quoted: oneof<string, nothing> = [$m.dq? $m.sq?] | compact --empty | get --optional 0
+    let quoted: oneof<string, nothing> = [$m.dq? $m.sq?] | compact --empty | first
     if $quoted == null { return ([$m.bq? $m.bare?] | compact --empty | first) }
     # The parser's own reading of the literal (escapes, doubled quotes); failing that, the text between the quotes.
     try { $quoted | from nuon | into string } catch { $quoted | str substring 1..<(($quoted | str length) - 1) }
@@ -539,26 +539,26 @@ def role [cmd: record]: nothing -> oneof<string, nothing> {
   } else if $hook in $HOOKS {
     $hook
   } else {
-    $cmd.attributes | where $it in $HOOKS | get --optional 0
+    $cmd.attributes | where $it in $HOOKS | first
   }
 }
 
 # ——— execution ————————————————————————————————————————————————————————————————
 
 def run-suite [suite: path cfg: record opts: record]: nothing -> list {
-  let stem: string = $suite | path parse | get stem
+  let stem: string = $suite | path parse | get $.stem
   let c: bool = $opts.colors
   print --stderr $"('[' | tint dark_gray_bold $c)($stem | tint cyan_bold $c)(']' | tint dark_gray_bold $c)"
   if $opts.debug { print --stderr ($cfg | to nuon --indent 2) }
-  let annotate: closure = {|rows| $rows | each { insert suite $stem | insert file $suite } }
+  let annotate: closure = {|rows| $rows | each { insert $.suite $stem | insert $.file $suite } }
   let found: record = try { {cmds: (discover $suite --config=$cfg --limiter=$opts.limiter)} } catch {|e| {error: ($e | error-text)} }
   if $found has error {
     let row: record = {name: '(discover)' status: error duration: 0sec error: $found.error}
-    render $row ($opts | update verbose true)
+    render $row ($opts | update $.verbose true)
     return (do $annotate [$row])
   }
   let cmds: table = $found.cmds
-  let hooks: record = $HOOKS | each {|h| {$h: ($cmds | where role == $h | get name)} } | into record
+  let hooks: record = $HOOKS | each {|h| {$h: ($cmds | where role == $h | get $.name)} } | into record
   let wanted: table = $cmds | where role == test | where $opts.test == '' or $it.name =~ $opts.test
   let ignored: list = $wanted | where $it.ignore | each {|t| {name: $t.name status: skip duration: 0sec error: 'ignored'} }
   let runnable: table = $wanted | where not $it.ignore
@@ -573,7 +573,7 @@ def run-suite [suite: path cfg: record opts: record]: nothing -> list {
     }
     {name: $t.name status: error duration: 0sec error: $why}
   }
-  let names: list<string> = $runnable | where (do $callable $it.name) and not $it.positional | get name
+  let names: list<string> = $runnable | where (do $callable $it.name) and not $it.positional | get $.name
   # A hook is written into every test's chain: one the runner cannot call would break the whole child program.
   let reason: oneof<nothing, string> = $cmds | where role in $HOOKS | each {|h|
     if not (do $callable $h.name) {
@@ -581,7 +581,7 @@ def run-suite [suite: path cfg: record opts: record]: nothing -> list {
     } else if $h.positional {
       $"the hook '($h.name)' takes a required argument: tests and hooks take none"
     }
-  } | get --optional 0
+  } | first
   if $reason != null {
     let blocked: list = $runnable | each {|t| {name: $t.name status: error duration: 0sec error: $reason} }
     for row in [...$ignored ...$blocked] { render $row $opts }
@@ -614,7 +614,7 @@ def run-child [suite: path cfg: record hooks: record names: list<string> opts: r
   let elapsed: duration = (date now) - $started
   let rows: list = $res.stdout | tagged | where ($it | describe) starts-with record
   # A child that dies (parse error, `exit`, crash) emits no row for the remaining tests: report each as an error.
-  let missing: list<string> = $names | where $it not-in ($rows | get name)
+  let missing: list<string> = $names | where $it not-in ($rows | get $.name)
   let why: string = if $res.exit_code == 124 and $cfg.timeout > 0sec and $elapsed >= $cfg.timeout {
     # Exit code 124 alone is not a timeout (a test may `exit 124`): the child must also have run for the bound.
     $"child interpreter timed out after ($cfg.timeout)"
@@ -722,7 +722,7 @@ def spawn-script [cfg: record vars: record script: path limiter: list<path>]: no
   # Children get an empty stdin and, where `setsid` exists, no controlling terminal: a test that waits for input
   # (`input`, a prompt, a TUI) fails instead of hanging the run. `input` reads the terminal, not stdin, so an
   # empty stdin alone is not enough.
-  let detach: list<string> = which --all setsid | where type == external | get --optional 0.path | each {|p| [$p --wait] } | default []
+  let detach: list<string> = which --all setsid | where type == external | get --optional $.0.path | each {|p| [$p --wait] } | default []
   let limit: list<string> = if $cfg.timeout > 0sec {
     $limiter | each --flatten {|p| [$p --kill-after=5 $"($cfg.timeout / 1sec)"] }
   } else { [] }
@@ -750,14 +750,14 @@ def spawn-script [cfg: record vars: record script: path limiter: list<path>]: no
 # child with a usage error, so a `timeout` whose `--version` does not name coreutils counts as absent. `main` looks
 # it up once per run for the test children; `discover` and `exec` look it up themselves.
 def timeout-program []: nothing -> list<path> {
-  which --all timeout | where type == external | get --optional 0.path
+  which --all timeout | where type == external | get --optional $.0.path
   | each {|p| if (^$p --version | complete).stdout =~ '(?i)coreutils' { [$p] } else { [] } }
   | default []
 }
 
 # A configured `timeout` that cannot be enforced is said once per run, so the missing bound never passes unnoticed.
 def warn-unbounded [cfgs: list<record> opts: record]: nothing -> nothing {
-  let limits: list<duration> = $cfgs | get timeout | where $it > 0sec | uniq
+  let limits: list<duration> = $cfgs | get $.timeout | where $it > 0sec | uniq
   if ($limits | is-not-empty) and ($opts.limiter | is-empty) {
     let text: string = $limits | each { into string } | str join ', '
     print --stderr ($"warning: timeout ($text) is configured but no coreutils `timeout` is on PATH: children run unbounded" | tint yellow $opts.colors)
@@ -778,9 +778,9 @@ def env-text []: any -> string {
 
 # Flatten a caught error into readable text: message, label texts, help, inner messages.
 def error-text []: record -> string {
-  let e: record = $in
+  let e: record;
   let d: record = $e.details? | default {msg: $e.msg}
-  [$d.msg ...($d.labels? | default [] | get --optional text | default []) $d.help? ...($d.inner? | default [] | get --optional msg | default [])]
+  [$d.msg ...($d.labels? | default [] | get --optional $.text | default []) $d.help? ...($d.inner? | default [] | get --optional $.msg | default [])]
   | compact --empty
   | uniq # a label often repeats the message
   | str join (char newline)
@@ -836,9 +836,9 @@ def _suites-on-line [context: string]: nothing -> list<path> {
 }
 
 def _suite-stems [context: string]: nothing -> list<string> {
-  _suites-on-line $context | each { path parse | get stem } | uniq
+  _suites-on-line $context | each { path parse | get $.stem } | uniq
 }
 
 def _test-names [context: string]: nothing -> list<string> {
-  _suites-on-line $context | each { open --raw $in | defined-names | where $it starts-with 'test ' } | flatten | uniq | sort
+  _suites-on-line $context | each --flatten { open --raw $in | defined-names | where $it starts-with 'test ' } | uniq | sort
 }

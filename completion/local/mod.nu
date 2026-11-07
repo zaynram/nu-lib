@@ -73,7 +73,7 @@ module fish-complete {
 
   # Make each value usable as a nushell argument (see `parse-output`).
   def hydrate []: table<value: string> -> table<value: string> {
-    update value {
+    update $.value {
       if $in starts-with '~' { path expand --no-symlink } else { }
       | if ($in | path exists) and $in =~ $CHAR {
         $'"($in | str replace --all --regex '([\\"])' '\$1')"'
@@ -94,12 +94,12 @@ module carapace-complete {
   @category env
   export def runtime-env []: nothing -> record {
     help commands
-    | select name command_type
-    | update name { split row (char sp) | first }
+    | select $.name $.command_type
+    | update $.name { split row (char sp) | first }
     | uniq-by name
-    | insert key {|row| if $row.command_type == custom { 'CARAPACE_SHELL_FUNCTIONS' } else { 'CARAPACE_SHELL_BUILTINS' } }
+    | insert $.key {|row| if $row.command_type == custom { 'CARAPACE_SHELL_FUNCTIONS' } else { 'CARAPACE_SHELL_BUILTINS' } }
     | group-by --prune --to-table key
-    | update items { get name | str join (char nl) }
+    | update $.items { get $.name | str join (char nl) }
     | transpose --ignore-titles --header-row --as-record
   }
 
@@ -193,7 +193,7 @@ export def run-completer [
   buffer?: string
   # The commandline to complete (pipeline input is ignored when this is present)
 ]: oneof<nothing, string, list<string>> -> oneof<nothing, table, list<table>> {
-  let input: oneof<nothing, string, list<string>> = $in
+  let input: oneof<nothing, string, list<string>>;
   if $env.config.completions.external.completer? == null { set-completer }
   let completer: closure = $env.config.completions.external.completer
   let run: closure = {|line: string|
@@ -208,7 +208,7 @@ export def run-completer [
 # Runs on every direct `use`; idempotent: values already present are kept, and PATH gains the carapace bin once.
 export-env {
   if ($env.ENV_CONVERSIONS? | default {}) not-has fish_commands {
-    $env.ENV_CONVERSIONS = $env.ENV_CONVERSIONS? | default {} | insert fish_commands {
+    $env.ENV_CONVERSIONS = $env.ENV_CONVERSIONS? | default {} | insert $.fish_commands {
       to_string: {|v| $v | str join (char esep) }
       from_string: {|s| $s | split row (char esep) | compact | uniq }
     }

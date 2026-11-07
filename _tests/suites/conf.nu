@@ -23,7 +23,7 @@ const EXAMPLE: path = $ROOT | path join _docs examples machine.nu
 def child [ctx: record code: string --vars: record = {} --prelude: string = 'use conf']: nothing -> record {
   let res: record = sandboxed $ctx $"($code) | to nuon --serialize" --prelude $prelude --vars $vars
   let value: any = if $res.exit_code == 0 { $res.stdout | lines | last | from nuon } else { null }
-  $res | insert value $value
+  $res | insert $.value $value
 }
 
 # As `child`, but return the value and fail with the child's stderr when it exits non-zero.
@@ -500,9 +500,9 @@ def "test vars load sets the variables" []: nothing -> nothing {
 
 def "test vars load is idempotent" []: nothing -> nothing {
   conf vars --load
-  let once: record = $env | select NU_LIB_DIRS PATH
+  let once: record = $env | select $.NU_LIB_DIRS $.PATH
   conf vars --load
-  assert equal ($env | select NU_LIB_DIRS PATH) $once 'loading again changes nothing'
+  assert equal ($env | select $.NU_LIB_DIRS $.PATH) $once 'loading again changes nothing'
 }
 
 def "test vars load return returns the record" []: nothing -> nothing {
@@ -785,7 +785,7 @@ def "test machine config caches a script override until the file changes" []: no
       conf machine-config --file $o.file | ignore
       assert equal (runs $o.log) 4 '--file never uses the cache'
       let cache: path = $nu.cache-dir | path join nu-lib machine-override.nuon
-      assert equal (open $cache | get key.file) $o.file 'the cache names the configured file'
+      assert equal (open $cache | get $.key.file) $o.file 'the cache names the configured file'
     }
   }
 }
@@ -796,10 +796,10 @@ def "test machine config cache misses on another nu version" []: nothing -> noth
     with-env {NU_MACHINE_CONFIG: $o.file} {
       conf machine-config | ignore
       let cache: path = $nu.cache-dir | path join nu-lib machine-override.nuon
-      open $cache | update key.nu '0.0.0' | save --force $cache
+      open $cache | update $.key.nu '0.0.0' | save --force $cache
       conf machine-config | ignore
       assert equal (runs $o.log) 2 'a record checked by another nu is not trusted'
-      assert equal (open $cache | get key.nu) (version).version 'and the cache is rewritten for this one'
+      assert equal (open $cache | get $.key.nu) (version).version 'and the cache is rewritten for this one'
     }
   }
 }
@@ -854,10 +854,10 @@ def "test machine config a script record expires after a day" []: nothing -> not
     with-env {NU_MACHINE_CONFIG: $o.file} {
       conf machine-config | ignore
       let cache: path = $nu.cache-dir | path join nu-lib machine-override.nuon
-      open $cache | update at ((date now) - 2day) | to nuon | save --force $cache
+      open $cache | update $.at ((date now) - 2day) | to nuon | save --force $cache
       conf machine-config | ignore
       assert equal (runs $o.log) 2 'a day-old script record is not trusted'
-      open $cache | update key.root /elsewhere | to nuon | save --force $cache
+      open $cache | update $.key.root /elsewhere | to nuon | save --force $cache
       conf machine-config | ignore
       assert equal (runs $o.log) 3 'nor one computed against another library root'
     }

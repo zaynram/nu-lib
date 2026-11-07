@@ -7,8 +7,62 @@ use error
 
 # Database root; `$env.TIMEWARRIORDB` overrides it at runtime.
 const DB: path = $nu.data-dir | path basename --replace timewarrior
-const COMMANDS: list<string> = [annotate cancel config continue day delete diagnostics export extensions gaps get help join lengthen modify month move report shorten show split start stop summary tag tags track undo untag week]
-const HINTS: list<string> = [:day :yesterday :week :lastweek :fortnight :month :lastmonth :quarter :lastquarter :year :lastyear :all :ids :fill :adjust :monday :tuesday :wednesday :thursday :friday :saturday :sunday]
+const COMMANDS: list<string> = [
+  annotate
+  cancel
+  config
+  continue
+  day
+  delete
+  diagnostics
+  export
+  extensions
+  gaps
+  get
+  help
+  join
+  lengthen
+  modify
+  month
+  move
+  report
+  shorten
+  show
+  split
+  start
+  stop
+  summary
+  tag
+  tags
+  track
+  undo
+  untag
+  week
+]
+const HINTS: list<string> = [
+  :day
+  :yesterday
+  :week
+  :lastweek
+  :fortnight
+  :month
+  :lastmonth
+  :quarter
+  :lastquarter
+  :year
+  :lastyear
+  :all
+  :ids
+  :fill
+  :adjust
+  :monday
+  :tuesday
+  :wednesday
+  :thursday
+  :friday
+  :saturday
+  :sunday
+]
 const SPANS: list<duration> = [1hr 6hr 12hr 1day 3day 1wk 2wk 4wk]
 
 # ——— definitions —————————————————————————————————————————————————————————————
@@ -85,7 +139,7 @@ export def modify [
 export def tags []: nothing -> table<name: string, count: int> {
   let file: path = db | path join data tags.data
   if not ($file | path exists) { return [] }
-  open --raw $file | from json | transpose name count | update count { get count }
+  open --raw $file | from json | transpose name count | update $.count { get $.count }
 }
 
 # Database root in use: `$env.TIMEWARRIORDB`, or the default location.
@@ -133,17 +187,17 @@ def range [bounds: record]: nothing -> list<string> {
 
 # Rows of `timew export` as local datetimes with a computed span.
 def hydrate []: list -> table {
-  default [] tags | default null end | default null annotation
-  | update start { into datetime | date to-timezone local }
-  | update end { if $in != null { into datetime | date to-timezone local } }
-  | insert span {|row| ($row.end | default (date now)) - $row.start }
-  | select id start end span tags annotation
+  default [] $.tags | default null $.end | default null $.annotation
+  | update $.start { into datetime | date to-timezone local }
+  | update $.end { if $in != null { into datetime | date to-timezone local } }
+  | insert $.span {|row| ($row.end | default (date now)) - $row.start }
+  | select $.id $.start $.end $.span $.tags $.annotation
 }
 
 # ——— completions —————————————————————————————————————————————————————————————
 
 def tag-rows []: nothing -> table<value: string, description: string> {
-  try { tags | rename value description | update description { $'($in) intervals' } } catch { [] }
+  try { tags | rename value description | update $.description { $'($in) intervals' } } catch { [] }
 }
 def id-rows []: nothing -> table<value: string, description: string> {
   try {
@@ -154,7 +208,7 @@ def id-rows []: nothing -> table<value: string, description: string> {
 }
 def _timew [buffer: string]: nothing -> record {
   if ($buffer | split row --regex '\s+' | length) <= 2 { $COMMANDS | wrap value } else {
-    [...(tag-rows) ...($HINTS | wrap value) ...(id-rows | update value { prepend '@' | str join })]
+    [...(tag-rows) ...($HINTS | wrap value) ...(id-rows | update $.value { prepend '@' | str join })]
   } | into completions {sort: false}
 }
 def _tags []: nothing -> record { tag-rows | into completions }

@@ -8,7 +8,7 @@ use ../mod.nu *
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 # Write an executable shell script `name` with `body` into `dir`.
-def stub [dir: path, name: path, body: string]: nothing -> path {
+def stub [dir: path name: path body: string]: nothing -> path {
   need-posix
   let file: path = $dir | path join $name
   $"#!/bin/sh\n($body)\n" | save --force $file
@@ -29,7 +29,7 @@ def with-stubs [body: closure]: nothing -> nothing {
     let binary: path = stub $ctx.code fresh-nu 'echo "ARGS:$*"; echo "FOO=${FOO-unset}"; echo "PID=${pid-unset}"'
     let path: list<string> = $env.PATH | prepend $stubs
     with-env {PATH: $path} {
-      assert equal (which reset | get 0.path) ($stubs | path join reset) 'the stub reset shadows the real one'
+      assert equal (which reset | get $.0.path) ($stubs | path join reset) 'the stub reset shadows the real one'
       do $body {ctx: $ctx binary: $binary log: $log path: $path}
     }
   } | ignore
@@ -37,14 +37,14 @@ def with-stubs [body: closure]: nothing -> nothing {
 
 # Run nu `code` (after `use reload`) in a grandchild (extra nu `--flags`) with stdin on a pipe; return its output
 # lines.
-def run-nu [code: string, --flags: list<string> = []]: nothing -> list<string> {
+def run-nu [code: string --flags: list<string> = []]: nothing -> list<string> {
   let res = '' | ^$nu.current-exe --no-config-file --include-path $ROOT ...$flags -c $"use reload; ($code)" | complete
   assert equal $res.exit_code 0 $"the grandchild succeeds: ($res.stderr)"
   $res.stdout | lines
 }
 
 # Run nu `code` (after `use reload`) in a grandchild on a pseudo-terminal; return its output lines.
-def run-tty [t: record, code: string]: nothing -> list<string> {
+def run-tty [t: record code: string]: nothing -> list<string> {
   if (which script | is-empty) { skip '`script` (util-linux) is not installed' }
   let file: path = $t.ctx.code | path join case.nu
   $"use reload; ($code)" | save --force $file

@@ -176,7 +176,7 @@ export def raise [
       } else if $it has msg {
         $it
       } else if $it has inner {
-        $it.inner | get --optional 0
+        $it.inner | first
       }
     }
   let unknown: list<string> = $with | columns | where $it not-in $WITH_KEYS
@@ -210,7 +210,7 @@ export def raise [
   let count: int = $labels | length
 
   let details: record = $with
-    | reject --optional kind
+    | reject --optional $.kind
     | default { derive $span $kind } $.code
     | upsert $.msg $message
     | upsert $.inner { append $cause }

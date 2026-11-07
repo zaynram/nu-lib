@@ -54,43 +54,43 @@ def "test mandatory-rule-evaluation" []: nothing -> nothing {
 }
 
 def "test typecheck-rule-evaluation" []: nothing -> nothing {
-  let hints: list = $GOOD | update doc.slug 5 | update doc.date 7 | reject doc.rows | hints
+  let hints: list = $GOOD | update $.doc.slug 5 | update $.doc.date 7 | reject $.doc.rows | hints
   assert length $hints 2 'type mismatches are reported'
   assert equal $hints [
     '$.doc.slug has type int; expected string'
     '$.doc.date has type int; expected string|datetime'
   ] 'simple type mismatches are reported in order'
-  let hints: list = $GOOD | update doc.tags [1.2] | hints
+  let hints: list = $GOOD | update $.doc.tags [1.2] | hints
   assert greater ($hints | length) 0 'element type mismatches are detected'
   assert str contains $hints.0? 'has type list<float>; expected list<string>' 'element type mismatches are reported properly'
-  assert length ($GOOD | update doc.tags [] | hints) 0 'an empty list fits any list type'
-  let hints: list = $GOOD | update doc.extra 1 | hints
+  assert length ($GOOD | update $.doc.tags [] | hints) 0 'an empty list fits any list type'
+  let hints: list = $GOOD | update $.doc.extra 1 | hints
   assert greater ($hints | length) 0 'container type mismatches are detected'
   assert str contains $hints.0? 'has type int; expected record' 'container type mismatches are reported'
-  let rules: list = ($GOOD | update version 2 | validate rules $RULES).rule?
+  let rules: list = ($GOOD | update $.version 2 | validate rules $RULES).rule?
   assert greater ($rules | length) 0 'rows with type mismatches have rule names'
   assert equal $rules.0? typecheck 'rows with type mismatches report the correct rule name'
 }
 
 def "test table-row-rule-evaluation" []: nothing -> nothing {
-  let bad = $GOOD | update doc.rows [{name: x} {size: big} {name: 3 marks: [m]}]
-  assert equal ($bad | validate rules $RULES | select path rule) [
+  let bad = $GOOD | update $.doc.rows [{name: x} {size: big} {name: 3 marks: [m]}]
+  assert equal ($bad | validate rules $RULES | select $.path $.rule) [
     [path rule];
     [$.doc.rows.1.name mandatory]
     [$.doc.rows.2.name typecheck]
     [$.doc.rows.1.size typecheck]
     [$.doc.rows.2.marks.0 regex-simple]
   ] 'validation errors in table rows name the row, in rule order'
-  assert length ($GOOD | update doc.rows nope | hints) 1 'a container of the wrong type reports once'
-  assert equal ($GOOD | update doc.rows [] | hints) [] 'table with no rows does not report errors'
+  assert length ($GOOD | update $.doc.rows nope | hints) 1 'a container of the wrong type reports once'
+  assert equal ($GOOD | update $.doc.rows [] | hints) [] 'table with no rows does not report errors'
 }
 
 def "test value-rule-evaluation" []: nothing -> nothing {
-  assert equal ($GOOD | update version '2.0' | hints) ["$.version is `2.0`, which is not one of [1.0]"] 'enumerable rule'
-  assert equal ($GOOD | update doc.slug 'Ab.c' | hints) ["$.doc.slug is 'Ab.c'; expected lowercase letters only ('^[a-z]+$')"] 'regex-class rule'
-  assert equal ($GOOD | insert doc.code x1 | hints) ["$.doc.code is 'x1' which does not match '^\\d+$'"] 'regex-simple rule'
-  assert equal ($GOOD | update doc.summary 'much too long' | hints) ['$.doc.summary is 13 characters (max: 10)'] 'max-length rule'
-  assert equal ($GOOD | update doc.tags [a z long-tag] | hints) [
+  assert equal ($GOOD | update $.version '2.0' | hints) ["$.version is `2.0`, which is not one of [1.0]"] 'enumerable rule'
+  assert equal ($GOOD | update $.doc.slug 'Ab.c' | hints) ["$.doc.slug is 'Ab.c'; expected lowercase letters only ('^[a-z]+$')"] 'regex-class rule'
+  assert equal ($GOOD | insert $.doc.code x1 | hints) ["$.doc.code is 'x1' which does not match '^\\d+$'"] 'regex-simple rule'
+  assert equal ($GOOD | update $.doc.summary 'much too long' | hints) ['$.doc.summary is 13 characters (max: 10)'] 'max-length rule'
+  assert equal ($GOOD | update $.doc.tags [a z long-tag] | hints) [
     '$.doc.tags has 3 items (max: 2)'
     "$.doc.tags.1 is `z`, which is not one of [a, b, long-tag]"
     '$.doc.tags.2 is 8 characters (max: 4)'
@@ -98,8 +98,8 @@ def "test value-rule-evaluation" []: nothing -> nothing {
 }
 
 def "test union-type-rule-evaluation" []: nothing -> nothing {
-  assert length ($GOOD | insert doc.flag true | hints) 0 'string rules skip judgement on non-strings'
-  let hints: list = $GOOD | insert doc.flag nope | hints
+  assert length ($GOOD | insert $.doc.flag true | hints) 0 'string rules skip judgement on non-strings'
+  let hints: list = $GOOD | insert $.doc.flag nope | hints
   assert length $hints 2 'both string rules report'
   assert compare {|a b|
     $a | zip $b | all ($it.0? =~ $it.1?)
@@ -110,28 +110,28 @@ def "test union-type-rule-evaluation" []: nothing -> nothing {
 }
 
 def "test validation-with-strict" []: nothing -> nothing {
-  let data: record = $GOOD | insert typo 1 | insert doc.slugg x | update doc.rows [{name: x colour: red} {name: y flavour: mild}]
+  let data: record = $GOOD | insert $.typo 1 | insert $.doc.slugg x | update $.doc.rows [{name: x colour: red} {name: y flavour: mild}]
   assert equal ($data | hints) [] 'foreign keys pass without --strict'
   let found = $data | validate rules $RULES --strict
-  assert equal ($found | get path) [$.typo $.doc.slugg $.doc.rows.0.colour $.doc.rows.1.flavour] 'undeclared keys are reported per container, in rule order, table rows by index; a record with no declared children (extra) stays open'
-  assert equal ($found | get rule | uniq) [foreign-key] 'undeclared keys are foreign-key failures'
+  assert equal ($found | get $.path) [$.typo $.doc.slugg $.doc.rows.0.colour $.doc.rows.1.flavour] 'undeclared keys are reported per container, in rule order, table rows by index; a record with no declared children (extra) stays open'
+  assert equal ($found | get $.rule | uniq) [foreign-key] 'undeclared keys are foreign-key failures'
   assert equal $found.0?.hint 'ensure $.typo is a valid property' 'the foreign-key hint names the key'
-  assert equal ($GOOD | update doc 7 | hints --strict) ['$.doc has type int; expected record'] 'containers under a failed container are not scanned'
+  assert equal ($GOOD | update $.doc 7 | hints --strict) ['$.doc has type int; expected record'] 'containers under a failed container are not scanned'
 }
 
 def "test return-one-bails-on-the-first-failure" []: nothing -> nothing {
-  let bad = $GOOD | update version '2.0' | update doc.rows [{name: x} {size: big}]
-  assert equal ($bad | validate rules $RULES --return=one | select path rule) {path: $.version rule: enumerable} 'the first failing rule is returned as a record'
-  assert equal ($GOOD | update doc.rows nope | validate rules $RULES --return=one | select path rule) {path: $.doc.rows rule: typecheck} 'a mistyped table reports itself, not its rows'
-  assert equal ($GOOD | update doc.rows [{name: x} {size: big}] | validate rules $RULES --return=one | select path rule) {path: $.doc.rows.1.name rule: mandatory} 'table rows are judged in order'
+  let bad = $GOOD | update $.version '2.0' | update $.doc.rows [{name: x} {size: big}]
+  assert equal ($bad | validate rules $RULES --return=one | select $.path $.rule) {path: $.version rule: enumerable} 'the first failing rule is returned as a record'
+  assert equal ($GOOD | update $.doc.rows nope | validate rules $RULES --return=one | select $.path $.rule) {path: $.doc.rows rule: typecheck} 'a mistyped table reports itself, not its rows'
+  assert equal ($GOOD | update $.doc.rows [{name: x} {size: big}] | validate rules $RULES --return=one | select $.path $.rule) {path: $.doc.rows.1.name rule: mandatory} 'table rows are judged in order'
   assert equal ($GOOD | validate rules $RULES --return=one) null 'valid data returns null'
-  assert equal ($GOOD | insert typo 1 | validate rules $RULES --return=one --strict | select path rule) {path: $.typo rule: foreign-key} 'strict mode bails on the first undeclared key'
-  assert equal ($GOOD | insert doc.rows.0.colour red | validate rules $RULES --return=one --strict | select path rule) {path: $.doc.rows.0.colour rule: foreign-key} 'strict mode scans table rows, naming the row'
+  assert equal ($GOOD | insert $.typo 1 | validate rules $RULES --return=one --strict | select $.path $.rule) {path: $.typo rule: foreign-key} 'strict mode bails on the first undeclared key'
+  assert equal ($GOOD | insert $.doc.rows.0.colour red | validate rules $RULES --return=one --strict | select $.path $.rule) {path: $.doc.rows.0.colour rule: foreign-key} 'strict mode scans table rows, naming the row'
 }
 
 def "test validation-with-errors" []: nothing -> nothing {
   assert equal ($GOOD | validate rules $RULES --errors) $GOOD 'a valid record passes through'
-  let raised = try { $GOOD | update version '2.0' | update doc.slug 9 | validate rules --errors $RULES | ignore; null } catch {|e| $e.details.help }
+  let raised = try { $GOOD | update $.version '2.0' | update $.doc.slug 9 | validate rules --errors $RULES | ignore; null } catch {|e| $e.details.help }
   assert str contains $raised "version is `2.0`, which is not one of [1.0]" 'first reason in help text'
   assert str contains $raised "doc.slug has type int; expected string" 'second reason in help text'
 }
@@ -150,8 +150,8 @@ def "test dynamic-rule-runs-alone" []: nothing -> nothing {
   let rules = [{path: $.count type: int dynamic: {even: {|v at| if $v mod 2 != 0 { error make --unspanned {msg: 'value is odd' help: $'($at) must be even'} } }}}] # nu-lint-ignore: descriptive_error_messages
   let found = $DYNAMIC_DOC | validate rules $rules
   assert length $found 1 'a rule with only `dynamic` is evaluated'
-  assert equal ($found.0? | select path rule reason hint data) {path: $.count rule: even reason: 'value is odd' hint: '$.count must be even' data: null} 'a raised error maps msg to reason and help to hint, with no data'
-  assert equal ($DYNAMIC_DOC | update count 8 | validate rules $rules) ($DYNAMIC_DOC | update count 8) 'a passing dynamic rule returns the input'
+  assert equal ($found.0? | select $.path $.rule $.reason $.hint $.data) {path: $.count rule: even reason: 'value is odd' hint: '$.count must be even' data: null} 'a raised error maps msg to reason and help to hint, with no data'
+  assert equal ($DYNAMIC_DOC | update $.count 8 | validate rules $rules) ($DYNAMIC_DOC | update $.count 8) 'a passing dynamic rule returns the input'
 }
 
 def "test dynamic-rule-per-row" []: nothing -> nothing {
@@ -178,11 +178,11 @@ def "test dynamic-rule-templates-see-data" []: nothing -> nothing {
   let found = $DYNAMIC_DOC | validate rules $rules --colors=false
   assert length $found 1 'one closed issue'
   assert equal $found.0?.hint '$.tasks.2: complete c' 'templates are filled from the path and the returned data'
-  assert equal ($found | get rule) [closed] 'rule names are kept'
+  assert equal ($found | get $.rule) [closed] 'rule names are kept'
 }
 
 def "test table-row-rules-return-structured-rows" []: nothing -> nothing {
-  let found = $GOOD | update doc.rows [{name: x} {size: big}] | validate rules $RULES
+  let found = $GOOD | update $.doc.rows [{name: x} {size: big}] | validate rules $RULES
   assert equal ($found | columns) [path rule hint reason data] 'every failure row has the same columns, data included'
   assert ($found | all data == null) 'preset rules carry no data'
 }
@@ -214,14 +214,14 @@ def "test string failure details" []: nothing -> nothing {
   let e = caught { do ('x!' | validate string '^\w+$') }
   assert equal $e.msg 'the provided string is invalid' 'default message'
   assert equal $e.code 'validate::string::invalid_argument' "the default code is what derivation would give; it is passed because the message is the caller's"
-  assert equal ($e.labels | get text) [string regex] 'the input and the regex are labelled'
+  assert equal ($e.labels | get $.text) [string regex] 'the input and the regex are labelled'
   assert equal $e.help null 'no help without --instruct'
   assert equal $e.inner [] 'no inner errors by default'
 }
 
 def "test string enum failure labels the enum" []: nothing -> nothing {
   let e = caught { do ('q' | validate string --enum [a b]) }
-  assert equal ($e.labels | get text) [string enum] 'the input and the enum are labelled'
+  assert equal ($e.labels | get $.text) [string enum] 'the input and the enum are labelled'
 }
 
 def "test string passes with either regex or enum" []: nothing -> nothing {
@@ -245,25 +245,25 @@ def "test string custom error fields" []: nothing -> nothing {
   assert equal $e.msg 'bad q' '--message'
   assert equal $e.code 'my::code' '--code'
   assert equal $e.help 'use a' '--instruct is the help'
-  assert equal ($e.inner | get msg) [why] '--inner'
+  assert equal ($e.inner | get $.msg) [why] '--inner'
 }
 
 def "test string custom labels replace the defaults" []: nothing -> nothing {
   let span = (metadata 'q').span
   let e = caught { do ('q' | validate string a --labels [{text: 'right here' span: $span}]) }
-  assert equal ($e.labels | get text) ['right here'] 'only the given labels'
+  assert equal ($e.labels | get $.text) ['right here'] 'only the given labels'
 }
 
 # ——— validate rules: types ————————————————————————————————————————————————————
 
 def "test rules examples" []: nothing -> nothing {
-  assert equal ({name: 5} | rules [{path: $.name type: string required: true} {path: $.size type: int required: true}] --colors=false | get hint) ['$.name has type int; expected string' '$.size must be a non-null value'] 'every failure as a row'
+  assert equal ({name: 5} | rules [{path: $.name type: string required: true} {path: $.size type: int required: true}] --colors=false | get $.hint) ['$.name has type int; expected string' '$.size must be a non-null value'] 'every failure as a row'
   assert equal ({name: a} | rules [{path: $.name type: string}] --errors) {name: a} 'a guard in a pipeline'
 }
 
 def "test a rule without a type accepts any value" []: nothing -> nothing {
   assert equal ({a: 1} | validate rules [{path: $.a required: true}]) {a: 1} 'the type defaults to any'
-  assert equal ({b: 1} | validate rules [{path: $.a required: true}] | get hint) ['$.a must be a non-null value'] 'the requirement still applies'
+  assert equal ({b: 1} | validate rules [{path: $.a required: true}] | get $.hint) ['$.a must be a non-null value'] 'the requirement still applies'
   assert equal ({a: [1 x]} | validate rules [{path: $.a enum: [1 x]}]) {a: [1 x]} 'other rules still apply'
 }
 
@@ -276,36 +276,36 @@ def "test type any accepts every value" []: nothing -> nothing {
 
 def "test type number accepts ints and floats" []: nothing -> nothing {
   assert equal ({a: 1 b: 1.5} | validate rules [{path: $.a type: number} {path: $.b type: number}]) {a: 1 b: 1.5} 'int and float'
-  assert equal ({a: '1'} | validate rules [{path: $.a type: number}] | get hint) ['$.a has type string; expected number'] 'a string is not a number'
+  assert equal ({a: '1'} | validate rules [{path: $.a type: number}] | get $.hint) ['$.a has type string; expected number'] 'a string is not a number'
   assert equal ({a: [1 2.5]} | validate rules [{path: $.a type: 'list<number>'}]) {a: [1 2.5]} 'inside a list'
 }
 
 def "test union types split only at the top level" []: nothing -> nothing {
   assert equal ({a: [1 b]} | validate rules [{path: $.a type: 'list<int|string>'}]) {a: [1 b]} 'a union inside a generic'
-  assert equal ({a: [1.5]} | validate rules [{path: $.a type: 'list<int|string>'}] | get hint) ['$.a has type list<float>; expected list<int|string>'] 'elements outside the inner union fail'
+  assert equal ({a: [1.5]} | validate rules [{path: $.a type: 'list<int|string>'}] | get $.hint) ['$.a has type list<float>; expected list<int|string>'] 'elements outside the inner union fail'
   assert equal ({a: x} | validate rules [{path: $.a type: 'list<int|string>|string'}]) {a: x} 'a top-level alternative after a generic'
   assert equal ({a: [x]} | validate rules [{path: $.a type: 'string|list<int|string>'}]) {a: [x]} 'a generic alternative after a scalar'
 }
 
 def "test nested generic types" []: nothing -> nothing {
   assert equal ({a: [[1] [2 3]]} | validate rules [{path: $.a type: 'list<list<int>>'}]) {a: [[1] [2 3]]} 'list of lists'
-  assert equal ({a: [[1] [x]]} | validate rules [{path: $.a type: 'list<list<int>>'}] | get rule) [typecheck] 'an inner mismatch fails'
+  assert equal ({a: [[1] [x]]} | validate rules [{path: $.a type: 'list<list<int>>'}] | get $.rule) [typecheck] 'an inner mismatch fails'
 }
 
 def "test an empty list fits only list types" []: nothing -> nothing {
-  assert equal ({a: []} | validate rules [{path: $.a type: int}] | get hint) ['$.a has type list<any>; expected int'] 'an empty list is not an int'
+  assert equal ({a: []} | validate rules [{path: $.a type: int}] | get $.hint) ['$.a has type list<any>; expected int'] 'an empty list is not an int'
   assert equal ({a: []} | validate rules [{path: $.a type: table}]) {a: []} 'an empty list is an empty table'
 }
 
 def "test table type accepts a list of records only" []: nothing -> nothing {
   assert equal ({t: [{a: 1} {b: 2}]} | validate rules [{path: $.t type: table}]) {t: [{a: 1} {b: 2}]} 'records with different keys'
-  assert equal ({t: [1 2]} | validate rules [{path: $.t type: table}] | get rule) [typecheck] 'a list of ints is not a table'
-  assert equal ({t: [{a: 1}]} | validate rules [{path: $.t type: string}] | get rule) [typecheck] 'a table is not a string'
+  assert equal ({t: [1 2]} | validate rules [{path: $.t type: table}] | get $.rule) [typecheck] 'a list of ints is not a table'
+  assert equal ({t: [{a: 1}]} | validate rules [{path: $.t type: string}] | get $.rule) [typecheck] 'a table is not a string'
 }
 
 def "test record type" []: nothing -> nothing {
   assert equal ({r: {x: 1}} | validate rules [{path: $.r type: record}]) {r: {x: 1}} 'a record'
-  assert equal ({r: [{x: 1}]} | validate rules [{path: $.r type: record}] | get rule) [typecheck] 'a table is not a record'
+  assert equal ({r: [{x: 1}]} | validate rules [{path: $.r type: record}] | get $.rule) [typecheck] 'a table is not a record'
 }
 
 def "test container types count in every position of a union" []: nothing -> nothing {
@@ -314,14 +314,14 @@ def "test container types count in every position of a union" []: nothing -> not
     let rules = [{path: $.t type: $type} {path: $.t.n type: int}]
     assert equal ({t: [{n: 1}]} | validate rules $rules) {t: [{n: 1}]} $'valid rows pass under ($type)'
     assert equal ({t: [{n: 1}]} | validate rules $rules --return=one) null $'also when bailing, under ($type)'
-    assert equal ({t: [{n: x}]} | validate rules $rules | get path) [$.t.0.n] $'rows are judged one by one under ($type)'
+    assert equal ({t: [{n: x}]} | validate rules $rules | get $.path) [$.t.0.n] $'rows are judged one by one under ($type)'
     assert equal ({} | validate rules $rules) {} $'an absent optional table passes under ($type)'
   }
   for type in ['record|nothing' 'nothing|record'] {
     let rules = [{path: $.r type: $type} {path: $.r.q type: int required: true}]
     assert equal ({} | validate rules $rules) {} $'the children of an absent container are not judged under ($type)'
-    assert equal ({r: {q: 1 z: 2}} | validate rules $rules --strict | get path) [$.r.z] $'strict scans the container under ($type)'
-    assert equal ({r: {q: 1 z: 2}} | validate rules $rules --strict --return=one | get path) $.r.z $'also when bailing, under ($type)'
+    assert equal ({r: {q: 1 z: 2}} | validate rules $rules --strict | get $.path) [$.r.z] $'strict scans the container under ($type)'
+    assert equal ({r: {q: 1 z: 2}} | validate rules $rules --strict --return=one | get $.path) $.r.z $'also when bailing, under ($type)'
   }
 }
 
@@ -329,7 +329,7 @@ def "test container types count in every position of a union" []: nothing -> not
 
 def "test list of records rules judge every row" []: nothing -> nothing {
   let rules = [{path: $.t type: 'list<record>'} {path: $.t.n type: string required: true}]
-  assert equal ({t: [{n: a} {n: 1} {}]} | validate rules $rules | select path rule) [
+  assert equal ({t: [{n: a} {n: 1} {}]} | validate rules $rules | select $.path $.rule) [
     [path rule];
     [$.t.1.n typecheck]
     [$.t.2.n mandatory]
@@ -339,7 +339,7 @@ def "test list of records rules judge every row" []: nothing -> nothing {
 
 def "test strict scans list of records rows" []: nothing -> nothing {
   let rules = [{path: $.t type: 'list<record>'} {path: $.t.n type: string}]
-  assert equal ({t: [{n: a z: 1}]} | validate rules $rules --strict | get path) [$.t.0.z] 'undeclared row keys are reported'
+  assert equal ({t: [{n: a z: 1}]} | validate rules $rules --strict | get $.path) [$.t.0.z] 'undeclared row keys are reported'
 }
 
 # ——— validate rules: value rules ——————————————————————————————————————————————
@@ -347,30 +347,30 @@ def "test strict scans list of records rows" []: nothing -> nothing {
 def "test min length" []: nothing -> nothing {
   let rules = [{path: $.s type: string min-length: 3} {path: $.l type: 'list<string>' min-length: 2}]
   assert equal ({s: abc l: [ab]} | validate rules $rules) {s: abc l: [ab]} 'long enough'
-  assert equal ({s: ab l: [ab c]} | validate rules $rules | get hint) ['$.s is 2 characters (min: 3)' '$.l.1 is 1 characters (min: 2)'] 'too short, also per element'
+  assert equal ({s: ab l: [ab c]} | validate rules $rules | get $.hint) ['$.s is 2 characters (min: 3)' '$.l.1 is 1 characters (min: 2)'] 'too short, also per element'
 }
 
 def "test min items" []: nothing -> nothing {
   let rules = [{path: $.l type: 'list<int>' min-items: 2} {path: $.t type: table min-items: 1}]
   assert equal ({l: [1 2] t: [{a: 1}]} | validate rules $rules) {l: [1 2] t: [{a: 1}]} 'enough items'
-  assert equal ({l: [1] t: []} | validate rules $rules | get hint) ['$.l has 1 items (min: 2)' '$.t has 0 items (min: 1)'] 'too few items'
+  assert equal ({l: [1] t: []} | validate rules $rules | get $.hint) ['$.l has 1 items (min: 2)' '$.t has 0 items (min: 1)'] 'too few items'
 }
 
 def "test const on a scalar" []: nothing -> nothing {
   assert equal ({a: 4} | validate rules [{path: $.a const: 4}]) {a: 4} 'equal'
-  assert equal ({a: 5} | validate rules [{path: $.a const: 4}] | select rule hint) [[rule hint]; [any-const '$.a must be exactly 4']] 'a non-string constant'
-  assert equal ({a: y} | validate rules [{path: $.a const: x}] | select rule hint) [[rule hint]; [str-const "$.a must be exactly 'x'"]] 'a string constant is quoted'
+  assert equal ({a: 5} | validate rules [{path: $.a const: 4}] | select $.rule $.hint) [[rule hint]; [any-const '$.a must be exactly 4']] 'a non-string constant'
+  assert equal ({a: y} | validate rules [{path: $.a const: x}] | select $.rule $.hint) [[rule hint]; [str-const "$.a must be exactly 'x'"]] 'a string constant is quoted'
 }
 
 def "test const on a list compares elements to a scalar constant" []: nothing -> nothing {
   assert equal ({a: [1 1]} | validate rules [{path: $.a const: 1}]) {a: [1 1]} 'every element equals the constant'
-  assert equal ({a: [1 2]} | validate rules [{path: $.a const: 1}] | get path) [$.a.1] 'the element that differs'
+  assert equal ({a: [1 2]} | validate rules [{path: $.a const: 1}] | get $.path) [$.a.1] 'the element that differs'
 }
 
 def "test const with a list constant compares the whole value" []: nothing -> nothing {
   assert equal ({a: [1 2]} | validate rules [{path: $.a const: [1 2]}]) {a: [1 2]} 'an equal list passes'
-  assert equal ({a: [2 1]} | validate rules [{path: $.a const: [1 2]}] | select path hint) [[path hint]; [$.a '$.a must be exactly [1, 2]']] 'one failure for the list'
-  assert equal ({a: x} | validate rules [{path: $.a const: [x]}] | get path) [$.a] 'a scalar never equals a list'
+  assert equal ({a: [2 1]} | validate rules [{path: $.a const: [1 2]}] | select $.path $.hint) [[path hint]; [$.a '$.a must be exactly [1, 2]']] 'one failure for the list'
+  assert equal ({a: x} | validate rules [{path: $.a const: [x]}] | get $.path) [$.a] 'a scalar never equals a list'
 }
 
 def "test const ignores an absent optional value" []: nothing -> nothing {
@@ -378,12 +378,12 @@ def "test const ignores an absent optional value" []: nothing -> nothing {
 }
 
 def "test enum on a scalar" []: nothing -> nothing {
-  assert equal ({a: 3} | validate rules [{path: $.a type: int enum: [1 2]}] | get hint) ['$.a is `3`, which is not one of [1, 2]'] 'a non-member'
+  assert equal ({a: 3} | validate rules [{path: $.a type: int enum: [1 2]}] | get $.hint) ['$.a is `3`, which is not one of [1, 2]'] 'a non-member'
   assert equal ({a: 2} | validate rules [{path: $.a type: int enum: [1 2]}]) {a: 2} 'a member'
 }
 
 def "test null list elements" []: nothing -> nothing {
-  assert equal ({l: [a null]} | validate rules [{path: $.l type: 'list<any>' required: true enum: [a]}] | select path rule) [[path rule]; [$.l.1 mandatory]] 'a required list has no null elements'
+  assert equal ({l: [a null]} | validate rules [{path: $.l type: 'list<any>' required: true enum: [a]}] | select $.path $.rule) [[path rule]; [$.l.1 mandatory]] 'a required list has no null elements'
   assert equal ({l: [3 null]} | validate rules [{path: $.l type: 'list<any>' enum: [3]}]) {l: [3 null]} 'null elements of an optional list are skipped'
 }
 
@@ -410,19 +410,19 @@ def "test return one honours colors" []: nothing -> nothing {
 
 def "test colors follow config use-colors by default" []: nothing -> nothing {
   let rule = [{path: $.a type: int}]
-  assert not (({a: x} | rules $rule | get hint.0) =~ '\e\[') 'plain by default without a terminal (the child has none)'
+  assert not (({a: x} | rules $rule | get $.hint.0) =~ '\e\[') 'plain by default without a terminal (the child has none)'
   $env.config.use_ansi_coloring = true
-  let styled = {a: x} | rules $rule | get hint.0
+  let styled = {a: x} | rules $rule | get $.hint.0
   assert ($styled =~ '\e\[') 'styled by default when colours are on'
-  assert equal ($styled | ansi strip) ({a: x} | rules $rule --colors=false | get hint.0) 'stripping matches --colors=false'
+  assert equal ($styled | ansi strip) ({a: x} | rules $rule --colors=false | get $.hint.0) 'stripping matches --colors=false'
   $env.config.use_ansi_coloring = false
-  assert not (({a: x} | rules $rule --return=one | get hint) =~ '\e\[') 'plain by default when colours are off, also with --return=one'
+  assert not (({a: x} | rules $rule --return=one | get $.hint) =~ '\e\[') 'plain by default when colours are off, also with --return=one'
 }
 
 def "test literal fields are quoted in green when styled" []: nothing -> nothing {
   let doc = {s: Ab code: 'x1' k: nope}
   let rules = [{path: $.s pattern: '^[a-z]+$' class: 'lowercase letters'} {path: $.code pattern: '^\d+$'} {path: $.k const: yes}]
-  let styled = $doc | rules $rules --colors=true | get hint
+  let styled = $doc | rules $rules --colors=true | get $.hint
   assert equal ($styled | ansi strip) [
     "$.s is 'Ab'; expected lowercase letters ('^[a-z]+$')"
     "$.code is 'x1' which does not match '^\\d+$'"
@@ -453,12 +453,12 @@ def "test errors help carries no styles" []: nothing -> nothing {
 }
 
 def "test return one overrides errors" []: nothing -> nothing {
-  assert equal ({a: x} | validate rules [{path: $.a type: int}] --return=one --errors | get rule) typecheck 'the failure is returned, not raised'
+  assert equal ({a: x} | validate rules [{path: $.a type: int}] --return=one --errors | get $.rule) typecheck 'the failure is returned, not raised'
 }
 
 def "test failures are returned regardless of return mode" []: nothing -> nothing {
   for mode in [input nothing table] {
-    assert equal ({a: x} | validate rules [{path: $.a type: int}] --return=$mode | get rule) [typecheck] $'--return=($mode) still returns failures'
+    assert equal ({a: x} | validate rules [{path: $.a type: int}] --return=$mode | get $.rule) [typecheck] $'--return=($mode) still returns failures'
   }
 }
 
@@ -466,37 +466,37 @@ def "test failures are returned regardless of return mode" []: nothing -> nothin
 
 def "test strict reports every row with an undeclared key" []: nothing -> nothing {
   let rules = [{path: $.t type: table} {path: $.t.n type: int}]
-  assert equal ({t: [{n: 1 x: 1} {n: 2 x: 2}]} | validate rules $rules --strict | get path) [$.t.0.x $.t.1.x] 'one failure per row'
+  assert equal ({t: [{n: 1 x: 1} {n: 2 x: 2}]} | validate rules $rules --strict | get $.path) [$.t.0.x $.t.1.x] 'one failure per row'
 }
 
 def "test strict names the row of a record under a table" []: nothing -> nothing {
   let rules = [{path: $.t type: table} {path: $.t.r type: record} {path: $.t.r.q type: int}]
   let doc = {t: [{r: {q: 1}} {r: {q: 2 z: 3}}]}
-  assert equal ($doc | validate rules $rules --strict | get path) [$.t.1.r.z] 'all non-strict failures'
-  assert equal ($doc | validate rules $rules --strict --return=one | get path) $.t.1.r.z 'the first failure'
+  assert equal ($doc | validate rules $rules --strict | get $.path) [$.t.1.r.z] 'all non-strict failures'
+  assert equal ($doc | validate rules $rules --strict --return=one | get $.path) $.t.1.r.z 'the first failure'
 }
 
 def "test children of a mistyped record in a table row are not judged" []: nothing -> nothing {
   let rules = [{path: $.t type: table} {path: $.t.r type: record} {path: $.t.r.q type: int required: true}]
-  assert equal ({t: [{r: 5} {r: {}}]} | validate rules $rules | select path rule) [
+  assert equal ({t: [{r: 5} {r: {}}]} | validate rules $rules | select $.path $.rule) [
     [path rule];
     [$.t.0.r typecheck]
     [$.t.1.r.q mandatory]
   ] 'the container reports; its children are judged only where it is a record'
-  assert equal ({t: [{r: 5}]} | validate rules $rules --return=one | get path) $.t.0.r 'the same when bailing'
+  assert equal ({t: [{r: 5}]} | validate rules $rules --return=one | get $.path) $.t.0.r 'the same when bailing'
 }
 
 def "test return one skips the children of an absent container" []: nothing -> nothing {
   let rules = [{path: $.r type: record} {path: $.r.q type: int required: true}]
   assert equal ({} | validate rules $rules --return=one) null 'the same verdict as without --return=one'
   assert equal ({} | validate rules $rules) {} 'which passes'
-  assert equal ({r: {}} | validate rules $rules --return=one | get path) $.r.q 'a present container is judged'
+  assert equal ({r: {}} | validate rules $rules --return=one | get $.path) $.r.q 'a present container is judged'
 }
 
 def "test children of an absent record in a table row are not judged" []: nothing -> nothing {
   let rules = [{path: $.t type: table} {path: $.t.r type: record} {path: $.t.r.q type: int required: true}]
-  assert equal ({t: [{} {r: {}}]} | validate rules $rules | get path) [$.t.1.r.q] 'only the row whose container is present'
-  assert equal ({t: [{} {r: {}}]} | validate rules $rules --return=one | get path) $.t.1.r.q 'the same when bailing'
+  assert equal ({t: [{} {r: {}}]} | validate rules $rules | get $.path) [$.t.1.r.q] 'only the row whose container is present'
+  assert equal ({t: [{} {r: {}}]} | validate rules $rules --return=one | get $.path) $.t.1.r.q 'the same when bailing'
 }
 
 def "test a path through a scalar does not crash" []: nothing -> nothing {
@@ -510,14 +510,14 @@ def "test a key under an undeclared mistyped container is not judged" []: nothin
   let rules = [{path: $.r.q type: int required: true}]
   assert equal ({r: 5} | validate rules $rules) {r: 5} 'no failure without a rule for the container'
   assert equal ({r: [1 2]} | validate rules $rules --strict) {r: [1 2]} 'nor under a list of scalars, even strict'
-  assert equal ({} | validate rules $rules | get path) [$.r.q] 'an absent container still reports the key missing'
-  let declared = {r: 5} | validate rules ($rules | prepend {path: $.r type: record}) | select path rule
+  assert equal ({} | validate rules $rules | get $.path) [$.r.q] 'an absent container still reports the key missing'
+  let declared = {r: 5} | validate rules ($rules | prepend {path: $.r type: record}) | select $.path $.rule
   assert equal $declared [{path: $.r rule: typecheck}] 'declaring the container reports the mismatch instead'
 }
 
 def "test strict skips a mistyped record under a table" []: nothing -> nothing {
   let rules = [{path: $.t type: table} {path: $.t.r type: record} {path: $.t.r.q type: int}]
-  assert equal ({t: [{r: 5}]} | validate rules $rules --strict | get path) [$.t.0.r] 'only the typecheck is reported'
+  assert equal ({t: [{r: 5}]} | validate rules $rules --strict | get $.path) [$.t.0.r] 'only the typecheck is reported'
 }
 
 def "test strict on an open root" []: nothing -> nothing {
@@ -541,7 +541,7 @@ def "test dynamic rule raised text keeps unknown braces" []: nothing -> nothing 
 
 def "test dynamic rule data fields fill templates" []: nothing -> nothing {
   let rules = [{path: $.a type: int dynamic: {x: {|v| {reason: 'r' hint: '{n} is {kind}' n: $v kind: odd} }}}]
-  assert equal ({a: 3} | validate rules $rules | get hint) ['3 is odd'] 'data fields are placeholders'
+  assert equal ({a: 3} | validate rules $rules | get $.hint) ['3 is odd'] 'data fields are placeholders'
 }
 
 def "test dynamic rule runs every named closure" []: nothing -> nothing {
@@ -550,14 +550,14 @@ def "test dynamic rule runs every named closure" []: nothing -> nothing {
     even: {|v| if $v mod 2 != 0 { {reason: 'odd'} } }
     small: {|v| if $v > 100 { {reason: 'big'} } }
   }}]
-  assert equal ({a: -3} | validate rules $rules | select rule reason) [[rule reason]; [positive 'not positive'] [even odd]] 'every failing closure reports, in order'
-  assert equal ({a: -3} | validate rules $rules --return=one | get rule) positive 'the first one bails'
+  assert equal ({a: -3} | validate rules $rules | select $.rule $.reason) [[rule reason]; [positive 'not positive'] [even odd]] 'every failing closure reports, in order'
+  assert equal ({a: -3} | validate rules $rules --return=one | get $.rule) positive 'the first one bails'
   assert equal ({a: 2} | validate rules $rules) {a: 2} 'all pass'
 }
 
 def "test dynamic rule receives value and path" []: nothing -> nothing {
   let rules = [{path: $.l type: 'list<int>' dynamic: {seen: {|v at| {reason: $'($in) ($v) ($at)'} }}}]
-  assert equal ({l: [5]} | validate rules $rules | get reason) ['5 5 $.l.0'] 'input, first positional and path'
+  assert equal ({l: [5]} | validate rules $rules | get $.reason) ['5 5 $.l.0'] 'input, first positional and path'
 }
 
 def "test dynamic rule non record results pass" []: nothing -> nothing {
@@ -567,9 +567,9 @@ def "test dynamic rule non record results pass" []: nothing -> nothing {
 
 def "test dynamic rule msg and help aliases" []: nothing -> nothing {
   let rules = [{path: $.a type: int dynamic: {x: {|v| {msg: 'm' help: 'h'} }}}]
-  assert equal ({a: 1} | validate rules $rules | select reason hint data) [[reason hint data]; [m h null]] 'msg/help work like reason/hint'
+  assert equal ({a: 1} | validate rules $rules | select $.reason $.hint $.data) [[reason hint data]; [m h null]] 'msg/help work like reason/hint'
   let rules = [{path: $.a type: int dynamic: {x: {|v| {reason: 'only reason'} }}}]
-  assert equal ({a: 1} | validate rules $rules | get hint) ['only reason'] 'the hint defaults to the reason'
+  assert equal ({a: 1} | validate rules $rules | get $.hint) ['only reason'] 'the hint defaults to the reason'
 }
 
 def "test dynamic closures of a long table run one row at a time" []: nothing -> nothing {
@@ -588,5 +588,5 @@ def "test long tables report rows in order" []: nothing -> nothing {
   # long enough to be judged in parallel
   let rows = 0..199 | each {|i| if $i mod 7 == 0 { {n: $i} } else { {n: ($i | into string)} } }
   let found = {t: $rows} | validate rules [{path: $.t type: table} {path: $.t.n type: string}]
-  assert equal ($found | get path) (0..199 | where $it mod 7 == 0 | each {|i| [t $i n] | into cell-path }) 'every failing row, in row order'
+  assert equal ($found | get $.path) (0..199 | where $it mod 7 == 0 | each {|i| [t $i n] | into cell-path }) 'every failing row, in row order'
 }

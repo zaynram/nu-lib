@@ -32,7 +32,7 @@ def fixture [ctx: record]: nothing -> record<ctx: record, root: path, work: path
   {ctx: $ctx root: $ctx.root work: $work}
 }
 
-def git-init [dir: path, --remote: string, --user: string]: nothing -> nothing {
+def git-init [dir: path --remote: string --user: string]: nothing -> nothing {
   ^git -C $dir init --quiet
   if $remote != null { ^git -C $dir remote add origin $remote }
   if $user != null { ^git -C $dir config user.name $user }
@@ -47,7 +47,7 @@ def case [body: closure]: nothing -> nothing {
 # Run `code` after `use proj` in a sandboxed child; return its value.
 # The value is read from the last stdout line, so `print` output above it is ignored
 # unless `--printed` asks for those lines instead.
-def in-proj [fx: record, code: string, --printed]: nothing -> any {
+def in-proj [fx: record code: string --printed]: nothing -> any {
   let vars: record = {
     WORK: $fx.work
     GIT_CONFIG_GLOBAL: '/dev/null' # no global user.name leaking into results
@@ -61,7 +61,7 @@ def in-proj [fx: record, code: string, --printed]: nothing -> any {
   if $printed { $out | drop } else { $out | last | from nuon }
 }
 
-def project [fx: record, name: string]: nothing -> record {
+def project [fx: record name: string]: nothing -> record {
   in-proj $fx 'proj list --long' | where name == $name | first
 }
 
@@ -162,9 +162,9 @@ def "test list kind scopes long adds kind" []: nothing -> nothing {
   case {|fx|
       let short = in-proj $fx 'proj list --kind txt'
       let long = in-proj $fx 'proj list --kind txt --long'
-      assert equal ($short | get name) [notes]
+      assert equal ($short | get $.name) [notes]
       assert ($short not-has 'kind')
-      assert equal ($long | get kind) [txt]
+      assert equal ($long | get $.kind) [txt]
   }
 }
 
@@ -194,7 +194,7 @@ def "test prune nothing missing removes nothing" []: nothing -> nothing {
 }
 
 # The error `code` raises in the child, as `{msg code help}` (`in-proj` fails when it raises nothing).
-def caught-in-proj [fx: record, code: string]: nothing -> record {
+def caught-in-proj [fx: record code: string]: nothing -> record {
   in-proj $fx $"try { ($code); error make --unspanned {msg: 'sbproj: nothing was raised'} } catch {|e| {msg: $e.msg code: $e.details?.code? help: $e.details?.help?} }"
 }
 
@@ -261,7 +261,7 @@ def "test main already in the project does not push the stack" []: nothing -> no
 # ——— without a workspace ——————————————————————————————————————————————————————
 
 # Run `code` after `use proj` in a sandboxed child without WORK; return its value.
-def in-bare [ctx: record, code: string]: nothing -> oneof<nothing, bool, int, string, list, record> {
+def in-bare [ctx: record code: string]: nothing -> oneof<nothing, bool, int, string, list, record> {
   sandboxed $ctx $"($code) | to nuon --serialize" --prelude 'use proj' --pipe
 }
 
@@ -408,18 +408,18 @@ def "test remote url forms" []: nothing -> nothing {
 def "test kind summarizes one kind" []: nothing -> nothing {
   case {|fx|
       let k = in-proj $fx 'proj kind txt'
-      assert equal ($k | reject projects) {name: txt root: ($fx.work | path join txt) description: 'projects containing mostly prose'} 'name, root and description'
-      assert equal ($k.projects | get name) [notes] 'its projects'
-      assert equal ($k.projects | get kind) [txt] 'with their kind'
+      assert equal ($k | reject $.projects) {name: txt root: ($fx.work | path join txt) description: 'projects containing mostly prose'} 'name, root and description'
+      assert equal ($k.projects | get $.name) [notes] 'its projects'
+      assert equal ($k.projects | get $.kind) [txt] 'with their kind'
   }
 }
 
 def "test kind all lists every kind" []: nothing -> nothing {
   case {|fx|
       let all = in-proj $fx 'proj kind --all'
-      assert equal ($all | get name) [src txt dev ext] 'every kind'
+      assert equal ($all | get $.name) [src txt dev ext] 'every kind'
       assert equal ($all | columns) [name description root projects] 'the summary columns'
-      assert equal ($all | where name == dev | get $.0.projects | get name) [tools] 'with its projects'
+      assert equal ($all | where name == dev | get $.0.projects | get $.name) [tools] 'with its projects'
   }
 }
 
@@ -498,7 +498,7 @@ def "test main scan picks up new projects first" []: nothing -> nothing {
 
 # Run `code` after `use proj` in an INTERACTIVE grandchild (so the import-time hydration job runs); return
 # {value, stderr}. `--pre` runs before `use proj` (the import is a runtime statement, so a mark it sets is seen).
-def in-interactive [fx: record, code: string, --pre: string = '', --vars: record = {}]: nothing -> record<value: any, stderr: string> {
+def in-interactive [fx: record code: string --pre: string = '' --vars: record = {}]: nothing -> record<value: any, stderr: string> {
   let program: string = $"($pre); use proj; ($code) | to nuon --serialize"
   # The same throwaway HOME/XDG tree as `sandboxed` gives the non-interactive children: one registry per case.
   let sandbox: record = {

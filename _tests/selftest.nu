@@ -44,7 +44,7 @@ def runner [dir: path code: string --vars: record = {}]: nothing -> record {
       ^$nu.current-exe --no-config-file --include-path=($ROOT) --commands=$"use test\n($code) | to nuon --serialize" | complete
     }
   }
-  $res | insert value (if $res.exit_code == 0 { $res.stdout | from nuon })
+  $res | insert $.value (if $res.exit_code == 0 { $res.stdout | from nuon })
 }
 
 # Like `runner`, but the child must succeed; returns its value.
@@ -162,7 +162,7 @@ def "test a" [] { }'}
     assert str contains ($rows | row 'test fail').error 'one is not two'
     assert equal ($rows | row 'test skipped').error 'no tool here'
     assert equal ($rows | row 'test ignored').error 'ignored'
-    assert equal ($rows | get suite | uniq) [s]
+    assert equal ($rows | get $.suite | uniq) [s]
     # The declared output type admits passing rows (null error): the result can be bound with a type.
     assert equal (ok $dir 'let r: table = test; $r | length') 5
   }}
@@ -271,7 +271,7 @@ def "test quick" [] { }'}
     # A PATH holding only `env` (the runner scrubs children with it; `nu` is started by its absolute path).
     let bin = $dir | path join bin
     mkdir $bin
-    which --all env | where type == external | get --optional 0.path | each {|p| ^ln -s $p ($bin | path join env) }
+    which --all env | where type == external | get --optional $.0.path | each {|p| ^ln -s $p ($bin | path join env) }
     let res = runner $dir 'test' --vars {PATH: $bin}
     assert equal $res.exit_code 0 $res.stderr
     assert equal ($res.value | statuses) {'test runs': ok}
@@ -285,7 +285,7 @@ def "test quick" [] { }'}
     let dir = project {'nutest.nuon': '{timeout: 1sec}' 'tests/suites/t.nu': 'def "test runs" [] { }'}
     let bin = $dir | path join bin
     mkdir $bin
-    which --all env | where type == external | get --optional 0.path | each {|p| ^ln -s $p ($bin | path join env) }
+    which --all env | where type == external | get --optional $.0.path | each {|p| ^ln -s $p ($bin | path join env) }
     # BusyBox's usage: no `--version`, no `--kill-after`. Picked as the limiter, it would end every child with it.
     "#!/bin/sh\necho 'Usage: timeout [-s SIG] [-k KILL_SECS] SECS PROG ARGS' >&2\nexit 1\n" | save --force ($bin | path join timeout)
     ^chmod +x ($bin | path join timeout)
@@ -337,12 +337,12 @@ def "test u" [] { }'
     }
     let rows = ok $dir 'test'
     let by = {|suite name| $rows | where suite == $suite and name == $name | first }
-    assert equal (do $by ba 'test t' | select status error) {status: error error: 'before all failed: boom'}
-    assert equal (do $by be 'test t' | select status error) {status: error error: 'before each failed: boom'}
-    assert equal (do $by ae 'test t' | select status error) {status: error error: 'after each failed: boom'}
+    assert equal (do $by ba 'test t' | select $.status $.error) {status: error error: 'before all failed: boom'}
+    assert equal (do $by be 'test t' | select $.status $.error) {status: error error: 'before each failed: boom'}
+    assert equal (do $by ae 'test t' | select $.status $.error) {status: error error: 'after each failed: boom'}
     assert equal (do $by aa 'test t').status ok
     # after all fails once per child, but is reported once.
-    assert equal ($rows | where suite == aa and name == '(after all)' | select status error) [{status: error error: boom}]
+    assert equal ($rows | where suite == aa and name == '(after all)' | select $.status $.error) [{status: error error: boom}]
     assert equal ((runner $dir 'test --match aa').stderr | split row '(after all)' | length) 2 'rendered once'
   }}
 
@@ -356,7 +356,7 @@ def "before each" [] { skip "no creds" }
 def "test t" [] { }'
     }
     let rows = ok $dir 'test'
-    assert equal ($rows | select suite status error) [[suite status error]; [sa skip 'no tool'] [se skip 'no creds']]
+    assert equal ($rows | select $.suite $.status $.error) [[suite status error]; [sa skip 'no tool'] [se skip 'no creds']]
   }}
 
   {name: 'crash: a child that exits reports its unfinished tests as errors' run: {||
@@ -392,7 +392,7 @@ def "test b" [] { }'}
       'tests/suites/good.nu': $PASSING
     }
     let rows = ok $dir 'test'
-    assert equal ($rows | select suite name status) [
+    assert equal ($rows | select $.suite $.name $.status) [
       [suite name status];
       [broken '(discover)' error]
       [good 'test passes' ok]
@@ -602,7 +602,7 @@ def "test reading stdin gets nothing" [] { assert equal (try { input --numchar 1
     let dir = project {'tests/suites/k.nu': 'use test skip
 def "before each" [] { {a: 1} }
 def "test s" []: record -> nothing { skip "needs x" }'}
-    assert equal (ok $dir 'test' | select name status error) [[name status error]; ['test s' skip 'needs x']]
+    assert equal (ok $dir 'test' | select $.name $.status $.error) [[name status error]; ['test s' skip 'needs x']]
   }}
 
   {name: 'sandbox: with-sandbox creates XDG dirs, cleans up, rethrows, and keeps SKIP' run: {||
@@ -617,7 +617,7 @@ def "test s" []: record -> nothing { skip "needs x" }'}
     assert equal (open $marker | path exists) false
     let suite = project {'tests/suites/w.nu': 'use test [skip with-sandbox]
 def "test skipped inside a sandbox" [] { with-sandbox {|c| skip "nope" } }'}
-    assert equal (ok $suite 'test' | select status error) [[status error]; [skip nope]]
+    assert equal (ok $suite 'test' | select $.status $.error) [[status error]; [skip nope]]
   }}
 
   {name: 'sandbox: sandboxed points the child home and data dirs into the sandbox' run: {||
@@ -645,7 +645,7 @@ def "test skipped inside a sandbox" [] { with-sandbox {|c| skip "nope" } }'}
   {name: 'init: scaffolds a runnable layout, keeps existing files, --force overwrites' run: {||
     let dir = project {'lib/greet/mod.nu': $GREET}
     let made = ok $dir 'test init demo --module lib/greet'
-    assert equal ($made | get action) [written written written]
+    assert equal ($made | get $.action) [written written written]
     assert equal (open --raw ($dir | path join nutest.nuon) | from nuon) {paths: [tests/suites] lib-dirs: []}
     assert str contains (open --raw ($dir | path join tests mod.nu)) 'export use "../lib/greet"'
     assert equal (ok $dir 'test' | statuses) {'test demo works': ok}

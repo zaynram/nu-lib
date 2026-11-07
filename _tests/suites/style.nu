@@ -163,7 +163,7 @@ def "test arguments with whitespace are quoted" []: nothing -> nothing {
 }
 
 def "test missing colors fall back to the defaults" []: nothing -> nothing {
-  $env.config.color_config = ($env.config.color_config | reject shape_external shape_external_resolved shape_externalarg)
+  $env.config.color_config = ($env.config.color_config | reject $.shape_external $.shape_external_resolved $.shape_externalarg)
   assert equal (style ansi extern git a) $'(ansi cyan)git(ansi reset)(ansi green_bold) a(ansi reset)' 'cyan name, bold green arguments'
   assert equal (style ansi extern --resolved git) $'(ansi light_yellow_bold)git(ansi reset)' 'light yellow bold when resolved'
 }

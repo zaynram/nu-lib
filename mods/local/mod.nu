@@ -55,9 +55,9 @@ export def edit [
     {|d| $d.rel | str contains $t }
   ]
   let found: path = $tiers
-    | each {|tier| $defs | where $tier | get 0?.file }
+    | each {|tier| $defs | where $tier | get $.0?.file }
     | compact
-    | get 0?
+    | first
     | default {
       error raise $"no definition found for '($target)'" --with={
         kind: not_found
@@ -77,7 +77,7 @@ def _definitions []: nothing -> record {
     glob --no-dir --depth=3 --exclude=$EXCLUDE ($dir | path rejoin ** *.nu)
     | path relative-to $dir
     | wrap value
-    | insert description ($dir | str replace $nu.home-dir '~')
+    | insert $.description ($dir | str replace $nu.home-dir '~')
   } | flatten --all
   | into completions {
     sort: true

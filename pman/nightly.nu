@@ -81,10 +81,10 @@ export def host-target [
 export def parse-assets []: list<any> -> table {
   where name =~ $ASSET | each {|asset|
     $asset.name | parse --regex $ASSET | first
-    | insert name $asset.name
-    | insert url $asset.browser_download_url
-    | insert digest $asset.digest?
-    | select name version target ext url digest
+    | insert $.name $asset.name
+    | insert $.url $asset.browser_download_url
+    | insert $.digest $asset.digest?
+    | select $.name $.version $.target $.ext $.url $.digest
   }
 }
 
@@ -102,7 +102,7 @@ export def api-headers [
   url: string # The request URL
 ]: nothing -> record {
   let token: string = $env.GITHUB_TOKEN? | default ''
-  if ($url | url parse | get host) == api.github.com and $token != '' { {Authorization: $'Bearer ($token)'} } else { {} }
+  if ($url | url parse | get $.host) == api.github.com and $token != '' { {Authorization: $'Bearer ($token)'} } else { {} }
 }
 
 # The install directory: `dir`, or the running `nu`'s directory. With `--writable`, one outside the home directory
@@ -135,7 +135,7 @@ def latest-release [source: string]: nothing -> record {
   let releases: list = try { http get --headers (api-headers $source) $source } catch {|e|
     $e | error raise $"could not fetch the releases from '($source)'" --kind io
   }
-  $releases | sort-by published_at --reverse | get 0?
+  $releases | sort-by published_at --reverse | first
   | default { error raise $"'($source)' lists no releases" --kind not_found }
 }
 
@@ -150,8 +150,8 @@ def pick-build [
     | default { error raise 'no build chosen: nothing was installed' --kind invalid_argument }
   } else {
     let ext: string = if $target =~ windows { 'zip' } else { 'tar.gz' }
-    $archives | where target == $target and ext == $ext | get 0? | default {
-      let known: string = $archives | each { get target } | str join ', '
+    $archives | where target == $target and ext == $ext | first | default {
+      let known: string = $archives | each { get $.target } | str join ', '
       error raise $"the latest release has no build for '($target)'" --with={
         kind: not_found
         help: $'builds: ($known); choose one with --interactive'
@@ -171,7 +171,7 @@ def published-sha256 [build: record sums?: record]: nothing -> oneof<string, not
         $e | error raise $"could not download '($asset.name)'" --kind io
       } | if ($in | describe) == binary { decode } else { }
       $text | lines | parse --regex '^(?<hash>[0-9a-fA-F]{64}) [ *](?<file>.+)$'
-      | where file == $build.name | get 0?.hash | each { str lowercase }
+      | where file == $build.name | get $.0?.hash | each { str lowercase }
     }
   }
 }
@@ -223,8 +223,8 @@ def extract [archive: path dir: path]: nothing -> list<path> {
   let bins: list<path> = do { cd $dir; glob '**/*' --no-dir } | where {|file|
     let parts: record = $file | path parse
     $parts.extension in ['' exe] and ($parts.stem == nu or ($parts.stem | str starts-with nu_plugin_))
-  } | sort-by {|file| ($file | path parse | get stem) != nu }
-  if not ($bins | any ($it | path parse | get stem) == nu) {
+  } | sort-by {|file| ($file | path parse | get $.stem) != nu }
+  if not ($bins | any ($it | path parse | get $.stem) == nu) {
     error raise $"'($archive | path basename)' holds no nu binary" --kind not_found
   }
   $bins
@@ -290,7 +290,7 @@ def confirm [build: record dir: path count: int]: nothing -> nothing {
 # `<name>.previous` (an older `.previous` is overwritten) for `--rollback`. A plugin that fails to install is a
 # warning; `nu` failing is an error.
 def install-files [dir: path]: list<path> -> list<path> {
-  let files: list<path> = $in
+  let files: list<path>;
   mkdir $dir
   $files | each {|file|
     let name: string = $file | path basename
@@ -307,7 +307,7 @@ def install-files [dir: path]: list<path> -> list<path> {
       $dest
     } catch {|e|
       rm --force $stage
-      if ($name | path parse | get stem) == nu { $e.raw } else { log warning $'could not install ($name): ($e.msg)' }
+      if ($name | path parse | get $.stem) == nu { $e.raw } else { log warning $'could not install ($name): ($e.msg)' }
     }
   }
 }
@@ -317,7 +317,7 @@ def install-files [dir: path]: list<path> -> list<path> {
 # The plugins of a registry file: none when it doesn't exist, or can't be read (a warning).
 def registered-plugins [registry: path]: nothing -> table {
   if not ($registry | path exists) { return [] }
-  try { plugin list --registry --plugin-config $registry | select name version filename } catch {|e|
+  try { plugin list --registry --plugin-config $registry | select $.name $.version $.filename } catch {|e|
     log warning $'could not read the plugin registry ($registry): ($e.msg)'
     []
   }
@@ -326,7 +326,7 @@ def registered-plugins [registry: path]: nothing -> table {
 # Warn what installing does to the registered plugins: those shipped in the archive are updated; the others were
 # built separately and may not load on the new version.
 def warn-plugins [plugins: table shipped: list<string> version: string]: nothing -> nothing {
-  let updated: list<string> = $plugins | where name in $shipped | get name
+  let updated: list<string> = $plugins | where name in $shipped | get $.name
   let others: list<string> = $plugins | where name not-in $shipped | each { $'($in.name) ($in.version)' }
   if $updated != [] {
     log warning $'plugins shipped with ($version) are updated from the archive: ($updated | str join ", ")'
@@ -372,9 +372,9 @@ def restored-name []: path -> string { path basename | str replace --regex '\.pr
 
 # The `.previous` files a bump kept in `dir` (`nu.previous`, `nu_plugin_*.previous`), `nu` first.
 def kept-previous [dir: path]: nothing -> list<path> {
-  ls --all $dir | where type == file | get name
+  ls --all $dir | where type == file | get $.name
   | where ($it | path basename) =~ '^nu(_plugin_[^.]+)?(\.exe)?\.previous$'
-  | sort-by {|file| ($file | restored-name | path parse | get stem) != nu }
+  | sort-by {|file| ($file | restored-name | path parse | get $.stem) != nu }
 }
 
 # Put the previous build back: every `.previous` file of `dir` is installed over its current file the way a bump
@@ -414,9 +414,9 @@ def finish [
   version: string # The installed version, for the message
   --reload # Replace this shell with the installed `nu` (`reload --binary`)
 ]: nothing -> table {
-  let nu_bin: path = $installed | where ($it | path parse | get stem) == nu | first
+  let nu_bin: path = $installed | where ($it | path parse | get $.stem) == nu | first
   let shipped: record = $installed | each {|file|
-    let stem: string = $file | path parse | get stem
+    let stem: string = $file | path parse | get $.stem
     if $stem starts-with nu_plugin_ { [($stem | str replace nu_plugin_ '') $file] }
   } | into record
   let rows: table = sync-plugins $nu_bin $registry $plugins $shipped
@@ -521,15 +521,15 @@ export def bump-nu [
     up_to_date: ($build.version == $current)
     asset: $build.name
   }
-  if $check { return ($summary | insert previous (binary-version ($dir | path join $'nu($EXE).previous'))) }
+  if $check { return ($summary | insert $.previous (binary-version ($dir | path join $'nu($EXE).previous'))) }
   if $summary.up_to_date {
     log info $'nu ($current) is already the latest nightly'
-    return ($summary | insert installed [] | insert plugins [])
+    return ($summary | insert $.installed [] | insert $.plugins [])
   }
 
   let tmp: path = mktemp --directory --tmpdir bump-nu-XXXXXX
   let staged: record = try {
-    let sums: oneof<record, nothing> = $release.assets | where name == SHA256SUMS | get 0?
+    let sums: oneof<record, nothing> = $release.assets | where name == SHA256SUMS | first
     let archive: path = download $build $sums $tmp
     {archive: $archive files: (extract $archive ($tmp | path join extract))}
   } catch {|e|
@@ -540,7 +540,7 @@ export def bump-nu [
   if not $no_smoke { smoke-test ($staged.files | first) $build.version $staged.archive }
   let done: record = try {
     let plugins: table = registered-plugins $registry
-    let names: list<string> = $staged.files | path parse | get stem | where $it starts-with nu_plugin_ | str replace nu_plugin_ ''
+    let names: list<string> = $staged.files | path parse | get $.stem | where $it starts-with nu_plugin_ | str replace nu_plugin_ ''
     warn-plugins $plugins $names $build.version
     if not $yes { confirm $build $dir ($staged.files | length) }
     let installed: list<path> = $staged.files | install-files $dir
@@ -551,6 +551,6 @@ export def bump-nu [
     $e.raw
   }
   $summary
-  | insert installed $done.installed
-  | insert plugins (finish $done.installed $done.plugins $registry $build.version --reload=$reload)
+  | insert $.installed $done.installed
+  | insert $.plugins (finish $done.installed $done.plugins $registry $build.version --reload=$reload)
 }

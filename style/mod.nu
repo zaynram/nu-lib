@@ -47,7 +47,7 @@ export def paint [
   --colors (-c): oneof<nothing, bool>
   # Style regardless of the terminal (`true`) or never (`false`); default: `colors`
 ]: string -> string {
-  let text: string = $in
+  let text: string;
   let prefix: string = $codes | each {|code|
     try { ansi $code } catch {
       error raise $"unknown ansi code '($code)'" --with={
@@ -102,8 +102,8 @@ export def --wrapped "ansi extern" [
 
 # ——— completions ——————————————————————————————————————————————————————————————
 
-def _ansi_codes []: nothing -> list<string> { ansi --list | get name }
+def _ansi_codes []: nothing -> list<string> { ansi --list | get $.name }
 
 def _ansi_attributes []: nothing -> list<string> {
-  ansi --list | get name | where $it starts-with attr_ | str replace attr_ ''
+  ansi --list | get $.name | where $it starts-with attr_ | str replace attr_ ''
 }

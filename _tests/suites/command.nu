@@ -81,7 +81,7 @@ def "test post complete separates stdout from stderr without a trailing newline"
 
 def "test post complete includes the inner error" []: nothing -> nothing {
   let e = caught { done '' x 1 | command post-complete --inner {msg: 'while doing a thing'} }
-  assert equal ($e.inner | get msg) ['while doing a thing'] 'the inner record becomes the only inner error'
+  assert equal ($e.inner | get $.msg) ['while doing a thing'] 'the inner record becomes the only inner error'
 }
 
 def "test post complete accepts a caught error as inner" []: nothing -> nothing {
@@ -93,7 +93,7 @@ def "test post complete accepts a caught error as inner" []: nothing -> nothing 
 def "test post complete attaches a single label" []: nothing -> nothing {
   let span = (metadata 'here').span
   let e = caught { done '' x 1 | command post-complete --label {text: 'called here' span: $span} }
-  assert equal ($e.labels | get text) ['called here'] 'a record is the error label'
+  assert equal ($e.labels | get $.text) ['called here'] 'a record is the error label'
   assert equal ($e.labels.0?.span?) $span 'the label keeps its span'
   assert equal $e.code 'command::post-complete::external_failure' 'the code is derived where the closure is made'
 }
@@ -101,7 +101,7 @@ def "test post complete attaches a single label" []: nothing -> nothing {
 def "test post complete attaches a table of labels" []: nothing -> nothing {
   let labels = [{text: a span: (metadata 'a').span} {text: b span: (metadata 'b').span}]
   let e = caught { done '' x 1 | command post-complete --label $labels }
-  assert equal ($e.labels | get text) [a b] 'a table is the error labels'
+  assert equal ($e.labels | get $.text) [a b] 'a table is the error labels'
 }
 
 def "test post complete rejects incomplete records" []: nothing -> nothing {
@@ -172,7 +172,7 @@ def "test attempt returns the complete record" []: nothing -> nothing {
 
 def "test attempt does not raise without check" []: nothing -> nothing {
   need sh
-  assert equal (command attempt sh '-c' 'exit 9' | get exit_code) 9 'a failure is data'
+  assert equal (command attempt sh '-c' 'exit 9' | get $.exit_code) 9 'a failure is data'
 }
 
 def "test attempt check returns stdout" []: nothing -> nothing {
@@ -206,7 +206,7 @@ def "test attempt passes string input to stdin" []: nothing -> nothing {
   need cat
   assert equal ('piped' | command attempt cat) (done piped) 'the input reaches the command'
   assert equal ('piped' | command attempt --check cat) piped 'with --check'
-  assert equal ('piped' | command attempt --merge cat | get stdout) piped 'with --merge'
+  assert equal ('piped' | command attempt --merge cat | get $.stdout) piped 'with --merge'
 }
 
 def "test attempt reports a missing command" []: nothing -> nothing {
@@ -232,13 +232,13 @@ def "test attempt runs a command given by path" []: nothing -> nothing {
 
 def "test attempt leaves short flags to the external command" []: nothing -> nothing {
   need sh
-  assert equal (command attempt sh -c 'exit 3' | get exit_code) 3 '-c is the external flag, not --check'
+  assert equal (command attempt sh -c 'exit 3' | get $.exit_code) 3 '-c is the external flag, not --check'
   assert equal (command attempt sh -c 'echo "$0"' -m) (done "-m\n") '-m is an argument, not --merge'
 }
 
 def "test attempt passes quoted long flags through" []: nothing -> nothing {
   need sh
-  assert equal (command attempt sh -c 'echo "$0"' '--check' | get stdout) "--check\n" 'a quoted flag is an argument'
+  assert equal (command attempt sh -c 'echo "$0"' '--check' | get $.stdout) "--check\n" 'a quoted flag is an argument'
 }
 
 def "test attempt takes its own flags after the command" []: nothing -> nothing {

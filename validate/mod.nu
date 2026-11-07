@@ -269,7 +269,7 @@ def foreign-keys [names: list<string> at: cell-path]: any -> list<record> {
 #   row is reported under the row's index (`$.rows.0.typo`).
 @category test
 @example 'every failure as a row' {
-  {name: 5} | validate rules [{path: $.name type: string required: true} {path: $.size type: int required: true}] --colors=false | get hint
+  {name: 5} | validate rules [{path: $.name type: string required: true} {path: $.size type: int required: true}] --colors=false | get $.hint
 } --result ['$.name has type int; expected string' '$.size must be a non-null value']
 @example 'a guard in a pipeline' { {name: a} | validate rules [{path: $.name type: string}] --errors } --result {name: a}
 export def rules [
@@ -310,7 +310,7 @@ export def rules [
   # ponytail: derived again on every call; take a list of records as input when a caller validates many at once
   let rows: list<record> = $rules
     | each {|row|
-      let members: table = $row.path | split cell-path | update optional true
+      let members: table = $row.path | split cell-path | update $.optional true
       let repr: string = $members.value | str join .
       # ponytail: a path crosses at most one declared table; nest deeper when a schema needs it
       let through: oneof<list<string>, nothing> = $tables | where $repr starts-with $it | if $in != [] { first | split row . | drop }
@@ -332,10 +332,10 @@ export def rules [
   let boxes: table = $rows | where ($it.type | is-container-type)
   let rows: list<record> = $rows | each {|row|
     let above: table = $boxes | where ($row.repr | str starts-with $'($it.repr).')
-    $row | insert guards (if $row.through == null {
-      $above | where through == null | get whole
+    $row | insert $.guards (if $row.through == null {
+      $above | where through == null | get $.whole
     } else {
-      $above | where through != null | get tail
+      $above | where through != null | get $.tail
     })
   }
 
@@ -351,10 +351,10 @@ export def rules [
     }
     if $strict {
       for box in (containers $rows) {
-        let names: list<string> = $rows | where parent == $box.repr | get leaf
+        let names: list<string> = $rows | where parent == $box.repr | get $.leaf
         # a container with no declared children is open
         if $names == [] { continue }
-        let first: any = $data | places $box | each --flatten {|place| $place.value | foreign-keys $names $place.at } | get 0?
+        let first: any = $data | places $box | each --flatten {|place| $place.value | foreign-keys $names $place.at } | first
         if $first != null { return ($first | styled --colors=$colors) }
       }
     }
@@ -375,15 +375,15 @@ export def rules [
       let verdicts: table = $inter.result | flatten --all
       {index: $r.index at: $r.item.at verdicts: $verdicts dead: ($inter.item.0? == null or $verdicts != [])}
     }
-  let dead: list<cell-path> = $judged | where $it.dead | get at
+  let dead: list<cell-path> = $judged | where $it.dead | get $.at
   let verdicts: table = $indexed
     | where {|r|
-      let before: list<cell-path> = $judged | where $it.dead and $it.index < $r.index | get at
+      let before: list<cell-path> = $judged | where $it.dead and $it.index < $r.index | get $.at
       $before == [] or not ($before | under $r.item.at)
     }
     | each --flatten {|r|
-      let box: oneof<nothing, record> = $judged | where index == $r.index | get $.0?
-      if $box != null { $box.verdicts } else { $data | evaluate-single-rule $r.item | append [] | get result | flatten --all }
+      let box: oneof<nothing, record> = $judged | where index == $r.index | first
+      if $box != null { $box.verdicts } else { $data | evaluate-single-rule $r.item | append [] | get $.result | flatten --all }
     }
 
   let found: table = if $strict {
@@ -391,7 +391,7 @@ export def rules [
     containers $rows
     | where not ($dead != [] and ($dead | under $it.at))
     | each --flatten {|box|
-      let names: list<string> = $rows | where parent == $box.repr | get leaf
+      let names: list<string> = $rows | where parent == $box.repr | get $.leaf
       if $names == [] { [] } else {
         $data | places $box | each --flatten {|place| $place.value | foreign-keys $names $place.at }
       }
@@ -444,17 +444,16 @@ def fits [value: any type: string]: nothing -> bool {
 
 # The alternatives of a union type: split at every `|` that is not inside `<...>`.
 def alternatives []: string -> list<string> {
-  let type: string = $in
+  let type: string;
   if $type !~ '<.*\|' { return ($type | split row '|') }
-  $type | split chars | reduce --fold={depth: 0 parts: ['']} {|c acc|
-    match $c {
-      '|' if $acc.depth == 0 => ($acc | update parts { append '' })
-      _ => {
-        depth: ($acc.depth + (match $c { '<' => 1 '>' => -1 _ => 0 }))
-        parts: ($acc.parts | update (($acc.parts | length) - 1) { $in + $c })
-      }
-    }
-  } | get parts
+  # Each `|` outside `<...>` becomes a NUL (the state is the depth before the character), then the text splits there.
+  $type
+  | split chars
+  | generate {|c depth|
+    {out: (if $c == '|' and $depth == 0 { char nul } else { $c }) next: ($depth + (match $c { '<' => 1 '>' => -1 _ => 0 }))}
+  } 0
+  | str join
+  | split row (char nul)
 }
 
 # Does a rule type name a table (`table`, `list<record>`, `list<record<…>>`) in any of its alternatives (`nothing|table`)?
@@ -501,7 +500,7 @@ def failure [
       error raise $"'($rule)' is not a preset and no custom templates were given" --kind internal
     }
     | compact --empty
-    | default false syntax
+    | default false $.syntax
   let missing: list<string> = [reason hint] | where $preset not-has $it
   if $missing != [] {
     error raise $"the rule '($rule)' has no ($missing | str join ' or ') template" --kind internal
@@ -530,11 +529,11 @@ def failure [
 # Fill the `{name}` placeholders of a template from `fields`; a placeholder that names no field is kept as written
 # (dynamic rules' reasons and hints are templates too, and may contain literal braces).
 def fill-template [fields: record]: string -> string {
-  let template: string = $in
+  let template: string;
   let names: list<string> = $fields | columns
   $template | split row '{' | enumerate | each {|part|
     if $part.index == 0 { return $part.item }
-    let found: any = $part.item | parse --regex '(?s)^(?<key>[^{}]*)\}(?<rest>.*)$' | get 0?
+    let found: any = $part.item | parse --regex '(?s)^(?<key>[^{}]*)\}(?<rest>.*)$' | first
     if $found != null and $found.key in $names { $"($fields | get $found.key)($found.rest)" } else { $"{($part.item)" }
   } | str join
 }

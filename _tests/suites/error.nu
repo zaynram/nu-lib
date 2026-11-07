@@ -16,7 +16,7 @@ def caught [action: closure]: nothing -> oneof<nothing, record> {
 }
 
 # Write `files` (path relative to the fixture library → text) under the sandbox and return the library directory.
-def write-lib [ctx: record, files: record]: nothing -> path {
+def write-lib [ctx: record files: record]: nothing -> path {
   let lib: path = $ctx.code | path join lib
   $files | items {|relative text|
     let file: path = $lib | path join $relative
@@ -28,7 +28,7 @@ def write-lib [ctx: record, files: record]: nothing -> path {
 
 # The error details a child interpreter prints as nuon when it runs `program` (or the `--script` file), with the
 # repository and `lib` on its include path.
-def run-nu [lib: oneof<nothing, path>, program?: string, --script: path]: nothing -> record {
+def run-nu [lib: oneof<nothing, path> program?: string --script: path]: nothing -> record {
   let include: string = [$ROOT $lib] | compact | str join (char esep)
   let target: list<string> = if $script != null { [$script] } else { [--commands $program] }
   let launch: list<string> = [--no-config-file --error-style=plain $"--include-path=($include)" ...$target]
@@ -38,7 +38,7 @@ def run-nu [lib: oneof<nothing, path>, program?: string, --script: path]: nothin
 }
 
 # The details of the error `code` raises in a child interpreter (`lib` is on its include path; `error` is imported).
-def child-raise [lib: oneof<nothing, path>, code: string]: nothing -> record {
+def child-raise [lib: oneof<nothing, path> code: string]: nothing -> record {
   run-nu $lib $"use error\ntry { ($code) } catch {|e| print \($e.details | to nuon) }"
 }
 
@@ -140,7 +140,7 @@ def "test raise rejects a key error make would drop" []: nothing -> nothing {
 
 def "test raise wraps a record input as the inner error" []: nothing -> nothing {
   let e = caught { {msg: 'the cause'} | error raise 'it broke' }
-  assert equal ($e.inner | get msg) ['the cause'] 'one inner error'
+  assert equal ($e.inner | get $.msg) ['the cause'] 'one inner error'
 }
 
 def "test raise ignores pipeline input that is not an error" []: nothing -> nothing {
@@ -154,8 +154,8 @@ def "test raise ignores pipeline input that is not an error" []: nothing -> noth
 def "test raise wraps a caught error as the inner error" []: nothing -> nothing {
   let cause = try { error make --unspanned {msg: 'the config file could not be read' help: 'the help of the cause'} } catch {|e| $e }
   let e = caught { $cause | error raise 'it broke' }
-  assert equal ($e.inner | get msg) ['the config file could not be read'] 'the caught error'
-  assert equal ($e.inner | get help) ['the help of the cause'] 'with its details'
+  assert equal ($e.inner | get $.msg) ['the config file could not be read'] 'the caught error'
+  assert equal ($e.inner | get $.help) ['the help of the cause'] 'with its details'
 }
 
 def "test raise with labels returns a closure" []: nothing -> nothing {
@@ -167,49 +167,49 @@ def "test raise with labels returns a closure" []: nothing -> nothing {
   assert equal ($raiser | describe) closure 'nothing is raised yet'
   let e = caught $raiser
   assert equal $e.msg 'it broke' 'the closure raises the error'
-  assert equal ($e.labels | get text) ['right here'] 'with the labels'
-  assert equal ($e.labels | get span) [$span] 'and their spans'
+  assert equal ($e.labels | get $.text) ['right here'] 'with the labels'
+  assert equal ($e.labels | get $.span) [$span] 'and their spans'
   assert equal $e.code $'($HERE)::test-raise-with-labels-returns-a-closure::conflict' 'and the code derived where the closure was made'
 }
 
 def "test raise with labels keeps the inner error" []: nothing -> nothing {
   let cause = {msg: 'the cause'}
   let raiser = $cause | error raise 'it broke' {text: x span: (metadata 'x').span}
-  assert equal ((caught $raiser).inner | get msg) ['the cause'] 'the input is captured by the closure'
+  assert equal ((caught $raiser).inner | get $.msg) ['the cause'] 'the input is captured by the closure'
 }
 
 def "test raise takes labels as arguments, a label or labels in with, and counts them all" []: nothing -> nothing {
   let a = {text: a span: (metadata 'a').span}
   let b = {text: b span: (metadata 'b').span}
   let c = {text: c span: (metadata 'c').span}
-  assert equal ((caught (error raise 'one' $a)).labels | get text) [a] 'a rest argument'
-  assert equal ((caught (error raise 'one' --with={label: $b})).labels | get text) [b] 'a single label in --with'
-  assert equal ((caught (error raise 'two' --with={labels: [$b $c]})).labels | get text) [b c] 'labels in --with'
+  assert equal ((caught (error raise 'one' $a)).labels | get $.text) [a] 'a rest argument'
+  assert equal ((caught (error raise 'one' --with={label: $b})).labels | get $.text) [b] 'a single label in --with'
+  assert equal ((caught (error raise 'two' --with={labels: [$b $c]})).labels | get $.text) [b c] 'labels in --with'
   let all = caught (error raise 'three' --with={label: $a labels: [$b]} $c)
-  assert equal ($all.labels | get text) [a b c] 'all of them, --with first'
-  assert equal ($all.labels | get span) [$a.span $b.span $c.span] 'with their spans intact'
+  assert equal ($all.labels | get $.text) [a b c] 'all of them, --with first'
+  assert equal ($all.labels | get $.span) [$a.span $b.span $c.span] 'with their spans intact'
 }
 
 def "test throw raises a labelled error in the caller" []: nothing -> nothing {
   let e = caught { error raise 'thrown' --kind conflict {text: here span: (metadata 'here').span} | error throw }
-  assert equal [$e.msg ($e.labels | get text)] [thrown [here]] 'the closure is raised'
+  assert equal [$e.msg ($e.labels | get $.text)] [thrown [here]] 'the closure is raised'
   assert equal $e.code $'($HERE)::test-throw-raises-a-labelled-error-in-the-caller::conflict' 'with the code derived at the raise'
 }
 
 def "test raise keeps every error record of a list input" []: nothing -> nothing {
   let e = caught { [{msg: first} 'not an error' {msg: second}] | error raise 'it broke' }
-  assert equal ($e.inner | get msg) [first second] 'one inner error per error record'
+  assert equal ($e.inner | get $.msg) [first second] 'one inner error per error record'
 }
 
 def "test raise unwraps a record that holds only inner errors" []: nothing -> nothing {
   let e = caught { {inner: [{msg: 'deep cause'} {msg: 'ignored'}]} | error raise 'it broke' }
-  assert equal ($e.inner | get msg) ['deep cause'] 'its first inner error'
+  assert equal ($e.inner | get $.msg) ['deep cause'] 'its first inner error'
 }
 
 def "test raise keeps the code of a caught inner error" []: nothing -> nothing {
   let cause = try { error raise 'the cause' --kind not_found } catch {|e| $e }
   let e = caught { $cause | error raise 'it broke' }
-  assert equal ($e.inner | get code) [$'($HERE)::test-raise-keeps-the-code-of-a-caught-inner-error::not_found'] 'the details of the caught error, code included'
+  assert equal ($e.inner | get $.code) [$'($HERE)::test-raise-keeps-the-code-of-a-caught-inner-error::not_found'] 'the details of the caught error, code included'
 }
 
 # ——— derivation from fixture module trees ——————————————————————————————————————

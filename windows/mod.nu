@@ -34,10 +34,10 @@ export alias "path as-windows" = each {|| try { ^wslpath -m $in } }
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 # The path of a Windows executable: the first match on PATH or WINPATH, else `fallback`.
-def win-exe [name: string, fallback: path]: nothing -> path {
+def win-exe [name: string fallback: path]: nothing -> path {
   with-env {PATH: ($env.PATH | append ($env.WINPATH? | default [] | split row (char esep)))} { which --all $name }
   | where type == external
-  | get --optional 0.path
+  | get --optional $.0.path
   | default $fallback
 }
 
@@ -63,11 +63,11 @@ export-env {
     | flatten
     | uniq
     | group-by {|p| if $p =~ '^/mnt/[[:alpha:]]/' { 'WINPATH' } else { 'PATH' } }
-    | default [] PATH
-    | default [] WINPATH
+    | default [] $.PATH
+    | default [] $.WINPATH
     | load-env
   }
-  if $env not-has WSL_DISTRO_NAME { $env.WSL_DISTRO_NAME = sys host | get name | split words | first }
+  if $env not-has WSL_DISTRO_NAME { $env.WSL_DISTRO_NAME = sys host | get $.name | split words | first }
 }
 
 # ——— definitions ——————————————————————————————————————————————————————————————
@@ -100,7 +100,7 @@ export def --wrapped "win which" [
     ^$where_exe $a | complete
     | if $in.exit_code == 0 { $in.stdout | lines | str trim --right | where $it != '' } else { [] }
     | path as-posix
-    | if $all { } else { get --optional 0 }
+    | if $all { } else { first }
   }
   match ($names | length) {
     0 => { return }
@@ -197,7 +197,7 @@ export def --env "win path" [
   --posix (-p) = ($nu.os-info.name != windows)
   # Return the resolved path as a POSIX path
 ]: oneof<path, nothing> -> oneof<path, nothing> {
-  let base: oneof<path, nothing> = $in
+  let base: oneof<path, nothing>;
   let p: path = if $base != null { $base } else if $user { win home } else { '/mnt/c' } | path join ...$join
   if not $edit and not $cd {
     return ($p | if $posix { path as-posix } else { path as-windows })

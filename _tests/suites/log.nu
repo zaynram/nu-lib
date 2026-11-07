@@ -7,7 +7,7 @@ use ../mod.nu *
 
 # Run `code` after `use log` in a child; return its complete record (stderr as lines, ANSI kept).
 def logged [code: string --vars: record = {} --prelude: string = 'use log']: nothing -> record {
-  with-sandbox {|ctx| sandboxed $ctx $code --prelude $prelude --vars $vars | update stderr { lines } }
+  with-sandbox {|ctx| sandboxed $ctx $code --prelude $prelude --vars $vars | update $.stderr { lines } }
 }
 
 const LINE = '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?\|(?<level>[A-Z]{3})\|(?<msg>.*)$'
@@ -45,20 +45,20 @@ def "test every level writes one line to stderr" []: nothing -> nothing {
   let res = logged 'log critical one; log error two; log warning three; log info four'
   assert equal $res.stdout '' 'nothing on stdout'
   let rows = $res.stderr | ansi strip | parse --regex $LINE
-  assert equal ($rows | select level msg) [[level msg]; [CRT one] [ERR two] [WRN three] [INF four]] 'level codes and messages'
+  assert equal ($rows | select $.level $.msg) [[level msg]; [CRT one] [ERR two] [WRN three] [INF four]] 'level codes and messages'
 }
 
 def "test lines are plain when colours are off" []: nothing -> nothing {
   let res = logged 'log critical one; log error two; log warning three; log info four'
   assert ($res.stderr | all $it !~ '\e\[') $'no escape sequences without a terminal: ($res.stderr)'
-  assert equal ($res.stderr | parse --regex $LINE | get msg) [one two three four] 'the lines parse as written'
+  assert equal ($res.stderr | parse --regex $LINE | get $.msg) [one two three four] 'the lines parse as written'
 }
 
 def "test lines are coloured when colours are on" []: nothing -> nothing {
   let res = logged $"($COLORED); log warning w; log info i"
   assert ($res.stderr | all $it =~ '\e\[') $'escape sequences with colours on: ($res.stderr)'
   assert str contains $res.stderr.0? $'|(ansi yellow)WRN(ansi reset)|' 'a warning takes the std colour for the level'
-  assert equal ($res.stderr | ansi strip | parse --regex $LINE | get msg) [w i] 'the same text underneath'
+  assert equal ($res.stderr | ansi strip | parse --regex $LINE | get $.msg) [w i] 'the same text underneath'
 }
 
 def "test info renders its level in bold blue" []: nothing -> nothing {
@@ -73,12 +73,12 @@ def "test debug is hidden at the default level" []: nothing -> nothing {
 
 def "test debug is shown at the debug level" []: nothing -> nothing {
   let rows = (logged 'log debug shown' --vars {NU_LOG_LEVEL: debug}).stderr | ansi strip | parse --regex $LINE
-  assert equal ($rows | select level msg) [[level msg]; [DBG shown]] 'NU_LOG_LEVEL=debug'
+  assert equal ($rows | select $.level $.msg) [[level msg]; [DBG shown]] 'NU_LOG_LEVEL=debug'
 }
 
 def "test levels below the configured one are hidden" []: nothing -> nothing {
   let rows = (logged 'log info a; log warning b; log error c' --vars {NU_LOG_LEVEL: error}).stderr | ansi strip | parse --regex $LINE
-  assert equal ($rows | get level) [ERR] 'only error and above'
+  assert equal ($rows | get $.level) [ERR] 'only error and above'
 }
 
 def "test prefixed import keeps the builtin debug" []: nothing -> nothing {
@@ -87,5 +87,5 @@ def "test prefixed import keeps the builtin debug" []: nothing -> nothing {
 
 def "test glob import exposes bare aliases" []: nothing -> nothing {
   let res = with-sandbox {|ctx| sandboxed $ctx 'info bare' --prelude 'use log *' }
-  assert equal ($res.stderr | ansi strip | lines | parse --regex $LINE | get msg) [bare] '`use log *` gives `info`'
+  assert equal ($res.stderr | ansi strip | lines | parse --regex $LINE | get $.msg) [bare] '`use log *` gives `info`'
 }

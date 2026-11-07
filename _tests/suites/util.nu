@@ -14,7 +14,7 @@ def caught [action: closure]: nothing -> oneof<nothing, record> {
 def text []: any -> any { if ($in | describe) == semver { into string } else { } }
 
 # A bump result with printable versions.
-def printable []: table -> table { update prev { text } | update curr { text } }
+def printable []: table -> table { update $.prev { text } | update $.curr { text } }
 
 # ——— contains —————————————————————————————————————————————————————————————————
 
@@ -89,8 +89,8 @@ def "test timestamp rejects unparseable strings" []: nothing -> nothing {
 # ——— workspace ————————————————————————————————————————————————————————————————
 
 def "test util re-exports workspace" []: nothing -> nothing {
-  assert ('util workspace bump' in (scope commands | get name)) 'bump is reachable as util workspace bump'
-  assert ('util workspace reactivate' in (scope aliases | get name)) 'the aliases too'
+  assert ('util workspace bump' in (scope commands | get $.name)) 'bump is reachable as util workspace bump'
+  assert ('util workspace reactivate' in (scope aliases | get $.name)) 'the aliases too'
   assert equal $util.workspace.LEVEL [major minor patch alpha beta rc release] 'the LEVEL constant'
 }
 
@@ -116,18 +116,18 @@ def "test bump writes the next patch version" []: nothing -> nothing {
   with-sandbox {|ctx|
     let files = seed $ctx.code
     let out = $files | util workspace bump | printable
-    assert equal ($out | select prev curr) [[prev curr]; ['1.2.3' '1.2.4'] ['2.0.0+build.7' '2.0.1+build.7']] 'the build metadata is kept'
-    assert equal ($out | get file) ($files | get file) 'every row names its file'
-    assert equal (open ($files.0?.file?) | get version) '1.2.4' 'yaml is written'
-    assert equal (open ($files.0?.file?) | get name) x 'other keys are kept'
-    assert equal (open ($files.1?.file?) | get meta.v) '2.0.1+build.7' 'nuon is written at the nested cell'
+    assert equal ($out | select $.prev $.curr) [[prev curr]; ['1.2.3' '1.2.4'] ['2.0.0+build.7' '2.0.1+build.7']] 'the build metadata is kept'
+    assert equal ($out | get $.file) ($files | get $.file) 'every row names its file'
+    assert equal (open ($files.0?.file?) | get $.version) '1.2.4' 'yaml is written'
+    assert equal (open ($files.0?.file?) | get $.name) x 'other keys are kept'
+    assert equal (open ($files.1?.file?) | get $.meta.v) '2.0.1+build.7' 'nuon is written at the nested cell'
   }
 }
 
 def "test bump levels" []: nothing -> nothing {
   with-sandbox {|ctx|
     let files = seed $ctx.code | first 1
-    let bumped = {|level| $files | util workspace bump --test $level | get curr.0 | text }
+    let bumped = {|level| $files | util workspace bump --test $level | get $.curr.0 | text }
     assert equal (do $bumped major) '2.0.0' 'major'
     assert equal (do $bumped minor) '1.3.0' 'minor'
     assert equal (do $bumped patch) '1.2.4' 'patch'
@@ -143,7 +143,7 @@ def "test bump test mode writes nothing" []: nothing -> nothing {
     let files = seed $ctx.code
     let before = $files | each { open --raw $in.file }
     let out = $files | util workspace bump --test | printable
-    assert equal ($out | get curr) ['1.2.4' '2.0.1+build.7'] 'the next versions are returned'
+    assert equal ($out | get $.curr) ['1.2.4' '2.0.1+build.7'] 'the next versions are returned'
     assert equal ($files | each { open --raw $in.file }) $before 'the files are unchanged'
   }
 }
@@ -152,15 +152,15 @@ def "test bump meta replaces the build metadata" []: nothing -> nothing {
   with-sandbox {|ctx|
     let files = seed $ctx.code
     let out = $files | util workspace bump --test --meta 'ci.9' | printable
-    assert equal ($out | get curr) ['1.2.4+ci.9' '2.0.1+ci.9'] 'the given metadata wins'
+    assert equal ($out | get $.curr) ['1.2.4+ci.9' '2.0.1+ci.9'] 'the given metadata wins'
   }
 }
 
 def "test bump meta replaces the build metadata of a spec" []: nothing -> nothing {
   with-sandbox {|ctx|
     let files = seed $ctx.code | first 1
-    assert equal ($files | util workspace bump --test --spec '3.1.4+old' --meta 'ci.9' | get curr.0 | text) '3.1.4+ci.9' "the spec's own metadata is replaced"
-    assert equal ($files | util workspace bump --test --spec '3.1.4' --meta 'ci.9' | get curr.0 | text) '3.1.4+ci.9' 'or added'
+    assert equal ($files | util workspace bump --test --spec '3.1.4+old' --meta 'ci.9' | get $.curr.0 | text) '3.1.4+ci.9' "the spec's own metadata is replaced"
+    assert equal ($files | util workspace bump --test --spec '3.1.4' --meta 'ci.9' | get $.curr.0 | text) '3.1.4+ci.9' 'or added'
     assert error { $files | util workspace bump --test --spec '3.1.4' --meta 'not valid!' } 'the result is still validated as semver'
   }
 }
@@ -171,7 +171,7 @@ def "test bump spec sets an exact version" []: nothing -> nothing {
     let out = $files | util workspace bump --spec '3.1.4-rc.2'
     assert equal ($out.0?.curr? | describe) semver 'the spec is a semver value like other results'
     assert equal ($out.0?.curr? | text) '3.1.4-rc.2' 'the spec is the new version'
-    assert equal (open ($files.0?.file?) | get version) '3.1.4-rc.2' 'and is written'
+    assert equal (open ($files.0?.file?) | get $.version) '3.1.4-rc.2' 'and is written'
   }
 }
 
@@ -179,7 +179,7 @@ def "test bump rejects an invalid spec" []: nothing -> nothing {
   with-sandbox {|ctx|
     let files = seed $ctx.code | first 1
     assert error { $files | util workspace bump --spec banana } 'not semver'
-    assert equal (open ($files.0?.file?) | get version) '1.2.3' 'nothing is written'
+    assert equal (open ($files.0?.file?) | get $.version) '1.2.3' 'nothing is written'
   }
 }
 
@@ -188,7 +188,7 @@ def "test bump leaves an unchanged version alone" []: nothing -> nothing {
     let files = seed $ctx.code | first 1
     let before = open --raw $files.0?.file?
     let out = $files | util workspace bump --spec 1.2.3 | printable
-    assert equal ($out | select prev curr) [[prev curr]; ['1.2.3' '1.2.3']] 'the same version'
+    assert equal ($out | select $.prev $.curr) [[prev curr]; ['1.2.3' '1.2.3']] 'the same version'
     assert equal (open --raw $files.0?.file?) $before 'the file is not re-serialized'
   }
 }
@@ -198,8 +198,8 @@ def "test bump skips missing and unsupported files" []: nothing -> nothing {
     'version = 1' | save ($ctx.code | path join notes.ini)
     let rows = [[file cell]; [($ctx.code | path join gone.yaml) $.version] [($ctx.code | path join notes.ini) $.version]]
     let out = $rows | util workspace bump
-    assert equal ($out | select prev curr) [[prev curr]; [null null] [null null]] 'null versions'
-    assert equal ($out | get file) ($rows | get file) 'the rows are returned'
+    assert equal ($out | select $.prev $.curr) [[prev curr]; [null null] [null null]] 'null versions'
+    assert equal ($out | get $.file) ($rows | get $.file) 'the rows are returned'
   }
 }
 
@@ -219,7 +219,7 @@ def "test bump raises for missing files without skip" []: nothing -> nothing {
 
 def "test bump raises for an invalid cell path" []: nothing -> nothing {
   with-sandbox {|ctx|
-    let files = seed $ctx.code | first 1 | update cell $.nope
+    let files = seed $ctx.code | first 1 | update $.cell $.nope
     let e = caught { $files | util workspace bump --test }
     assert equal $e.msg $"no version at '$.nope' in '($files.0?.file?)'" 'the path and the file are named'
     assert equal $e.code 'util::workspace::bump::not_found' 'the derived code'
@@ -251,8 +251,8 @@ def "test bump formats toml and json files" []: nothing -> nothing {
     with-env {PATH: [$bin ...$env.PATH] STUB_LOG: $log} {
       [[file cell]; [$toml $.package.version] [$json $.version]] | util workspace bump | ignore
     }
-    assert equal (open $toml | get package.version) '0.1.1' 'toml is written'
-    assert equal (open $json | get version) '0.1.1' 'json is written'
+    assert equal (open $toml | get $.package.version) '0.1.1' 'toml is written'
+    assert equal (open $json | get $.version) '0.1.1' 'json is written'
     assert equal (open $log | lines | sort) [$"dprint fmt ($json)" $"tombi format ($toml)"] 'each formatter runs on its file'
   }
 }
@@ -278,7 +278,7 @@ def "test bump keeps the input order" []: nothing -> nothing {
       {v: $'($i).0.0'} | to nuon | save $file
       {file: $file cell: $.v}
     }
-    assert equal ($rows | util workspace bump --test | get prev | each { text }) (1..8 | each { $'($in).0.0' }) 'input order'
+    assert equal ($rows | util workspace bump --test | get $.prev | each { text }) (1..8 | each { $'($in).0.0' }) 'input order'
   }
 }
 

@@ -8,13 +8,13 @@ use ../mod.nu *
 
 # Alarms outlive a test under `--isolation suite`: forget them all.
 def "after each" []: nothing -> nothing {
-  for name in (alarm list | get key) { alarm unset $name }
+  for name in (alarm list | get $.key) { alarm unset $name }
 }
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 # Wait until the alarm named `name` is gone (it expired and forgot itself), at most `timeout`.
-def wait-gone [name: string, --timeout: duration = 5sec]: nothing -> bool {
+def wait-gone [name: string --timeout: duration = 5sec]: nothing -> bool {
   let until: datetime = (date now) + $timeout
   while (alarm show $name) != null and (date now) < $until { sleep 100ms }
   (alarm show $name) == null
@@ -43,21 +43,21 @@ def "test list rows use key and description" []: nothing -> nothing {
   let item: record = alarm set t-one 1hr --silent
   let rows: table = alarm list
   assert equal ($rows | columns) [key id description expires_at on_expires] 'the same names as set and show (A1)'
-  assert equal ($rows | get key) [t-one] 'listed by name'
-  assert equal ($rows | first | reject key) $item 'the rest of the row is the stored record'
+  assert equal ($rows | get $.key) [t-one] 'listed by name'
+  assert equal ($rows | first | reject $.key) $item 'the rest of the row is the stored record'
 }
 
 def "test list filters names by regex" []: nothing -> nothing {
   alarm set work-a 1hr --silent | ignore
   alarm set work-b 1hr --silent | ignore
   alarm set home 1hr --silent | ignore
-  assert equal (alarm list '^work' | get key | sort) [work-a work-b] 'only matching names'
+  assert equal (alarm list '^work' | get $.key | sort) [work-a work-b] 'only matching names'
   assert equal (alarm list zzz) [] 'no match is an empty table'
 }
 
 def "test bare alarm lists and alarm with a name shows" []: nothing -> nothing {
   let item: record = alarm set t-one 1hr --silent
-  assert equal (alarm | get key) [t-one] 'bare `alarm` lists'
+  assert equal (alarm | get $.key) [t-one] 'bare `alarm` lists'
   assert equal (alarm t-one) $item '`alarm <name>` shows'
   assert equal (alarm nope) null 'an unknown name shows nothing'
 }
@@ -87,29 +87,29 @@ def "test unset kills the job and forgets the alarm" []: nothing -> nothing {
 def "test unset of an unknown name does nothing" []: nothing -> nothing {
   alarm set keep 1hr --silent | ignore
   alarm unset nope
-  assert equal (alarm list | get key) [keep] 'other alarms are untouched'
+  assert equal (alarm list | get $.key) [keep] 'other alarms are untouched'
 }
 
 def "test the callback is kept as source" []: nothing -> nothing {
   alarm set t-then 1hr --silent --then {|| 42 } | ignore
-  assert equal (alarm show t-then | get on_expires) '{|| 42 }' 'kv cannot hold a closure, so its text is shown'
+  assert equal (alarm show t-then | get $.on_expires) '{|| 42 }' 'kv cannot hold a closure, so its text is shown'
 }
 
 # ——— when —————————————————————————————————————————————————————————————————————
 
 def "test when accepts a datetime as is" []: nothing -> nothing {
   let at: datetime = (date now) + 2hr
-  assert equal (alarm set t-at $at --silent | get expires_at) $at 'a datetime is used as is'
+  assert equal (alarm set t-at $at --silent | get $.expires_at) $at 'a datetime is used as is'
 }
 
 def "test when accepts a duration from now" []: nothing -> nothing {
   let before: datetime = date now
-  let at: datetime = alarm set t-in 2hr --silent | get expires_at
+  let at: datetime = alarm set t-in 2hr --silent | get $.expires_at
   assert (($at - ($before + 2hr) | math abs) < 5sec) $"expires two hours from now, got ($at)"
 }
 
 def "test when accepts a human string" []: nothing -> nothing {
-  let at: datetime = alarm set t-human 'in 3 hours' --silent | get expires_at
+  let at: datetime = alarm set t-human 'in 3 hours' --silent | get $.expires_at
   assert (($at - ((date now) + 3hr) | math abs) < 1min) $"a human string is parsed, got ($at)"
 }
 
@@ -129,7 +129,7 @@ def "test a fired silent alarm forgets itself" []: nothing -> nothing {
 def "test a fired alarm frees its name" []: nothing -> nothing {
   alarm set t-fire 1sec --silent | ignore
   assert (wait-gone t-fire) 'expired'
-  assert equal (alarm set t-fire 1hr --silent | get description) 'alarm::t-fire' 'the name can be set again'
+  assert equal (alarm set t-fire 1hr --silent | get $.description) 'alarm::t-fire' 'the name can be set again'
 }
 
 def "test then runs on expiry" []: nothing -> nothing {
@@ -144,7 +144,7 @@ def "test then runs on expiry" []: nothing -> nothing {
 def "test notify receives the text on expiry" []: nothing -> nothing {
   with-sandbox {|ctx|
     let f: path = $ctx.code | path join notify.txt
-    let at: datetime = alarm set t-note 1sec --notify {|text| $text | save $f } | get expires_at
+    let at: datetime = alarm set t-note 1sec --notify {|text| $text | save $f } | get $.expires_at
     assert (wait-gone t-note) 'the alarm forgets itself after notifying'
     assert equal (open $f) $"alarm\('t-note', time=($at | format date %T))" 'the alarm text'
   }
@@ -187,18 +187,18 @@ def "test silent prints nothing" []: nothing -> nothing {
 # ——— alarm/local ——————————————————————————————————————————————————————————————
 
 def "test local exports the alarm commands" []: nothing -> nothing {
-  let names: list<string> = scope commands | where name =~ '^local( |$)' | get name | sort
+  let names: list<string> = scope commands | where name =~ '^local( |$)' | get $.name | sort
   assert equal $names [local 'local list' 'local set' 'local show' 'local unset'] 'main, set and the re-exported commands'
   let flags: list<string> = scope commands | where name == 'local set' | get $.0.signatures | values | first
-    | where parameter_type in [switch named] | get parameter_name
+    | where parameter_type in [switch named] | get $.parameter_name
   assert ('notify' not-in $flags) 'the notifier is fixed to the dialog'
 }
 
 def "test local set delegates to alarm" []: nothing -> nothing {
   let item: record = local set t-local 1hr --silent --then {|| 1 }
-  assert equal ($item | select description on_expires) {description: 'alarm::t-local' on_expires: '{|| 1 }'} 'the stored record'
+  assert equal ($item | select $.description $.on_expires) {description: 'alarm::t-local' on_expires: '{|| 1 }'} 'the stored record'
   assert equal (alarm show t-local) $item 'one shared store'
-  assert equal (local | get key) [t-local] 'bare `local` lists'
+  assert equal (local | get $.key) [t-local] 'bare `local` lists'
   assert equal (local t-local) $item '`local <name>` shows'
   local unset t-local
   assert equal (local list) [] 'unset through local'
@@ -225,7 +225,7 @@ def "test local dialog calls match the tui commands" []: nothing -> nothing {
   let cmds: table = scope commands | where name in ['tui label' 'tui button' 'tui run']
   if ($cmds | length) < 3 { skip 'the tui commands are not available' }
   let params: record = $cmds
-    | each {|c| {($c.name): ($c.signatures | values | first | get parameter_name | compact)} }
+    | each {|c| {($c.name): ($c.signatures | values | first | get $.parameter_name | compact)} }
     | into record
   assert ('status' in $params.'tui label') 'tui label --status'
   assert ('hook' in $params.'tui button') 'tui button takes a hook closure'

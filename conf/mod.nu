@@ -89,7 +89,7 @@ def scope [vendor: bool]: nothing -> record {
 
 # Open a resolved file in the editor, or return its expanded path.
 def submit [target: oneof<nothing, string> --return]: oneof<nothing, path> -> oneof<nothing, path> {
-  let p: oneof<nothing, path> = $in
+  let p: oneof<nothing, path>;
   if ($p | is-empty) { error raise $"no items found for target '($target)'" --kind not_found }
   $p | path expand | if $return { } else { editor }
 }
@@ -283,13 +283,13 @@ def _auto [buffer: string]: nothing -> record {
     | path rejoin *.nu
   ) --no-dir
   | path parse
-  | select stem parent
+  | select $.stem $.parent
   | rename value description
   | into completions {completion_algorithm: substring}
 }
 def _apps []: nothing -> record {
   xglob (config-dir | path rejoin '*') | wrap description
-  | insert value {|row| $row.description | path basename }
+  | insert $.value {|row| $row.description | path basename }
   | where value !~ '^[.|_]+\w+'
   | into completions {match_description: true completion_algorithm: substring}
 }
@@ -309,7 +309,7 @@ def _app-paths [buffer: string]: nothing -> oneof<record, list> {
     | path relative-to $dir
     | where $it =~ '^[/|\w|\-|.]+$' and ($it | path parse).stem !~ '\d+'
     | wrap value
-    | insert description $label
+    | insert $.description $label
     | into completions {sort: true match_description: true completion_algorithm: substring}
   }
 }

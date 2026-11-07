@@ -31,7 +31,7 @@ const SHELL_ADVICE: string = 'a shell script: name it .sh, or read it with `env 
 # the content of a file without an extension).
 def reader-of [file: path]: nothing -> oneof<nothing, string> {
   let name: string = $file | path basename
-  let extension: string = $file | path parse | get extension
+  let extension: string = $file | path parse | get $.extension
   if $name in $BASH_NAMES { return 'bash' }
   if $extension in $DOTENV_EXTENSIONS or $name starts-with '.env' { return 'dotenv' }
   if $extension in $BASH_EXTENSIONS { return 'bash' }
@@ -63,7 +63,7 @@ def walk-lines []: string -> list<record> {
     } else if $line =~ '^\s*($|#)' {
       {out: {index: $l.index kind: skip} next: ''}
     } else {
-      let m: oneof<nothing, record> = $line | parse --regex $ASSIGNMENT | get $.0?
+      let m: oneof<nothing, record> = $line | parse --regex $ASSIGNMENT | first
       if $m == null {
         {out: {index: $l.index kind: junk text: ($line | str trim)} next: ''}
       } else if ($m.raw | str substring 0..<1) in ['"' "'"] {
@@ -85,11 +85,11 @@ def walk-lines []: string -> list<record> {
 # meaning to, as written: `$(…)` or a backtick in an unquoted or double-quoted value, or an unquoted leading `~`)
 # or `{inner}` (`from dotenv` failed, and no line explains why).
 def dotenv-verdict []: string -> record {
-  let text: string = $in
+  let text: string;
   let parsed: record = try { {vars: ($text | from dotenv)} } catch {|e| {inner: $e} }
   let walk: list<record> = $text | walk-lines
   if $parsed has inner {
-    let bad: oneof<nothing, record> = $walk | where kind == junk | get $.0?
+    let bad: oneof<nothing, record> = $walk | where kind == junk | first
     return (if $bad == null { $parsed } else { {line: ($bad.index + 1) text: $bad.text} })
   }
   # The written value decides (the last assignment of a key wins, as in `from dotenv`): quotes say what a shell
@@ -113,7 +113,7 @@ def from-bash-text []: string -> record {
 # content: a `sh`/`bash` shebang, or anything a dotenv file cannot hold, means bash.
 def read-file [file: path]: nothing -> record {
   let reader: oneof<nothing, string> = reader-of $file
-  if $reader == null and ($file | path parse | get extension) != '' {
+  if $reader == null and ($file | path parse | get $.extension) != '' {
     error raise $"'($file)': no reader for this file name" --with={
       kind: invalid_argument
       help: $".env/.conf/.dotenv are parsed, .sh/.bash and ($BASH_NAMES | str join ', ') run in bash; a file without an extension goes by its content"
@@ -121,7 +121,7 @@ def read-file [file: path]: nothing -> record {
   }
   let text: string = read-text $file
   if $reader == 'bash' { return ($text | from-bash-text) }
-  if $reader == null and ($text | lines | get --optional 0 | default '') =~ '^#!.*\b(ba)?sh\b' {
+  if $reader == null and ($text | lines | first | default '') =~ '^#!.*\b(ba)?sh\b' {
     return ($text | from-bash-text)
   }
   let verdict: record = $text | dotenv-verdict

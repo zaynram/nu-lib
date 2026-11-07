@@ -174,9 +174,9 @@ export def --wrapped manage [
 export def --wrapped exec [
   ...rest: string@_run-args # The command line, then `zellij run` options
 ]: oneof<nothing, list<string>> -> nothing {
-  let piped: oneof<nothing, list<string>> = $in
+  let piped: oneof<nothing, list<string>>;
   need-client
-  let command: string = $rest | get --optional $.0
+  let command: string = $rest | first
     | default {
       error raise 'a command line is required' --with={
         kind: invalid_argument
@@ -218,9 +218,9 @@ export def --wrapped enter [
   let session: list<string> = [$name $env.ZELLIJ_AUTO_SESSION?] | compact | take 1
   let layout: list<string> = [$layout] | compact
   let args: list<string> = if $attach {
-    [attach --create ...$session ...$rest ...($layout | each {|l| [options --default-layout $l] } | flatten)]
+    [attach --create ...$session ...$rest ...($layout | each --flatten {|l| [options --default-layout $l] })]
   } else {
-    [...($session | each {|s| [--session $s] } | flatten) ...($layout | each {|l| [--new-session-with-layout $l] } | flatten) ...$rest]
+    [...($session | each --flatten {|s| [--session $s] }) ...($layout | each --flatten {|l| [--new-session-with-layout $l] }) ...$rest]
   }
   # the client's exit status is not the caller's concern (a session killed from inside ends the client non-zero)
   try { ^zellij ...$args }

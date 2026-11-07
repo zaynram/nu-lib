@@ -54,7 +54,7 @@ export def bin [
   }
   let source: path = which --all $name
     | where type == external and ($it.path | path dirname) not-in $config.skip
-    | get --optional 0.path
+    | get --optional $.0.path
     | default {
       error raise $"no external '($name)' found on PATH outside ($config.skip | str join ', ')" --with={
         kind: not_found
@@ -81,8 +81,8 @@ export def bin [
 def _executables []: [nothing -> record] {
   which
   | where type == external
-  | get command
+  | get $.command
   | path parse
-  | get stem
+  | get $.stem
   | into completions
 }
