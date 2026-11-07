@@ -18,6 +18,12 @@ method that finds new ones; refresh it when the nightly moves.
 
 Removed since 0.116.0 and not used: `date format`, `filter`, `let-env`, `get/select/reject --ignore-errors`.
 
+## Available, not used (yet)
+
+| Feature | Relation to the library | Where to read |
+|---|---|---|
+| `generate completions <command>` | Builds a module of `export extern` definitions, with completions, from carapace, fish or zsh completions, a man page or `--help`. It is the static alternative to `completion/local`'s runtime bridges (`set-completer` calling fish/carapace on every Tab): generate once into an autoload file and Nushell completes from the externs, at the cost of regenerating when the tool changes. Left as an alternative until it reaches a stable release. | `help generate completions` |
+
 ## Finding new ones
 
 The binary describes itself: dump its self-description under two versions and diff.

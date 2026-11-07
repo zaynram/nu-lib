@@ -77,7 +77,7 @@ XDG variables, the module is still abstract and is tested by redirecting those v
 | `alarm/local` | `tui` commands and an interactive terminal for the expiry dialog; prints the text without them. |
 | `time` | `timew` (hermetic with a temp `TIMEWARRIORDB`). |
 | `todo` | `td` CLI, Todoist credentials, network. Parsing/formatting helpers are pure. |
-| `completion/local` | `fish`, `carapace`; mutates `$env.config`; its export-env sets `CARAPACE_*` and the carapace `PATH` entry. `fish-complete parse-output` is pure. `completion/external` is a deprecated shim for it. |
+| `completion/local` | `fish`, `carapace`; mutates `$env.config`; its export-env sets `CARAPACE_*` and the carapace `PATH` entry. `fish-complete parse-output` is pure; Nushell's `generate completions` is the static alternative (`_docs/nightly-features.md`). `completion/external` is a deprecated shim for it. |
 | `style` (mild) | Reads `$env.config.color_config`; falls back to Nushell's default colors. `colors`/`paint` are the library's colour gate (`config use-colors`), imported by most modules that print. |
 | root `mod.nu` | Aggregates config-dependent modules; parses with only the repository on the lib path; its `export-env` runs the conf/mods/completion/proj/track/windows env blocks as guarded `use` statements. |
 
