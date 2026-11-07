@@ -1,6 +1,10 @@
 # Automatic Timewarrior tracking of the repository and branch in focus, tagged with the matched Todoist task.
+#
+# `use track` registers two hooks: `track::sync` (pre_execution) and `track::focus` (env_change.PWD). Each shell
+# keeps its own focus in `$env.TRACK`; the only state shared by every shell is the `disabled` switch in
+# `kv --universal --table=track`, set when tracking fails and cleared by the next focus refresh.
 
-use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
+use std-rfc/kv [ "kv set" "kv get" "kv drop" ]
 
 use time
 use todo
@@ -11,86 +15,85 @@ const MATCH_TTL: duration = 1hr
 
 # ——— aliases ——————————————————————————————————————————————————————————————————
 
-alias set-track = kv set --universal --table=track
-alias get-track = kv get --universal --table=track
-alias drop-track = kv drop --universal --table=track
-alias list-track = kv list --universal --table=track
+alias get-disabled = kv get --universal --table=track disabled
+alias set-disabled = kv set --universal --table=track disabled true
+alias drop-disabled = kv drop --universal --table=track disabled
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
 export-env {
   use hook [ add is-enabled ]
-  add pre_execution { sync }
-  add env_change.PWD {
+  add --dedupe pre_execution {
+    name: 'track::sync'
+    condition: {|| is-enabled --name=track::sync }
+    code: {|| sync }
+  }
+  add --dedupe env_change.PWD {
     name: 'track::focus'
-    condition: {|_ pwd|
-      if not (is-enabled --name=track::focus) { return false }
-      let root: oneof<nothing, path> = get-track root
-      $root == null or $pwd not-has $root
-    }
+    condition: {|_ pwd| (is-enabled --name=track::focus) and not ($pwd | is-within $env.TRACK?.root?) }
     code: {|| focus --refresh | ignore }
   }
 }
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
-def track-record []: nothing -> record {
-  list-track | if $in == [] { return {} } else { transpose --ignore-titles --header-row --as-record }
-}
-
-# This shell's focus, cached with `kv [set|get|drop|list] --universal --table=track`.
+# This shell's focus, cached in `$env.TRACK`.
 #
-# `root` is null outside a repository. `head` is the repository's HEAD file, which `sync` reads to
-# notice checkouts without a subprocess. `task` is the matched Todoist task content, or null.
+# Inside a repository: `{root repo head branch task tags matches}`. Outside one the focus is `{root: null}`
+# (plus the `matches` cache). `head` is the repository's HEAD file, which `sync` reads to notice checkouts
+# without a subprocess. `task` is the matched Todoist task content, or null; `matches` caches each
+# `<repo>@<branch>` match for an hour after `todo find` ran (a hit keeps the entry and its stamp, so hourly
+# refreshes do not postpone the next lookup). A refresh also re-enables tracking after an error (see `sync`).
 @category productivity
-export def focus [
+export def --env focus [
   --refresh (-r) # Recompute from the current directory instead of returning the cache
 ]: nothing -> oneof<nothing, record> {
-  if not $refresh { return (track-record) }
-  do --ignore-errors { ^git rev-parse --show-toplevel --absolute-git-dir }
-  | complete
-  | if $in.exit_code != 0 {
-    drop-track root | ignore
-  } else {
-    let paths: list = $in.stdout | lines
+  if not $refresh { return $env.TRACK? }
+  drop-disabled | ignore
+  let matches: record = $env.TRACK?.matches? | default {}
+  let res: record = do --ignore-errors { ^git rev-parse --show-toplevel --absolute-git-dir } | complete
+  $env.TRACK = if $res.exit_code != 0 { {root: null matches: $matches} } else {
+    let paths: list<string> = $res.stdout | lines
     let repo: string = $paths | first | path basename
     let head: path = $paths | last | path join HEAD
     let branch: string = read-branch $head
     let key: string = $'($repo)@($branch)'
-    let matches: record = get-track matches | default {}
-    let task: oneof<nothing, string> = match ($matches | get --optional $key) {
-      {at: $a task: $t} if (date now) - $a < $MATCH_TTL => $t
-      _ => (try { todo find $branch --project=$repo | get $.content? })
+    # A hit keeps the cached entry, stamp included: `at` is the time `todo find` ran, never the time of a hit.
+    let cached: oneof<nothing, record> = $matches | get --optional $key
+    let entry: record<task: oneof<nothing, string>, at: datetime> = match $cached {
+      {at: $a} if (date now) - $a < $MATCH_TTL => $cached
+      _ => ({task: (try { todo find $branch --project=$repo | get $.content? }) at: (date now)})
     }
-    set-track root $paths.0
-    set-track repo $repo
-    set-track head $head
-    set-track branch $branch
-    set-track task $task
-    set-track tags [$'#($repo)' ($task | default $branch)]
-    set-track matches ($matches | upsert $key {task: $task at: (date now)})
+    {
+      root: ($paths | first)
+      repo: $repo
+      head: $head
+      branch: $branch
+      task: $entry.task
+      tags: [$'#($repo)' ($entry.task | default $branch)]
+      matches: ($matches | upsert $key $entry)
+    }
   }
-  return (track-record)
+  $env.TRACK
 }
 
-def is-stale-focus []: oneof<nothing, record> -> bool {
-  $in == null or $in not-has root or ($in.root == null and (read-branch $in.head) != $in.branch)
-}
-
-# Align the open Timewarrior interval with this shell's focus; the pre_execution hook body.
+# Align the open Timewarrior interval with this shell's focus; the `track::sync` pre_execution hook body.
 #
-# 1. If the activity stamp is older than `--idle`, the open interval ends at the stamp.
-# 2. If the open interval's tags differ from the focus tags, a new interval starts.
-# 3. The stamp is touched. Outside a repository nothing happens; after an error the shell's
-#    tracking stays off until the next `focus --refresh`.
+# 1. The focus is refreshed when there is none yet, or when the HEAD file names another branch (a checkout).
+# 2. Outside a repository, or while tracking is disabled, nothing else happens.
+# 3. If the activity stamp is older than `--idle`, the open interval ends at the stamp.
+# 4. If the open interval's tags differ from the focus tags, a new interval starts.
+# 5. The stamp is touched.
+# An error prints one line and disables tracking in every shell until the next focus refresh (a directory
+# change out of the repository, a checkout, or a new shell).
 @category productivity
-export def sync [
+export def --env sync [
   --idle: duration = 30min # Gap after which the open interval counts as abandoned
 ]: nothing -> nothing {
-  if (track-record | is-stale-focus) { focus --refresh }
-  if (get-track root) == null or (get-track disabled | default false) { return }
+  if ($env.TRACK? | is-stale-focus) { focus --refresh | ignore }
+  if $env.TRACK.root == null or (get-disabled | default false) { return }
   try {
-    let tags: list = get-track tags | default []
+    let tags: list = $env.TRACK.tags
     let stamp: path = time db | path join track.stamp
     let last: oneof<nothing, datetime> = try { ls $stamp | get $.0?.modified }
     let abandoned: bool = $last != null and (date now) - $last > $idle
@@ -100,15 +103,27 @@ export def sync [
     | if $in == null or ($in.tags | sort) != ($tags | sort) { time start ...$tags | ignore }
     $stamp | path dirname | mkdir $in
     touch $stamp
-  } catch {||
-    get $.msg?
-  } | if ($in | describe) == string {
-    print --stderr $"track: disabled until PWD changes \(reason: ($in))"
-    set-track disabled true
+  } catch {|err|
+    print --stderr $"track: disabled until PWD changes \(reason: ($err.msg))"
+    set-disabled | ignore
   }
 }
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
+
+# Whether the cached focus must be recomputed: none yet, or its HEAD file names another branch.
+def is-stale-focus []: oneof<nothing, record> -> bool {
+  let focus: oneof<nothing, record>;
+  if $focus == null or $focus not-has root { return true }
+  $focus.root != null and (try { read-branch $focus.head } catch { null }) != $focus.branch
+}
+
+# Whether the input path is `root` or inside it (false when `root` is null).
+# nu-lint-ignore: unused_helper_functions
+def is-within [root: oneof<nothing, path>]: path -> bool {
+  let p: path;
+  $root != null and ($p == $root or ($p | str starts-with ($root | path join '')))
+}
 
 # Branch name from a HEAD file, or the short commit hash when detached.
 def read-branch [head: path]: nothing -> string {

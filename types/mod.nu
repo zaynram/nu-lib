@@ -13,6 +13,6 @@ export def "cell-path join" [
 ]: cell-path -> cell-path {
   let default: record = {optional: $optional insensitive: $insensitive value: null}; [
     ...($in | split cell-path)
-    ...($segments | par-each --keep-order {|it| match ($it | describe) { string | int => ($default | default $it value) _ => $it } })
+    ...($segments | each {|it| match ($it | describe) { string | int => ($default | default $it $.value) _ => $it } })
   ] | into cell-path
 }

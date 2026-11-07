@@ -1,74 +1,88 @@
-# /work/dev/nu/link/mod.nu
+# Link binaries found on PATH into the bin directory (`/usr/bin` on Linux, `%USERPROFILE%\.local\bin` on Windows).
+
+# nu-lint-ignore-file: string_param_as_path
+# (`bin`'s `name` is a program name looked up on PATH; joining it onto the link directory does not make it a path)
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use completion "into completions"
+use error
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
-# Link a binary to the user bin directory.
+# Link a binary into the bin directory (`/usr/bin` on Linux, `%USERPROFILE%\.local\bin` on Windows).
+#
+# The link is `/usr/bin/<name>` on Linux (created with `sudo ln -s`) and `%USERPROFILE%\.local\bin\<name>` on
+# Windows (created with `cmd /c mklink`). Its source is the first external `<name>` on PATH outside the link
+# directory (on Linux, outside `/bin` and `/usr/bin`). A link that already resolves is returned unchanged, a
+# dangling link is removed first, and any other existing file at the link path is an error. Errors carry the
+# codes `link::bin::<kind>`: `unsupported` (the OS), `conflict` (a non-link at the link path), `not_found` (no
+# source on PATH) and `external_failure` (`unlink`/`ln`/`mklink` failed; what they printed is the advice).
 @category platform
 export def bin [
-  name: oneof<string, path>@_executables # The name of the binary to link
+  name: string@_executables # The name of the binary to link
 ]: nothing -> path {
-  let config: record<link: path, regex: string> = match $nu.os-info.name {
-    linux => {
-      link: $"/usr/bin/($name)"
-      regex: $"^/\(bin|usr/bin)/($name)$"
-    }
+  let os: string = $nu.os-info.name
+  let config: record<link: path, skip: list<path>> = match $os {
+    linux => {link: ('/usr/bin' | path join $name) skip: [/bin /usr/bin]}
     windows => {
-      let lnk: path = $env.USERPROFILE | path join .local bin $name
-      return {link: $lnk regex: $lnk}
+      let dir: path = $env.USERPROFILE | path join .local bin
+      {link: ($dir | path join $name) skip: [$dir]}
     }
+    _ => { error raise $"unsupported operating system: '($os)'" --kind unsupported }
   }
   match ($config.link | path type) {
+    null => { }
     symlink if ($config.link | path exists) => { return $config.link }
     symlink => {
-      sudo unlink $config.link out+err>| complete
-      | if $in.exit_code? != 0 { error 'unable to remove link' bin-link dangling_symlink }
+      match $os {
+        windows => { rm $config.link }
+        _ => {
+          let res: record = ^sudo unlink $config.link out+err>| complete
+          if $res.exit_code != 0 {
+            error raise $"unable to remove the dangling link '($config.link)'" --with={
+              kind: external_failure
+              help: ($res.stdout | str trim)
+            }
+          }
+        }
+      }
+    }
+    $type => {
+      error raise $"a ($type) that is not a link already exists at '($config.link)'" --kind conflict
     }
   }
-  which --all $name
-  | where path !~ $config.regex
-  | get --optional 0.path
-  | if $in == null { error "unable to detect source binary" } else {
-    let path: path = $in
-    match $nu.os-info.name {
-      linux => { sudo ln -s $path $config.link out+err>| complete }
-      windows => { mklink $config.link $path out+err>| complete }
-    } | if $in.exit_code? != 0 {
-      error 'unable to link binary' bin-link non_zero_exit_code
-    } else {
-      return $config.link
+  let source: path = which --all $name
+    | where type == external and ($it.path | path dirname) not-in $config.skip
+    | get --optional $.0.path
+    | default {
+      error raise $"no external '($name)' found on PATH outside ($config.skip | str join ', ')" --with={
+        kind: not_found
+      }
+    }
+  let res: record = match $os {
+    windows => {
+      mkdir ($config.link | path dirname)
+      ^cmd /c mklink $config.link $source out+err>| complete
+    }
+    _ => { ^sudo ln -s $source $config.link out+err>| complete }
+  }
+  if $res.exit_code != 0 {
+    error raise $"unable to link '($source)' at '($config.link)'" --with={
+      kind: external_failure
+      help: ($res.stdout | str trim)
     }
   }
-}
-# ——— helpers —————————————————————————————————————————————————————————————————
-
-def error [msg: string ...code: string]: oneof<nothing, record<stdout: string>> -> error {
-  let details: record = match $in {
-    {stdout: $s} | {stderr: $s} => $"[output]\n($s)"
-    $s if ($s | describe) == string => $s
-    null => ''
-  } | wrap help
-    | insert msg $msg
-    | insert code {
-      $code
-      | default --empty [internal_error]
-      | prepend [internal util]
-      | str join ::
-    }
-    | compact --empty
-  error make --unspanned $details
+  $config.link
 }
 
-# ——— completions —————————————————————————————————————————————————————————————
+# ——— completions ——————————————————————————————————————————————————————————————
 
 def _executables []: [nothing -> record] {
   which
   | where type == external
-  | get command
+  | get $.command
   | path parse
-  | get stem
+  | get $.stem
   | into completions
 }

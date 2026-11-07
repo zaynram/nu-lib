@@ -2,13 +2,31 @@
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
-use std/util null-device
 use command attempt
 use completion "into completions"
+use error
 
 # ——— constants ——————————————————————————————————————————————————————————————
 
-const COMMANDS: list<string> = [task project label section comment completed today upcoming inbox filter reminder activity stats auth accounts config help]
+const COMMANDS: list<string> = [
+  task
+  project
+  label
+  section
+  comment
+  completed
+  today
+  upcoming
+  inbox
+  filter
+  reminder
+  activity
+  stats
+  auth
+  accounts
+  config
+  help
+]
 
 # ——— definitions —————————————————————————————————————————————————————————————
 
@@ -30,12 +48,31 @@ export def --wrapped main [
 @category productivity
 export def list [
   --project (-p): string@_projects # Project name (default: every project)
-  --label (-l): list<string>@_labels # Only tasks carrying every one of these labels
+  --label (-l): list<string>@_labels # Only tasks carrying any of these labels (`td` ORs them)
   --parent: string@_tasks # Subtasks of this task (id or exact content)
-  --filter (-f): string # Raw Todoist filter query
-  --completed (-c) # Completed tasks instead of open ones
-  --since: datetime # With `--completed`: lower bound (default: today; at most three months back)
+  --filter (-f): string # Raw Todoist filter query (combined with `--label` by `td` as `(filter) & (labels)`)
+  --completed (-c) # Completed tasks instead of open ones (only `--project` and `--since` apply)
+  --since: datetime # Requires `--completed`: lower bound (default: today; at most three months back)
 ]: nothing -> table<id: string, content: string, description: string, labels: list<string>, project: string, parent: oneof<nothing, string>, due: oneof<nothing, datetime>, priority: int, url: string> {
+  let open_only: list<string> = {label: $label parent: $parent filter: $filter} | transpose flag value
+    | where value != null | get $.flag
+  if $completed and $open_only != [] {
+    let flags: string = $open_only | each { $'`--($in)`' } | str join ', '
+    error raise $"`--completed` cannot be combined with ($flags)" --with={
+      kind: invalid_argument
+      help: (
+        '`td completed list` filters only by `--project` and `--since`'
+      )
+    }
+  }
+  if not $completed and $since != null {
+    error raise '`--since` requires `--completed`' --with={
+      kind: invalid_argument
+      help: (
+        'open tasks have no completion date to filter by; add `--completed` to list completed tasks'
+      )
+    }
+  }
   if $completed {
     todoist --json --options={
       project: $project
@@ -84,7 +121,7 @@ export def edit [
   ref: string@_tasks # Task id, `id:<id>`, or exact content
   --content: string # New content
   --description (-d): string # New description
-  --labels (-l): list<string>@_labels # Replacement label set
+  --labels (-l): list<string>@_labels # Replacement label set; `[]` removes every label (`td --no-labels`)
   --due: oneof<datetime, string> # New due date; a string passes through as the Todoist due string
   --no-due # Remove the due date
   --priority: int # 1 (p1, urgent) to 4 (p4)
@@ -93,9 +130,10 @@ export def edit [
     content: $content
     description: $description
     labels: ($labels | join-labels)
+    no-labels: ($labels == [])
     due: ($due | format-due)
     priority: ($priority | format-priority)
-    no_due: $no_due
+    no-due: $no_due
   } task update $ref | hydrate null | first
 }
 
@@ -141,7 +179,7 @@ export def find [
   --threshold: float = 0.5 # Minimum overlap for a fuzzy match
 ]: oneof<nothing, table> -> oneof<nothing, record<id: string, content: string, score: float, url: string>> {
   default { list --project ($project | default { repo-name }) }
-  | insert score {|row| score $slug $row.content }
+  | insert $.score {|row| score $slug $row.content }
   | where score >= $threshold
   | sort-by --reverse score
   | let scored: table;
@@ -154,7 +192,9 @@ export def find [
 
 # ——— helpers ————————————————————————————————————————————————————————————————
 
-# Run `td` through the auth retry.
+# Run `td`: through the auth retry (`--auth`, or without `--json`/`--ndjson`), else as a structured read.
+#
+# A structured read parses stdout as JSON and raises with `td`'s output on a non-zero exit (no auth retry).
 def --wrapped todoist [
   ...rest: string
   # Arguments to pass through to `td`
@@ -175,7 +215,16 @@ def --wrapped todoist [
     with-auth --login={|| run-external td auth login } td ...$in
   } else {
     let args;
-    attempt --merge td ...$args | get $.stdout
+    let res: record = attempt td ...$args
+    if $res.exit_code != 0 {
+      error raise $"`td` exited with code ($res.exit_code)" --with={
+        kind: external_failure
+        help: (
+          [$res.stderr $res.stdout] | str trim | compact --empty | str join (char nl)
+        )
+      }
+    }
+    $res.stdout
   } | if $struct {
     from json | collect {|| if $in has results { get $.results } else { append [] } }
   } else { }
@@ -190,13 +239,15 @@ def "into options" [
 ]: record -> list<string> {
   transpose name value
   | where value not-in [null false]
-  | update name { if $in starts-with '--' { } else { $"--($in)" } }
-  | update value { match ($in | describe) { bool => null _ => { into string } } }
-  | reduce --fold=($fold | compact --empty) {|row| append [$row.name $row.value] | compact }
+  | update $.name { if $in starts-with '--' { } else { $"--($in)" } }
+  | update $.value { match ($in | describe) { bool => null _ => { into string } } }
+  | each --flatten {|row| [$row.name $row.value] | compact }
+  | prepend ($fold | compact --empty)
 }
 
+# Labels as `td`'s comma-separated value; null for none (no flag).
 def join-labels []: oneof<nothing, list<string>> -> oneof<nothing, string> {
-  if ($in | describe) == list<string> { str join , }
+  if ($in | is-not-empty) { str join , }
 }
 
 def format-due []: oneof<nothing, datetime, string> -> oneof<nothing, string> {
@@ -209,9 +260,13 @@ def format-priority []: oneof<nothing, int> -> oneof<nothing, string> {
 }
 
 def repo-name []: nothing -> string {
-  try { attempt --check git rev-parse --show-toplevel } catch {
-    error make --unspanned 'not inside a repository: pass `--project`'
-  } | str trim | path basename
+  let root: string = try { attempt --check git rev-parse --show-toplevel } catch {|e|
+    $e | error raise 'not inside a repository' --with={
+      kind: not_found
+      help: 'pass --project to name the Todoist project'
+    }
+  }
+  $root | str trim | path basename
 }
 
 def tokens []: string -> list<string> {
@@ -230,13 +285,16 @@ def score [slug: string content: string]: nothing -> float {
 
 # Rows of `td` task JSON: project name (`$name` when given, otherwise resolved), `due` as a datetime, app priority.
 def hydrate [name: oneof<nothing, string> --long = false]: table -> table {
-  let rows: table = $in
+  let rows: table;
   # one `td project list` call, and only when a name has to be resolved
   let projects: table = if $name == null and ($rows | is-not-empty) { projects } else { [] }
-  $rows | if $long { } else {
-    select $.id $.content $.description $.labels? $.projectId? $.parentId? $.due.date? $.priority $.url
-  } | rename --column={projectId: project parentId: parent due.date: due}
-  | default [] labels
+  $rows | if $long {
+    default null $.projectId? $.parentId? | rename --column={projectId: project parentId: parent}
+  } else {
+    select $.id $.content $.description? $.labels? $.projectId? $.parentId? $.due?.date? $.priority $.url?
+    | rename --column={projectId: project parentId: parent due.date: due}
+  }
+  | default [] $.labels
   | update $.project {|row| $name | default { $projects | where id == $row.project | get $.0?.name } }
   | update $.priority { into int | 5 - $in }
   # `--long` keeps `due` as the raw record
@@ -251,16 +309,16 @@ def _td [buffer: string]: nothing -> oneof<list, record> {
   | default --empty { if ($line | split row --regex '\s+' | length) <= 2 { $COMMANDS } else { [] } }
 }
 def _projects []: nothing -> record {
-  projects | select name url
+  projects | select $.name $.url
   | rename value description
   | into completions {completion_algorithm: substring}
 }
 def _labels []: nothing -> record {
-  labels | get name
+  labels | get $.name
   | into completions {completion_algorithm: substring}
 }
 def _tasks []: nothing -> record {
-  list | select content project
+  list | select $.content $.project
   | rename value description
   | into completions {completion_algorithm: substring match_description: true}
 }

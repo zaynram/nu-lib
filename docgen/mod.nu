@@ -17,28 +17,31 @@
 
 # nu-lint-ignore-file: add_doc_comment_exported_fn
 
+use error
+
 # The introspection program run inside the child interpreter. %USE% (one or
 # more import statements), %WHERE% (the root module predicate) and %PATH%
 # (the submodule chain to descend) are substituted by `introspect`; nuon on
 # stdout is the only output. Exports are joined by declaration id, which
 # is why each submodule needs a child of its own: a submodule's declarations
-# are visible to `scope` only once it is imported itself.
-# The collector's nested-child pattern is necessary and intentional due to the
-# limitations of `nu` v0.114.2.
+# are visible to `scope` only once it is imported itself. The child imports
+# this library's `error` module (its root heads the include path) to raise
+# its own failures, which reach the caller as the text of its stderr.
 
 const ROOT: path = path self .. | path expand --strict
 const CHILD_SCRIPT = r#'
+use error
 %USE%
 let found = scope modules | where %WHERE%
 if ($found | is-empty) {
-  error make --unspanned 'docgen: module imported but not found in scope'
+  error raise 'the module was imported but is not in scope' --kind not_found
 }
 # descend by name: a re-exported module (`export use`) never appears in
 # `scope modules` on its own, only under its parent
 let module = %PATH% | reduce --fold ($found | first) {|name, parent|
   let sub = $parent.submodules | where name == $name
   if ($sub | is-empty) {
-    error make --unspanned $"docgen: submodule ($name) not found under ($parent.name)"
+    error raise $"no submodule named '($name)' under '($parent.name)'" --kind not_found
   }
   $sub | first
 }
@@ -63,7 +66,7 @@ let carried = $module.commands.decl_id | append $module.aliases.decl_id
   submodules: (
     $module.submodules | where {|sub|
       let own = $sub.commands.decl_id | append $sub.aliases.decl_id
-      ($own | is-empty) or ($own | any {|id| $id not-in $carried })
+      ($own | is-empty) or ($own | any $it not-in $carried)
     } | get name
   )
 }
@@ -71,17 +74,21 @@ let carried = $module.commands.decl_id | append $module.aliases.decl_id
 '#
 
 # Resolve one collect target into the child's `use` argument and the
-# `scope modules` predicate pinning down the imported module. Bare names
-# resolve through the child's lib dirs; paths are expanded here so the
-# predicate can match on the module's file identity, with a bare `mod.nu`
-# target resolved to its parent directory (importing the file directly
-# would name the module `mod`).
+# `scope modules` predicate pinning down the imported module. A target is a
+# path when it contains a path separator, ends in `.nu`, or exists on disk
+# relative to the current directory (so `.` and `..` are paths); anything
+# else is a module name resolved through the child's lib dirs. A path that
+# does not exist is looked up in the lib dirs too (see `locate`). Paths are
+# expanded here so the predicate can match on the module's file identity,
+# with a bare `mod.nu` target resolved to its parent directory (importing
+# the file directly would name the module `mod`).
 def resolve [target: string]: nothing -> record<use: string, where: string> {
-  if not (($target =~ '[/\\]') or ($target ends-with .nu)) {
+  let is_path: bool = $target =~ '[/\\]' or ($target ends-with .nu) or ($target | path exists)
+  if not $is_path {
     return {use: $target, where: $"name == ($target | to nuon)"}
   }
-  let full: path = try { $target | path expand --strict } catch {
-    error make --unspanned $"docgen: target does not exist: ($target)"
+  let full: path = try { locate $target | path expand --strict } catch {|e|
+    $e | error raise $"target '($target)' does not exist" --kind not_found
   }
   let file: path = match ($full | path type) {
     dir => ($full | path join mod.nu)
@@ -95,8 +102,23 @@ def resolve [target: string]: nothing -> record<use: string, where: string> {
   {use: $entry, where: $"file == ($file | to nuon)"}
 }
 
-# Library directories the child resolves bare module names against: the
-# caller's NU_LIB_DIRS plus the nupm modules directory.
+# A path target on disk: as given when it exists (relative to the current
+# directory), else the first lib dir entry it names, as `use` resolves
+# `completion/local`: a module file, or a directory with a `mod.nu`. A target
+# found nowhere is returned unchanged.
+def locate [target: path]: nothing -> path {
+  if ($target | path exists) { return $target }
+  include-dirs
+  | each {|dir| $dir | path join $target }
+  | where (($it | path type) == file or ($it | path join mod.nu | path exists))
+  | first
+  | default $target
+}
+
+# Library directories the child resolves bare module names against, first
+# match wins: this repository's root, the caller's `$env.NU_LIB_DIRS`, the
+# parse-time `$NU_LIB_DIRS` constant, then the nupm modules directory
+# (`$env.NUPM_HOME/modules`, default `<data-dir>/../nupm/modules`).
 def include-dirs []: nothing -> list<string> {
   [
     $ROOT
@@ -119,7 +141,10 @@ def introspect [ctx: record]: nothing -> record {
   let out = ^$nu.current-exe --no-config-file --include-path=(include-dirs | str join (char esep)) --commands $script
     | complete
   if $out.exit_code != 0 {
-    error make --unspanned $"docgen: failed to collect after `($ctx.uses | last)`:\n($out.stderr | str trim)"
+    error raise $"the module could not be collected after `($ctx.uses | last)`" --with={
+      kind: external_failure
+      help: ($out.stderr | str trim)
+    }
   }
   $out.stdout | from nuon
 }
@@ -132,11 +157,11 @@ def collect-tree [ctx: record]: nothing -> list<record> {
   let root = $ctx.root | default $raw.module.name
   let name = [$root] | append $ctx.path | str join ' '
   let file = if ($raw.module.file | path exists) { $raw.module.file } else { $ctx.file }
-  [($raw | reject submodules | update module { update name $name | update file $file })]
+  [($raw | reject $.submodules | update $.module { update $.name $name | update $.file $file })]
   | append (
     $raw.submodules | each {|sub|
       collect-tree {
-        uses: ($ctx.uses | append $"use ($raw.module.name) ($sub)")
+        uses: ($ctx.uses | append $"use ($raw.module.name | to nuon) ($sub | to nuon)")
         where: $ctx.where
         path: ($ctx.path | append $sub)
         root: $root
@@ -182,8 +207,8 @@ def io-of []: record -> table {
   values
   | each {|rows|
     {
-      input: ($rows | where parameter_type == input | get --optional 0.syntax_shape | default any)
-      output: ($rows | where parameter_type == output | get --optional 0.syntax_shape | default any)
+      input: ($rows | where parameter_type == input | get --optional $.0.syntax_shape | default any)
+      output: ($rows | where parameter_type == output | get --optional $.0.syntax_shape | default any)
     }
   }
 }
@@ -192,14 +217,14 @@ def io-of []: record -> table {
 # parameter list is identical across overloads, so it comes from the first;
 # io keeps every overload's pair.
 def normalize []: record -> record {
-  let raw = $in
+  let raw: record;
   {
     name: $raw.name
     description: ($raw.description | strip-directives)
     extra_description: ($raw.extra_description | strip-directives)
     search_terms: $raw.search_terms
     category: $raw.category
-    params: ($raw.signatures | values | get --optional 0 | default [] | params-of)
+    params: ($raw.signatures | values | first | default [] | params-of)
     io: ($raw.signatures | io-of)
     examples: $raw.examples
     is_const: $raw.is_const
@@ -208,17 +233,21 @@ def normalize []: record -> record {
 
 # Extract the documentation model for one or more Nushell modules.
 #
-# Each target is either a module name (resolved against the caller's
-# NU_LIB_DIRS and the nupm modules directory) or a filesystem path to a
-# module directory, its mod.nu, or a single-file module. The result is one
-# row per target plus one per nested submodule (named by its parent chain,
-# e.g. `warrior time`): the module's own metadata plus normalized tables of
+# Each target is either a module name (resolved against this repository's
+# root, the caller's NU_LIB_DIRS and the nupm modules directory) or a
+# filesystem path to a module directory, its mod.nu, or a single-file
+# module; a target containing a path separator, ending in `.nu`, or existing
+# on disk (including `.` and `..`) is a path. A path that does not exist from
+# the current directory is looked up under the same lib dirs, so
+# `collect completion/local` works anywhere. The result is one row per
+# target plus one per nested submodule (named by its parent chain, e.g.
+# `nested sub`): the module's own metadata plus normalized tables of
 # its exported commands, aliases, and constants, each sorted for diff-stable
 # output. Command names are the ones in scope after importing that row's
 # module (`main` shown as the module name). Persist the diffable IR snapshot
 # by piping through `to nuon`.
-@example "collect an installed module and list its command names" {
-  collect tasks | first | get commands.name
+@example "collect a library module and list its command names" {
+  collect completion | first | get $.commands.name
 }
 @example "persist a module directory's model as a nuon snapshot" {
   collect ./docgen | to nuon --indent 2 | save docs/api.nuon
@@ -227,7 +256,10 @@ export def collect [
   ...targets: string # module names or paths (directory, mod.nu, or file.nu)
 ]: nothing -> table {
   if ($targets | is-empty) {
-    error make --unspanned 'docgen collect: at least one module target is required'
+    error raise 'at least one module target is required' --with={
+      kind: invalid_argument
+      help: 'give a module name, or the path of a module directory, its mod.nu, or a single-file module'
+    }
   }
   $targets | each {|target|
     let t = resolve $target
@@ -236,11 +268,11 @@ export def collect [
     {
       module: (
         $raw.module
-        | update description { strip-directives }
-        | update extra_description { strip-directives }
+        | update $.description { strip-directives }
+        | update $.extra_description { strip-directives }
       )
       commands: ($raw.commands | each { normalize })
-      aliases: ($raw.aliases | update description { strip-directives })
+      aliases: ($raw.aliases | update $.description { strip-directives })
       constants: $raw.constants
     }
   }

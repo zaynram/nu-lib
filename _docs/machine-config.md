@@ -1,0 +1,158 @@
+# Machine configuration: the override file
+
+`conf machine-config [user|vendor]` returns the directories of a scope (`home`, `share`, `modules`, `binaries`, …);
+`conf vars`, `conf dir`, `conf auto` and `conf prompt` build on it, and `use conf` loads the vendor scope into
+`NU_LIB_DIRS`/`NU_PLUGIN_DIRS`/`PATH`. The library itself holds no host names and no machine paths: the defaults
+derive from Nushell's own directories (`$nu.home-dir`, `$nu.data-dir`, `$nu.default-config-dir`, …), and whatever
+differs on a machine comes from one file outside the repository. Setting up a new machine is "clone, then write one
+file" — or nothing at all when the defaults fit.
+
+## Location
+
+In order of precedence:
+
+1. `conf machine-config --file <path>` names the file for one call; `--no-file` ignores every file (the defaults and
+   `--with` only — for tests and bootstrapping).
+2. `$env.NU_MACHINE_CONFIG` names the file for the process. An **empty** value means "no file" (the same as
+   `--no-file`): a shell started with `NU_MACHINE_CONFIG` set to the empty string (`with-env {NU_MACHINE_CONFIG: ''} { nu }`
+   from Nushell, `NU_MACHINE_CONFIG= nu` from bash) runs on the plain defaults.
+3. Otherwise `machine.nuon` or `machine.nu` in Nushell's config directory (`$nu.default-config-dir`:
+   `~/.config/nushell` on Linux, `~\AppData\Roaming\nushell` on Windows). When both exist the lookup fails with
+   `conf::machine::override-path::conflict`; keep one.
+
+A file named by `--file` or `NU_MACHINE_CONFIG` must exist (`conf::machine::override-path::not_found`) and must end in
+`.nuon` or `.nu` (`conf::machine::load::invalid_argument`). The configured file's checked record is cached (see
+"Cache" below); a file named by `--file` is read on every call.
+`conf machine-config --verbose` prints the lookup (`mode`, `host`, `os`, `strategy`), `override = <path>` or
+`override = none`, and `cache = hit|miss|off|none`.
+
+## Two forms
+
+**`machine.nuon` — static.** A record of literals, read with `open` (about 0.1 ms; a `machine-config` call that
+reads and validates one costs about 13 ms end to end, a cache hit about 5 ms). Preferred unless a value has to be
+computed.
+
+```nuon
+{
+  strategy: append
+  user: {
+    modules: [/work/ext]
+    binaries: [/opt/tools/bin]
+  }
+  vendor: {
+    modules: /srv/nupm/modules
+  }
+}
+```
+
+**`machine.nu` — dynamic.** A script whose `main` returns the record:
+
+```nushell
+use env from-bash
+
+def main []: nothing -> record {
+  let profile: record = from-bash --return=merge ($nu.home-dir | path join .profile)
+  {user: {share: $profile.XDG_DATA_DIR, modules: [($NU_LIB_DIRS | first) ($profile.WORK | path join ext)]}}
+}
+```
+
+`machine-config` runs it in a child interpreter — `nu --no-config-file --include-path <library root> --commands
+"run <file> | to nuon"` (about 15 ms for the bare child; a call that runs and validates the example script costs
+about 50 ms end to end, which is why the result is cached) — and parses the child's stdout. The script executes in-process in that child,
+so `$nu`, `$env` and the library's modules (`use env from-bash`, `use conf`, …) are available; `$NU_LIB_DIRS | first`
+is the library root. Only the returned record crosses the boundary, as nuon, so:
+
+- return strings and lists of strings only (paths are strings); anything else fails validation — values that cannot
+  cross as nuon do not belong in a machine file;
+- stdout is the result: report on stderr (`print --stderr`), which `machine-config` passes on;
+- the script receives no pipeline input — declare `def main []: nothing -> record`. A shebang such as
+  `#!/usr/bin/env -S nu --stdin` is only needed to run the script by hand with input;
+- the child has `NU_MACHINE_CONFIG` set to the empty string, so `conf machine-config` inside the script (directly, or
+  through `use conf`'s environment block) returns the defaults instead of running the script again;
+- a non-zero exit is `conf::machine::load::external_failure` with the child's stderr as advice; output that is not a
+  record (or not nuon) is `conf::machine::load::invalid_argument`.
+
+To try a script by hand: `nu --no-config-file -I <library root> -c 'run ~/.config/nushell/machine.nu'`, or
+`conf machine-config --file <script> --verbose`.
+
+## Cache
+
+The checked record of the configured file (not of a `--file`) is kept in `$nu.cache-dir/nu-lib/machine-override.nuon`
+together with its key: the file's path, the modification time and size of the file itself (a symlink is followed),
+the library root and the running `nu` version. A call whose key matches returns the cached record without running
+the script or validating anything (about 5 ms instead of 13 ms for a `.nuon`, 50 ms for the example `.nu`; `use conf`
+at login takes this path) — for a `.nuon` indefinitely, for a `.nu` script for one day, since the files and variables
+a script reads are invisible to the key. Editing the file, running another `nu`, or moving the library misses the
+cache and rewrites it; `conf machine-config --no-cache` does so on demand (`cache = off`).
+The cache is written to a temporary name and renamed into place, so a reader never sees a partial file; a cache
+directory that cannot be written is not an error (the file is loaded again next time). `_docs/hydration.md` has the
+general pattern.
+
+## Shape
+
+Every key is optional. Paths are strings; list keys are lists of strings.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `strategy` | `overwrite`, `prepend` or `append` | The default for `--strategy` |
+| `user.home`, `user.share`, `user.cache`, `user.config`, `user.state`, `user.autoload` | string | User-scope directories |
+| `user.modules`, `user.binaries`, `user.scripts` | list of strings | User-scope directory lists |
+| `vendor.autoload`, `vendor.modules`, `vendor.binaries`, `vendor.scripts` | string | Vendor-scope directories |
+| `vendor.plugins` | list of strings | Vendor plugin directories |
+
+The record is validated with `validate rules --strict`: an undeclared key (at the root or inside `user`/`vendor`), a
+wrong type or an unknown `strategy` fails with `conf::machine::check::invalid_argument`. The message names the file
+and the first violation; the advice lists every violation (`<rule>: <hint>`). A `null` value is the same as leaving the key
+out. The `--with` record has the same shape and is validated the same way (the message says `--with`).
+
+## Precedence and strategy
+
+Values combine lowest to highest: **defaults < override file < `--with`**. Scalars are replaced. Lists combine
+according to the strategy, which is taken from the first of `--strategy`, the `--with` record's `strategy`, the
+file's `strategy`, else `overwrite`:
+
+| Strategy | `modules` with defaults `[lib cfg nupm]` and file `[ext]` |
+|---|---|
+| `overwrite` | `[ext]` |
+| `prepend` | `[ext lib cfg nupm]` |
+| `append` | `[lib cfg nupm ext]` |
+
+Lists are deduplicated afterwards (first occurrence wins). `--host` and `--os` exist for inspection and tests: no
+default depends on the hostname (it only labels `--verbose` output), and `--os` picks the OS-dependent default (the
+vendor `binaries`: `/usr/bin`, or the Windows Apps directory). The file is not keyed by host — one file per machine.
+
+## Errors
+
+The codes are derived from the raise site (`_docs/errors.md`): `conf::machine` is the module, the next segment the
+command that raised (none for `machine-config` itself), the last the kind.
+
+| Code | When | Message / advice |
+|---|---|---|
+| `conf::machine::invalid_argument` | unknown mode or strategy; `--file` with `--no-file` | names the value; advice lists the accepted ones |
+| `conf::machine::override-path::conflict` | both `machine.nuon` and `machine.nu` exist in the config directory | names both files |
+| `conf::machine::override-path::not_found` | the file named by `--file` or `NU_MACHINE_CONFIG` does not exist | names the path |
+| `conf::machine::load::invalid_argument` | unsupported extension; malformed nuon; not a record; the script printed something other than its record | names the file; a parse error is the inner error |
+| `conf::machine::load::external_failure` | the script exited non-zero | names the script; advice is its stderr |
+| `conf::machine::check::invalid_argument` | a shape violation (file or `--with`) | names the file (or `--with`) and the first violation; advice lists every violation |
+
+A failing override fails `conf machine-config` and every explicit `conf` call that resolves the machine
+configuration. `use conf` is the exception: its environment block runs at every shell start (the owner's `env.nu`),
+so there a failing override is reported on stderr (`conf: the machine override file was ignored, using the
+defaults: …`) and the defaults are loaded instead. Only the file's own errors (`conf::machine::*`) are worked around
+this way; anything else that fails inside the block is raised as it is, so an unrelated problem is never blamed on the
+override file. Fix the file and run `conf machine-config` to see the full error; `conf vars --no-file` and
+`conf machine-config --no-file` ignore the file on purpose.
+
+## Example
+
+`_docs/examples/machine.nu` is the script the library's former host branch became: on Linux it reads the XDG
+directories and `WORK` from `~/.profile` (through `env from-bash`, with a minimal PATH so `binaries` gets the entries
+the profile adds), lays `modules`/`scripts` out under `WORK` and the vendor scope under `NUPM_HOME`; on Windows it
+maps the user directories to `APPDATA`/`LOCALAPPDATA`. Install it with
+
+```nushell
+cp <library root>/_docs/examples/machine.nu ($nu.default-config-dir | path join machine.nu)
+conf machine-config --verbose
+```
+
+and edit the values. The conf suite (`_tests/suites/conf.nu`) runs it under a fake home and profile.

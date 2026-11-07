@@ -6,20 +6,18 @@ use error
 use completion "into completions"
 use path
 use edit
+use style
 
 export use machine.nu *
-
-# ——— constants ————————————————————————————————————————————————————————————————
-
-const SCRIPT: path = path self machine.nu | path expand --strict
 
 # ——— helpers ——————————————————————————————————————————————————————————————————
 
 alias editor = edit
 alias config-dir = try { $env.XDG_CONFIG_DIR! } catch { $nu.default-config-dir | path dirname }
 
-def profile-env [mode: string = user]: nothing -> record {
-  let mc: record = machine-config $mode
+# A scope's variables: its directories first, then the entries the environment already has.
+def profile-env [mode: string = user --no-file]: nothing -> record {
+  let mc: record = machine-config $mode --no-file=$no_file
   match $mode {
     user => ({
       NU_LIB_DIRS: $mc.modules
@@ -30,7 +28,7 @@ def profile-env [mode: string = user]: nothing -> record {
       NU_LIB_DIRS: [$mc.modules]
       PATH: [$mc.binaries $mc.scripts]
     })
-  } | update $.PATH { append $env.path! | uniq }
+  }
 }
 
 alias xglob = glob --depth=3 --exclude=[
@@ -91,25 +89,42 @@ def scope [vendor: bool]: nothing -> record {
 
 # Open a resolved file in the editor, or return its expanded path.
 def submit [target: oneof<nothing, string> --return]: oneof<nothing, path> -> oneof<nothing, path> {
-  # nu-lint-ignore: unused_parameter
-  let p: oneof<nothing, path> = $in
-  if ($p | is-empty) { error raise --code=config::unresolved_target $"no items found for target: '($target)'" }
+  let p: oneof<nothing, path>;
+  if ($p | is-empty) { error raise $"no items found for target '($target)'" --kind not_found }
   $p | path expand | if $return { } else { editor }
 }
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
-# Show or load a scope's environment variables, PATH additions included.
+# Show or load a scope's environment variables (`NU_LIB_DIRS`, `PATH`, and `NU_PLUGIN_DIRS` for the vendor scope).
+#
+# Each list variable is the entries the environment already has (PATH-like text inherited from a parent process
+# counts as its entries), preceded by those of the piped record's entries and the scope's directories (in that
+# order) that it lacks. Existing entries keep their positions, so loading
+# never drops or reorders a directory and loading twice changes nothing. Other piped variables are kept, and
+# `--with` values replace anything else.
 @category env
 export def --env vars [
   --vendor (-v) # Use the vendor scope
   --with (-w): record = {} # Merge these variables in, overriding the scope's own
   --load (-l) # Load the variables into the current process
   --return (-r) # Return the variables as a record (the default when not loading)
+  --no-file # Ignore the machine override file: the defaults and `--with` only
 ]: oneof<nothing, record> -> oneof<nothing, record> {
-  let input: record = default {} | merge $with
-  let e: record = if $vendor { profile-env vendor } else { profile-env user }
-  if $load { $input | merge $e | load-env }
+  let input: record = $in | default {}
+  let scope: record = profile-env (if $vendor { 'vendor' } else { 'user' }) --no-file=$no_file
+  let combined: record = $scope
+    | record each {|key dirs|
+      # Inherited PATH-like text is split: Nushell converts `PATH` and `NU_LIB_DIRS` to lists, not `NU_PLUGIN_DIRS`.
+      # Its empty fields (an empty variable, a trailing separator) are dropped: on POSIX an empty PATH entry means
+      # the current directory.
+      let existing: list = $env | get --optional --ignore-case $key | default []
+        | if ($in | describe) == string { split row (char esep) | where $it != '' } else { }
+      let added: list = $input | get --optional $key | default [] | append $dirs | uniq | where $it not-in $existing
+      {$key: ($added | append $existing)}
+    }
+  let e: record = $input | merge $combined | merge $with
+  if $load { $e | load-env }
   if $return or not $load { return $e }
 }
 
@@ -122,9 +137,22 @@ export def --env dir [
 ]: nothing -> oneof<nothing, path, record> {
   let s: record = scope $vendor
   if $target == null { return $s }
-  let p: oneof<nothing, path> = $s | get --ignore-case --optional $target
-  if $p == null { error raise --code=config::dir::unresolved_target $"no directory named '($target)'" }
-  $p | if $return { return $in } else { cd $in }
+  let p: oneof<path, list<path>> = $s
+    | get --ignore-case --optional $target
+    | default {
+      error raise $"no directory named '($target)'" --with={
+        kind: not_found
+        help: $"directories: ($s | columns | str join ', ')"
+      }
+    }
+  if $return { return $p }
+  if ($p | describe) =~ '^list' {
+    error raise $"'($target)' is a list of directories" --with={
+      kind: invalid_argument
+      help: 'pass --return to get the list instead of navigating'
+    }
+  }
+  cd $p
 }
 
 # Open an autoload file of a scope; with no target, pick one from a list.
@@ -135,8 +163,8 @@ export def auto [
   --return (-r) # Return the resolved path instead of opening it
 ]: nothing -> oneof<nothing, path, table> {
   let dir: path = (scope $vendor).autoload
-  try { mkdir $dir; cd $dir } catch {
-    error raise --code=config::auto::internal_error "could not resolve autoload directory"
+  try { mkdir $dir; cd $dir } catch {|e|
+    $e | error raise $"could not create or enter the autoload directory '($dir)'" --kind io
   }
   match {t: $target g: $return} {
     {t: null g: true} => { return $dir }
@@ -146,6 +174,10 @@ export def auto [
 }
 
 # Open an application's configuration file; with no target, list the candidates.
+#
+# The target is a file or directory under the config directory (`$env.XDG_CONFIG_DIR`, else the parent of
+# Nushell's). A directory with one config file resolves to it; with several, pick one interactively. `--path`
+# names a file under the target directory, which need not exist yet.
 @category filesystem
 export def find [
   target?: path@_apps # The directory name to search for config files under
@@ -153,15 +185,24 @@ export def find [
   --return (-r) # Return the constructed path instead of opening it
 ]: nothing -> oneof<nothing, path, table> {
   let item: path =  config-dir | if $target != null { path join $target } else { }
+  # The arm receives the match input (the path), which `error raise` does not take: hence `null |`.
   $item | match ($in | path type) {
     file => { submit $target --return=$return | return $in }
     dir => { cd $in }
-    _ => { mkdir $in; cd $in }
+    _ if $target == null => {
+      null | error raise $"config directory '($item)' does not exist" --kind not_found
+    }
+    _ => { null | error raise $"no config directory or file named '($target)'" --kind not_found }
   }
   if $path != null { $path } else {
     let files: list = try { xglob **/* --no-dir } | default []
     match ($files | length) {
-      0 => { error raise --code=config::app::unresolved_target $"no config files found for '($target)'" }
+      0 => {
+        error raise $"no config files found for '($target)'" --with={
+          kind: not_found
+          help: 'pass --path to name a file to create'
+        }
+      }
       1 => { $files | first }
       _ => { $files | path truncate --root . | path select }
     }
@@ -170,29 +211,36 @@ export def find [
 
 const PROMPT_EXT: string = '^.+[.]{1}(toml|yaml|yml|json|jsonc)$'
 
-# Refresh the `oh-my-posh` prompt initialization script in the vendor autoload directory.
+# Refresh the `oh-my-posh` prompt initialization script and move it to the user autoload directory.
+#
+# `oh-my-posh init nu` writes the script into the vendor autoload directory; it replaces any existing copy in the
+# user autoload directory. On Windows, the self-upgrade tail of the script is cut off.
 @category shells
 export def prompt [
   --config (-c): path # Prompt configuration file (defaults to `$env.POSH_CONFIG` if set)
 ]: nothing -> nothing {
-  $config | default --empty $env.posh_config!? | if $in == null {
+  let cfg: oneof<nothing, path> = $config | default --empty $env.posh_config!?
+  if $cfg == null {
     oh-my-posh init nu
-  } else if ($in | path type) != file {
-    let msg: string = $"file not found: '($in)'"
-    error raise --code=config::prompt::unresolved_config $msg
-  } else if $in !~ $PROMPT_EXT {
-    let msg: string = $"unexpected configuration file format: '($in)'"
-    error raise --code=config::prompt::unknown_configuration_format $msg
+  } else if ($cfg | path type) != file {
+    error raise $"file not found: '($cfg)'" --kind not_found
+  } else if $cfg !~ $PROMPT_EXT {
+    error raise $"unsupported format: '($cfg)'" --with={
+      kind: invalid_argument
+      help: 'oh-my-posh reads toml, yaml, yml, json and jsonc files'
+    }
   } else {
-    oh-my-posh init nu --config=($in)
+    oh-my-posh init nu --config=($cfg)
   }
   let src: path = (scope true).autoload | path join oh-my-posh.nu
   if ($src | path exists) {
     let dst: path = $src | path dirname --replace=(machine-config).autoload
-    if not ($dst | path exists) { mv --update $src $dst }
+    if $dst != $src { mkdir ($dst | path dirname); mv --force $src $dst }
     if $nu.os-info.name == windows {
       open --raw $dst
-      | collect { lines | take until { str contains '$_omp_executable upgrade' } | str join (char newline) }
+      | collect {
+        lines | take until ($it | str contains '$_omp_executable upgrade') | str join (char newline)
+      }
       | save --force $dst
     }
   }
@@ -200,14 +248,24 @@ export def prompt [
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
+# Put the library's directories and the vendor scope on NU_LIB_DIRS, NU_PLUGIN_DIRS and PATH (idempotent: existing
+# entries are kept and nothing is duplicated). A broken machine override file must not break `use conf` (the
+# owner's env.nu runs it at every shell start): it is reported on stderr and the defaults are loaded instead;
+# an explicit `conf machine-config` still raises the error. Any other error is not the file's fault and is raised
+# as it is.
 export-env {
-  $env | select $.NU_LIB_DIRS $.NU_PLUGIN_DIRS
-  | default [] NU_LIB_DIRS NU_PLUGIN_DIRS
-  | merge deep --strategy=prepend {
-    NU_LIB_DIRS: $NU_LIB_DIRS
-    NU_PLUGIN_DIRS: $NU_PLUGIN_DIRS
-  } | update cells { uniq }
-  | vars --vendor --load
+  let libs: record = {NU_LIB_DIRS: $NU_LIB_DIRS NU_PLUGIN_DIRS: $NU_PLUGIN_DIRS}
+  try {
+    $libs | vars --vendor --load
+  } catch {|e|
+    # Only the override file's own errors (`conf::machine::*`) are worked around.
+    if not ($e.details?.code? | default '' | str starts-with 'conf::machine::') { $e.raw }
+    # The cause is the help: a validation hint, or a failing script's stderr (collapsed to one line).
+    let cause: string = $e.details?.help? | default '' | lines | str trim | compact --empty | str join ' | ' | str substring 0..240
+    let warning: string = 'conf: the machine override file was ignored, using the defaults:' | style paint yellow
+    print --stderr $"($warning) ($e.msg)(if $cause != '' { $' — ($cause)' })"
+    $libs | vars --vendor --load --no-file
+  }
 }
 
 # ——— completions ——————————————————————————————————————————————————————————————
@@ -225,20 +283,20 @@ def _auto [buffer: string]: nothing -> record {
     | path rejoin *.nu
   ) --no-dir
   | path parse
-  | select stem parent
+  | select $.stem $.parent
   | rename value description
   | into completions {completion_algorithm: substring}
 }
 def _apps []: nothing -> record {
   xglob (config-dir | path rejoin '*') | wrap description
-  | insert value {|row| $row.description | path basename }
+  | insert $.value {|row| $row.description | path basename }
   | where value !~ '^[.|_]+\w+'
   | into completions {match_description: true completion_algorithm: substring}
 }
 def _app-paths [buffer: string]: nothing -> oneof<record, list> {
   let d: path = config-dir
   $buffer | split row (char space)
-  | where $it not-in [conf app --path -p] and ($it | is-not-empty)
+  | where $it not-in [conf find --path -p] and ($it | is-not-empty)
   | each { prepend $d | path join }
   | where ($it | path type) == dir
   | if ($in | is-empty) { return [] } else {
@@ -251,7 +309,7 @@ def _app-paths [buffer: string]: nothing -> oneof<record, list> {
     | path relative-to $dir
     | where $it =~ '^[/|\w|\-|.]+$' and ($it | path parse).stem !~ '\d+'
     | wrap value
-    | insert description $label
+    | insert $.description $label
     | into completions {sort: true match_description: true completion_algorithm: substring}
   }
 }

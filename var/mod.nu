@@ -2,6 +2,7 @@
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
+use error
 use std-rfc/kv *
 
 # ——— aliases ——————————————————————————————————————————————————————————————————
@@ -11,18 +12,24 @@ export alias ls = kv list --universal
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
-# Remove a variable from the universal `kv` store.
+# Remove a variable from the universal `kv` store and return its value.
+#
+# Without a key, the last listed pair is removed; that is an error when the store is empty. A key that is not
+# stored returns null without an error, like a stored null value.
 export def pop [
   key?: string@_variable_names
   # The name of the variable to remove (if omitted, the `| last` pair will be dropped)
 ]: nothing -> oneof<nothing, any> {
   match ($key | default { kv list --universal | last | get $.key? }) {
-    null => { error make --unspanned 'there are no stored key-value pairs' }
+    null => { error raise 'there are no stored key-value pairs' --kind not_found }
     $k => { kv drop --universal $k }
   }
 }
 
-# Assign one or more pairs to the universal `kv` store.
+# Assign one or more pairs to the universal `kv` store, in order (the input's pairs, then `key`/`value`).
+#
+# Returns the whole store as a record, or nothing with `--silent`. Having no pairs to set is an error, unless
+# `--silent` is given. `var set <key>` without a value stores null.
 export def set [
   key?: string@_variable_names
   # The name to store the variable under (or overwrite)
@@ -31,17 +38,18 @@ export def set [
   --silent (-s)
   # Disable returning the full variable set as a record
 ]: oneof<nothing, record, table<key: string, value: any>> -> oneof<nothing, record> {
-  match ($in | describe | split words | first) {
+  let pairs: table = $in | match ($in | describe | split words | first) {
     nothing => []
-    table => { }
+    # an empty table describes as `list<any>`
+    table | list => { }
     record => { transpose key value }
   } | if $key != null { append {key: $key value: $value} } else { }
-  | if $in != [] {
-    par-each --keep-order {|row| get value | kv set --universal $row.key }
-    if not $silent { kv list --universal | transpose --ignore-titles --header-row --as-record }
-  } else {
-    if not $silent { error make --unspanned 'no key-value pairs were provided' }
+  if $pairs == [] {
+    if not $silent { error raise 'no key-value pairs were provided' --kind invalid_argument }
+    return
   }
+  $pairs | each {|row| $row.value | kv set --universal $row.key } | ignore
+  if not $silent { kv list --universal | transpose --ignore-titles --header-row --as-record }
 }
 
 # Interact with variables in the universal `kv` store.
@@ -70,6 +78,6 @@ export def main [
 def _variable_names []: nothing -> table {
   kv list --universal | if $in == [] { } else {
     rename --column={key: value value: description}
-    | update description { describe }
+    | update $.description { describe }
   }
 }

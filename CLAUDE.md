@@ -1,0 +1,178 @@
+# nu-lib
+
+A personal library of Nushell modules for a development environment. Each top-level directory is one module
+(`<name>/mod.nu`, sometimes with submodules such as `util/workspace/` or `completion/external/`). The root `mod.nu` is a
+barrel that re-exports the commonly used modules.
+
+## Nushell version policy
+
+The library always targets the **latest Nushell nightly**. There is no version pinning: when a nightly changes
+behavior and a module breaks, the module is defective and gets fixed for the current nightly — never guarded by
+version checks. Check `nu --version` before assuming a language behavior; verify semantics empirically
+(`nu --no-config-file -c '…'`) rather than from memory, since nightly semantics drift. The policy is about fixing
+modules, not about running a broken binary: `pman bump-nu` smoke-tests a nightly before installing it and keeps the
+previous binary for `--rollback`.
+
+## Module resolution
+
+- Modules import each other by bare name (`use completion "into completions"`, `use validate rules`). This only
+  works when the **repository root is on `NU_LIB_DIRS`**. Run code against a checkout with
+  `nu --no-config-file -I <checkout-root> -c 'use <module>; …'`.
+- In a git worktree, pass the *worktree* root with `-I`. The owner's shell config puts the main checkout on
+  `NU_LIB_DIRS`, so without `-I` a worktree's modules silently resolve their imports from the main checkout.
+- `export use <module>` (as in the root barrel) does **not** run the re-exported module's `export-env` block; only a
+  direct `use` does. Environment set-up must therefore be triggered explicitly: the barrel's `export-env` runs the
+  env blocks it needs as guarded `use <module>` statements, which re-parse nothing (the module is already imported)
+  and run the block only when the statement executes. Avoid `source-env` for this: it is parse-time (a guarded
+  `source-env` still re-parses its file as a script on every load), and it executes the file's top-level `use`
+  statements, running those modules' env blocks unguarded.
+- Every module parses with only the repository on the include path; nothing outside it is imported at parse time.
+  Machine-specific values come from the per-machine override file (`machine.nuon`/`machine.nu` in Nushell's config
+  directory, see `_docs/machine-config.md`), never from code: the library holds no host names or machine paths.
+- Mixed modules are split: `<module>/local/mod.nu` re-exports the abstract part and adds the configuration-dependent
+  commands (`alarm`, `completion`, `mods`). `completion/external` is a deprecated shim for `completion/local`. The
+  root barrel exposes them as bare names and nothing exposes `local …`-prefixed forms; `init-local` writes the
+  autoload file that loads the barrel (see `_docs/module-partition.md`).
+
+## Module partition
+
+Modules are either **abstract** (pure Nushell, usable on any machine) or **configuration-dependent** (need
+installed programs, a particular OS/host, environment variables, or the owner's Nushell config).
+`_docs/module-partition.md` holds the classification and its consequences; keep it current when adding a module
+or a new external dependency.
+
+## Conventions
+
+- Section banners: `# ——— name ———…` padded to column 80, in the order imports, constants, types, helpers,
+  definitions/commands, environment, completions.
+- Every exported command has a one-line description comment, typed parameters with doc comments, and an explicit
+  input/output signature. `@category` attributes group commands for `help`.
+- Cell-path arguments carry the `$.` prefix: `get $.name`, `select $.a $.b`, `reject --optional $.kind`,
+  `default null $.repo? $.vcs?`, `update $.size {…}`, `insert $.role x`, `upsert $.path y`. The `!` suffix means
+  case-insensitive access and `?` means optional. Row conditions are the exception (see Data shaping): there the
+  column is named bare.
+- `first`/`last` for the first or last element, never `get $.0?`, `get --optional $.0` or `last 1 | get $.0?`
+  (both return `null` on an empty list); a nested path keeps `get` (`get $.0?.path`).
+- A block's input reaches its **first statement** implicitly: `let x: T;` binds it (typed, no `= $in`), and a first
+  statement that starts with a command is piped into (`ls | do { let paths = get $.name | path expand; $paths }`).
+  `= $in` remains only when `$in` starts a multi-line pipeline (`let x: T = $in` then `| …` lines). Later
+  statements get no implicit input (`let x: T;` binds `null`, a leading command sees an empty pipeline); they reach
+  the block's input through `$in` (`ls | do { let max = date now | $in - 1day; $in | where modified < $max }`).
+- An `if` or `match` that is not the first statement and uses the input is written `$in | if ($in | …) { … }` /
+  `$in | match ($in | …) { … }` when binding it is unnecessary: on a later statement the condition may see the input
+  while the body's `$in` is empty (verified on 0.116.2-nightly.33: `if ($in | is-empty) { … } else { $in | length }`
+  answers 0 for a two-element input), and nightlies have been inconsistent here.
+- Signatures have no commas between parameters or between input/output entries (`[name: string --force]`,
+  `]: [nothing -> list string -> list]`); commas stay inside types (`record<a: int, b: int>`, `oneof<…>`).
+- A constant list longer than the line limit has one item per line.
+- Errors are raised with `error raise <message> [--kind <kind>] [--with {kind help code …}] [...labels]` from the
+  `error` module; the code `<namespace>::<command>::<kind>` is derived from the raise site (`_docs/errors.md`).
+  Write the message literal at the raise site (lowercase start, no trailing period, values in single quotes), pick a
+  kind from the fixed vocabulary, and put remedies in `help`. `--with {code: …}` overrides derivation only for a
+  message that cannot be written at the raise site; `--with` rejects keys `error make` does not know (`advice`). Keep
+  the message minimal: the code already names the module and command and `help` carries the remedy, so the message
+  states only what is wrong and the value concerned (`'WORK is not set'`, not
+  `'proj: the WORK workspace variable is not set'`).
+- A raise with details passes them as one `--with` record, one key per line:
+
+  ```nu
+  error raise 'WORK is not set' --with={
+    kind: missing_dependency
+    help: 'set $env.WORK to the workspace root'
+  }
+  ```
+
+  A raise with only a kind stays on one line (`error raise 'x' --kind io`). Labels make `error raise` return a
+  closure; raise it with `| error throw`.
+- Never emit ANSI directly (`ansi green`, `nu-highlight` and `std/log` all ignore the colour setting): wrap text with
+  `style paint <codes>` or gate on `style colors`, which honour `config use-colors` (`use_ansi_coloring`, `NO_COLOR`,
+  the terminal). A command's explicit `--colors` flag overrides the check (`validate rules --colors=false`,
+  `paint --colors=true`). Error messages (`error raise`) never carry ANSI.
+- Lint with `nu-lint <file>` (owner config at `~/.config/nu-lint.toml`); file- or line-level suppressions use
+  `# nu-lint-ignore-file: <rule>` / `# nu-lint-ignore: <rule>`.
+- Format with `topiary`. Its grammar (tree-sitter-nu) refuses `type` declarations and custom types used in a
+  signature (comment the typedefs out before formatting and restore them afterwards; prefer an inline
+  `table<…>`/`record<…>` in a signature), a bare boolean row condition (`where dead`: write `where $it.dead`), a raw
+  string whose body holds `#` with a single-hash delimiter (`r#'[^#]'#`: write `r##'[^#]'##`), and a record spread
+  in argument position (`cmd ...{…}`).
+- Comments and docs must describe actual behavior. When behavior changes, update the doc comment in the same change.
+
+## Data shaping and performance
+
+- No `mut`. Build values from immutable `let` bindings and pipelines; closures cannot capture `mut` variables
+  anyway, so this keeps every loop movable into `each`/`par-each`.
+- Don't build lists or records inside `reduce --fold`: every step copies the accumulator, so it is quadratic (orders
+  of magnitude slower at a few thousand items). Use `reduce` only to fold to a scalar, and prefer a builtin
+  (`math sum`, `str join`) when one exists.
+- Lists: `each --flatten` when each iteration yields a list (same cost as `each | flatten`, reads better).
+- Records:
+  - `record each {|k v| …}` to map a record into a new record (the closure returns `{$k: $v}`, a `[k v]` pair, or
+    null to drop the field) and `record where <row condition | closure>` to filter one (`record where value > 1`,
+    `key starts-with NU_`; rows are `{key, value}`). They are the fastest options by a wide margin (7× and 3× over
+    the `items … | into record` forms) and exist on the nightlies this library targets.
+  - `items {|k v| …}` for per-entry work that does not build a record (printing, collecting a list); it is also
+    the portable fallback for mapping (`items {…} | compact | into record`, same closure contract).
+  - `transpose k v` when the entries need table verbs (`where`, `sort-by`, `group-by`, multi-step `update`), then
+    `transpose --header-row --as-record` back. Clearer for multi-step reshaping, roughly 2–7× slower than `items`.
+  - `into record` turns a list of `[key value]` pairs into a record. Given a table it *merges the rows* (union of
+    columns, later rows win), which exists so a single-row table such as `"k=v" | parse "{key}={value}"` becomes a
+    record; it is not a key/value conversion for `[[k v]; …]` tables.
+  - A key/value table (`kv list`, `parse '{key}={value}'`, `transpose key value`) becomes a record with
+    `transpose --ignore-titles --header-row --as-record`: 3.2 ms for 2,000 rows against 5.3 ms for
+    `each {|r| [$r.key $r.value] } | into record` (0.116.2-nightly.33). `record each` is the record-to-record map.
+  - `rotate` is a matrix rotation for tables: on a record it puts values before keys (`rotate key value` labels
+    them backwards) and `--ccw` reverses the order. Use `transpose` for records.
+- Predicates are row conditions, not closures: `where name =~ $re`, `where size? > 1kb`, `take until name == $x`,
+  `skip while $it < 3`, `any name == $n`, `all $it in $expected` — never `where {|r| $r.n > 1 }`. As the left operand
+  of an operator (not inside parentheses) a column is named directly and takes the cell-path operators (`name!?`),
+  but not the `$.` prefix; inside parentheses, on the right side, or for a scalar element use `$it`. A closure is
+  only for a predicate that needs more than one expression.
+- `each` doubles as "apply if present": piped a scalar or record it runs the closure once and returns the bare result;
+  piped `null` it skips the closure. Only use it that way where the value can never be a list (a list is iterated).
+- `each` by default; `par-each` costs ~1 ms per call before any work, so it only pays off when each item does slow
+  work (I/O, an external program, heavy computation) and there are many items. Never use it for writes to shared
+  state (`std-rfc/kv`/SQLite, files, `$env`): parallel kv writes contend on SQLite's lock and race.
+- Batch persistent state: every `kv get`/`kv set --universal` opens SQLite (~0.5 ms). Data that is read or written as
+  a whole (a registry, a cache) belongs in one value, not one key per row.
+- Slow import-time work (a workspace scan, a child process) is hydrated in the background: the module's `export-env`
+  starts a `job spawn --auto-kill` in interactive shells that ends in one atomic write of the whole snapshot, readers
+  never wait for it (defaults when it is missing, a stale snapshot served as is), and non-interactive shells compute
+  on demand because a job dies with its process. Parse cost cannot be deferred this way (`_docs/hydration.md`).
+- `describe` walks the whole value; type dispatch with `match ($in | describe)` is free on scalars and records but
+  scales with list/table size — use `first | describe` when only the element shape matters.
+- Hook bodies (`pre_execution`, `pre_prompt`, `env_change`) run on every command or `cd`: read `$env`, not storage,
+  and avoid spawning external programs there.
+- Measure before arguing about speed: `timeit { … }` for one run, `use std/bench; bench {…} {…} -n 10` for mean
+  and spread across alternatives. `_docs/data-shaping.md` records measurements.
+
+## Testing
+
+- The `test` module is the runner (`_docs/testing.md`). Suites live in `_tests/suites/<module>.nu` (submodules are
+  covered in their parent's suite); fixtures in `_tests/fixtures/<module>/`; `_tests/mod.nu` is the shared seam.
+- A suite imports the module(s) it tests **before** the seam (`use validate` then `use ../mod.nu *`): the runner's
+  `skip` otherwise shadows the builtin `skip` inside modules parsed after it.
+- The repository's `nutest.nuon` lists the suite `paths`, puts the repository root on the children's include path,
+  and sandboxes every test child (throwaway HOME/XDG). Run `nu --no-config-file -I <checkout> -c 'use test; test'`
+  from the checkout root.
+- `test` returns a table; `test --strict` raises on any failure. Results report `skip` for unavailable dependencies,
+  never `ok`.
+- After changing `test/mod.nu`, run its framework-free self-test: `nu --no-config-file _tests/selftest.nu`.
+
+## Running module code safely
+
+Many modules have side effects at import time (`export-env`) or persist state:
+
+- `std-rfc/kv` with `--universal` writes SQLite under `$nu.data-dir`; point `XDG_DATA_HOME` at a temp dir **and
+  create `$XDG_DATA_HOME/nushell` first** (kv does not create it), or set `NU_UNIVERSAL_KV_PATH`.
+- `proj` keeps its registry in kv and, in an interactive shell with `WORK` set, starts a background scan of `$env.WORK`
+  at import (a non-interactive reader scans on demand). Point `WORK` at a temp dir, or leave it unset.
+- The owner's interactive environment exports variables that change module behavior (`mods_home`, `ZELLIJ`,
+  `NUPM_HOME`, `EDITOR`, `WORK`). For hermetic runs, start children from a scrubbed environment.
+- Never exercise privileged or destructive paths for real (`elevate`, `mount`, `link`, `pman` install/upgrade,
+  `reload`, `ipex-llm-ollama serve`); stub the external (`sudo`, `reset`, package managers) with a script on `PATH`.
+
+## Documentation layout
+
+- `_docs/` — durable, repository-wide documentation (committed).
+- `<module>/docs/` — per-module specs and design records (dated filenames).
+- `_runbook/` — scratch notes for a single working session; git-ignored, never referenced from committed files.

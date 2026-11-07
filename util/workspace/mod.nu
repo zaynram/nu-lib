@@ -4,63 +4,101 @@
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
+use error
 use std/util null-device
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
 export const LEVEL: list<string> = [major minor patch alpha beta rc release]
-const BUMPABLE: list<string> = [csv html json md kdl msgpack ndnuon nuon text toml msgpackz plist txt tsv yaml xml yml]
+const BUMPABLE: list<string> = [
+  csv
+  html
+  json
+  md
+  kdl
+  msgpack
+  ndnuon
+  nuon
+  text
+  toml
+  msgpackz
+  plist
+  txt
+  tsv
+  yaml
+  xml
+  yml
+]
 
 # ——— aliases ——————————————————————————————————————————————————————————————————
 
+# Hide the `__workspace__` overlay (an error unless the user's config created it).
 export alias deactivate = overlay hide __workspace__
+# Leave for `$nu.temp-dir` and return to the current directory (`OLDPWD` is the temporary directory afterwards).
+# This does not re-run `env_change.PWD` hooks: Nushell runs them before the next prompt, from the net change of PWD
+# since the previous prompt, which a leave-and-return inside one command leaves at none.
 export alias reactivate = do --env { let cwd: path = pwd; cd $nu.temp-dir; cd $cwd }
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
+# The file's extension, or an error when the file does not exist or `save` cannot write its format.
 def ensure-bumpable []: path -> oneof<string, error> {
-  let ext: string = path parse | get $.extension
-  if not ($in | path exists) { error make --unspanned $"file not found: '($in)'" }
-  if $BUMPABLE not-has $ext { error make --unspanned $"unsupported file extension: '($ext)'" }
+  let file: path;
+  if not ($file | path exists) { error raise $"file not found: '($file)'" --kind not_found }
+  let ext: string = $file | path parse | get $.extension
+  if $BUMPABLE not-has $ext {
+    error raise $"unsupported file extension: '($ext)'" --with={
+      kind: unsupported
+      help: $"`save` writes: ($BUMPABLE | str join ', ')"
+    }
+  }
   return $ext
 }
 
-# Bump the version for the server and update the relevant files.
+# Bump the version stored in one or more files, and write the new version back.
 #
-# This function will re-format files into Nushell's native serialization format for the file type.
-# ---
+# Each input row names a file and the cell-path of its version string. The file is re-serialized in Nushell's
+# format for its extension (`save`); `.toml` files are then formatted with `tombi` and `.json` files with
+# `dprint`, when installed (their failures are ignored). `prev` and `curr` are semver values (`into string` them
+# to serialize).
+@category system
 export def bump [
   target: string@$LEVEL = 'patch'
   # The level to bump in the version
   --spec (-s): string
-  # An exact string to set as the current version
+  # An exact version to set instead of bumping (must be valid semver)
   --meta (-m): string
-  # Build metadata to set instead of preserving the existing
+  # Build metadata to set instead of preserving the existing (also replaces the metadata of `--spec`)
   --test (-t)
   # Return the version bump data without writing anything to disk
   --skip (-S) = true
-  # Skip missing files and files with unsupported formats (instead of raising an error)
-  --keep-order (-k)
-  # Mapped to the same flag on `par-each`
+  # Return missing files and unsupported formats with null `prev`/`curr` (the default); `--skip=false` raises
 ]: table<file: path, cell: cell-path> -> table<file: path, cell: cell-path, prev: any, curr: any> {
-  par-each --keep-order=$keep_order {|row|
-    let type: string = try { get $.file | ensure-bumpable } catch {|err|
-      if $skip { return {...$row prev: null curr: null} }
-      error make $err.details
-    }
-    let data: record = open $row.file
+  let rows: table;
+  # `--meta` replaces the build metadata of the spec too (`into semver` validates the result)
+  let wanted: any = $spec | if $in == null { } else if $meta == null { into semver } else {
+    $"($in | str replace --regex '\+.*$' '')+($meta)" | into semver
+  }
+  # Sequential: two rows may name the same file, and parallel writes would lose one of the updates.
+  $rows | each {|row|
+    # without `--skip`, the error of `ensure-bumpable` is the caller's
+    let type: oneof<nothing, string> = if $skip { try { $row.file | ensure-bumpable } catch { null } } else { $row.file | ensure-bumpable }
+    if $type == null { return {...$row prev: null curr: null} }
+    let data: any = open $row.file
     let curr = $data
-      | try { get $row.cell } catch { error make $"invalid version cell path: ($row.cell)" }
+      | try { get $row.cell } catch {|e|
+        $e | error raise $"no version at '($row.cell)' in '($row.file)'" --kind not_found
+      }
       | into semver
-    let next = $spec | default (
+    let next = $wanted | default (
         $curr | semver bump --build-metadata=$meta --loose --preserve-build-metadata $target
       )
     if not $test and ($curr != $next) {
       $data | update $row.cell ($next | into string) | save --force $row.file
       match $type {
-        toml => {|| tombi format $row.file out+err> (null-device) }
-        json => {|| dprint fmt $row.file out+err> (null-device) }
-      } | do --ignore-errors $in
+        toml => { do --ignore-errors { tombi format $row.file out+err> (null-device) } }
+        json => { do --ignore-errors { dprint fmt $row.file out+err> (null-device) } }
+      }
     }
     return {...$row prev: $curr curr: $next}
   }

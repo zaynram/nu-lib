@@ -1,14 +1,15 @@
-# Utilities for interacting with Nushell modules.
+# Utilities for interacting with Nushell modules: list them, track `use`/`hide` in a session registry, and
+# define new modules from closures.
+#
+# This module is abstract (pure Nushell). `mods/local` adds the commands that resolve files through the
+# owner's machine configuration (`edit`).
 
 # ——— imports ——————————————————————————————————————————————————————————————————
 
 use std-rfc/kv [ "kv set" "kv get" "kv drop" "kv list" ]
 
-use path
-use completion "into completions"
-
-use conf [ NU_LIB_DIRS machine-config ]
 use docgen
+use error
 
 # ——— constants ————————————————————————————————————————————————————————————————
 
@@ -20,9 +21,9 @@ const SHORT: table = [
 ]
 const RE: record = {
   omit: '^(prelude|[_]{1}\w+|\w+\s{1}extern)$'
-  module_actions: '^\s*(?:overlay\s+)?(?<action>use|hide)\s+(?<name>[\w\-]+)\b'
+  # Every `use`/`hide` statement of a line (statements separated by `;`); `name` is the module path as written.
+  module_actions: '(?:^|;)\s*(?:overlay\s+)?(?<action>use|hide)\s+(?<name>[^\s;]+)'
 }
-const EXCLUDE: list<string> = [**/nupm+/** **/tests/** **/tests.nu **/*.bak*/**]
 
 # ——— utilities ————————————————————————————————————————————————————————————————
 
@@ -58,19 +59,22 @@ def preserve-serialized-closure []: closure -> list<string> {
   view source $in | str replace --all --regex '^\{\|*\s*|\s*\}$' '' | lines | str trim --left | append ['']
 }
 
-# Glob the `.nu` definitions under the piped directories.
-def nu-glob []: oneof<path, list<path>> -> list<path> {
-  append [] | par-each {||
-    path rejoin ** *.nu
-    | into glob
-    | glob $in --no-dir --depth=3 --exclude=$EXCLUDE
-  } | flatten | uniq | sort
+# The module name a `use`/`hide` target refers to: `std/log` -> `log`, `./x.nu` -> `x`, `dir/mod.nu` -> `dir`.
+def module-name []: string -> string {
+  let p: record = $in | str trim --char '/' | path parse
+  if $p.stem == mod and $p.extension == nu { $p.parent | path basename } else { $p.stem }
 }
 
-alias build-mods-refs = each {|row|
-  select $.replace | insert find (match $row.prefix { null => '' $p => ($env | get $p | to text) } | path join ...$row.segments)
+# The shorthand rows for the prefixes that are set: a variable's row is skipped while it is unset.
+def build-mods-refs []: table -> table<find: string, replace: string> {
+  each {|row|
+    let base: oneof<nothing, string> = match $row.prefix { null => '' $p => ($env | get $p | default null) }
+    if $base == null { return }
+    {find: ($base | path join ...$row.segments) replace: $row.replace}
+  } | where $it.find != ''
 }
 
+# The prefix shorthand rows, or the row whose prefix starts the piped path (most specific prefix first).
 def module-file-shorthand []: [
   nothing -> table<find: string, replace: string>
   path -> oneof<nothing, record<find: string, replace: string>>
@@ -78,22 +82,35 @@ def module-file-shorthand []: [
   let p: oneof<nothing, path>;
   $env.mods_refs?
   | default ($SHORT | reverse | build-mods-refs)
-  | if $p == null { } else { where $p has $it.find | first }
+  | if $p == null { } else {
+    where ($p == $it.find or $p starts-with ($it.find | path join '')) | first
+  }
+}
+
+# Replace a path's prefix with its shorthand (`~`, `@` for mods_home, `$` for nupm modules).
+def shorten []: path -> path {
+  let p: path;
+  match ($p | module-file-shorthand) {
+    null => $p
+    {find: $f replace: $r} => ($r + ($p | str substring ($f | str length)..))
+  }
 }
 
 # ——— environment ——————————————————————————————————————————————————————————————
 
+# Sets `mods_home` (first existing NU_LIB_DIRS entry) and then `mods_refs` unless they are already set, and
+# registers the `use`/`hide` tracking hook once (re-`use` adds nothing).
 export-env {
-  [
-    [name value];
-    [mods_refs ($env.mods_refs!? | default (module-file-shorthand))]
-    [mods_home ($env.mods_home!? | default ($env.NU_LIB_DIRS? | where { path exists }).0?)]
-  ] | difference ($env | select $.mods_home!? $.mods_refs!? | transpose name value)
-  | if $in != [] { transpose --ignore-titles --header-row --as-record | load-env }
+  if $env.mods_home!? == null {
+    let home: oneof<nothing, path> = $env.NU_LIB_DIRS? | default [] | where ($it | path exists) | first
+    if $home != null { $env.mods_home = $home }
+  }
+  if $env.mods_refs!? == null { $env.mods_refs = module-file-shorthand }
 
   const name: string = 'mods::use_or_hide::update-mods-used'
 
   let existing: list = $env.config.hooks.pre_execution?
+    | default []
     | where ($it | describe) starts-with record and $it.name? != null
     | get $.name!
 
@@ -114,7 +131,10 @@ export-env {
 
 # ——— definitions ——————————————————————————————————————————————————————————————
 
-# Define a module inline and save it to a file.
+# Define a module inline and save it to `<directory>/<name>/mod.nu`; returns the file's path.
+#
+# The closure's body (without its braces) becomes the module source. Without `--directory`, the module is saved
+# under `$env.mods_home`.
 @category core
 export def --env define [
   name: string
@@ -122,45 +142,42 @@ export def --env define [
   block: closure
   # The module definition, as a closure with no parameters
   --directory (-d): directory
-  # Save the module as `($name)/mod.nu` under this directory
+  # Save the module as `($name)/mod.nu` under this directory (default: `$env.mods_home`)
   --overwrite (-o)
   # Do not throw an error when overwriting existing module definition files
 ]: nothing -> path {
-  let directory: directory = $directory | default $env.mods_home | path expand --no-symlink | append $name | path join
+  let base: path = $directory
+    | default $env.mods_home!?
+    | default {
+      error raise 'no directory to save the module under' --with={
+        kind: missing_dependency
+        help: 'pass --directory or set $env.mods_home'
+      }
+    }
+  let directory: directory = $base | path expand --no-symlink | append $name | path join
   if not ($directory | path exists) { mkdir $directory }
   let path: path = $directory | path join mod.nu
-  if not $overwrite and ($path | path exists) { error make --unspanned $"module '($name)' is already defined" }
-  $block | preserve-serialized-closure | try {
-    save --force --progress $path
-  } catch { error make --unspanned 'unable to save module definition' }
+  if not $overwrite and ($path | path exists) {
+    error raise $"module '($name)' is already defined at '($path)'" --with={
+      kind: conflict
+      help: 'pass --overwrite to replace it'
+    }
+  }
+  let source: list<string> = $block | preserve-serialized-closure
+  try { $source | save --force --progress $path } catch {|e|
+    $e | error raise $"could not save the module definition to '($path)'" --kind io
+  }
   return $path
 }
 
-# Open a module or script definition file by name, or return its path.
-@category core
-export def edit [
-  target: string@_definitions # Name of the module or script to target
-  --get (-g) # Return the resolved path instead of opening it
-]: nothing -> oneof<nothing, path> {
-  machine-config user
-  | get $.modules $.scripts
-  | flatten
-  | nu-glob
-  | where $it has $target
-  | sort-by {|p| $target not-in ($p | path split) } # exact segment matches first
-  | first
-  | match ($in | describe) {
-    nothing => { error make --unspanned $"no definition found for '($target)'" }
-    _ if $get => (path expand)
-    _ => ( use ../edit; $in | edit)
-  }
-}
-
 # Update the registry tracking loaded modules for this session.
+#
+# Piped `scope modules` rows are registered as used; a buffer's `use`/`hide` statements (several per line,
+# separated by `;`, also with `overlay`) register or unregister the module they name (`use std/log` -> `log`).
 @category core
 export def refresh [
   buffer?: string
-  # Register or unregister a module by parsing this commandline buffer
+  # Register or unregister modules by parsing this commandline buffer
   --return (-r): string@[names module_ids all]
   # What data to return; names -> loaded module names, module_ids -> loaded module identifiers, all -> table of the prior
 ]: oneof<nothing, table> -> oneof<nothing, list<string>, list<int>, table<name: string, module_id: int>> {
@@ -175,20 +192,22 @@ export def refresh [
     for key in (list-used | where value in $hidden.value).key { drop-used $key }
   }
   if $buffer != null {
-    let parsed: record = $buffer | parse --regex $RE.module_actions | into record
-    let mod_id: oneof<nothing, int> = (scope modules | where name == $parsed.name?).0?.module_id?
-    match $parsed.action? {
-      use => {
-        # Ensure removal from the hidden modules
-        drop-hidden $parsed.name | ignore
-        # Add to the used modules, if not already set
-        if (get-used $parsed.name) != $mod_id { set-used $parsed.name $mod_id }
-      }
-      hide => {
-        # Ensure removal from the used modules
-        drop-used $parsed.name | ignore
-        # Add to the hidden modules, if not already set
-        if (get-hidden $parsed.name) != $mod_id { set-hidden $parsed.name $mod_id }
+    for parsed in ($buffer | parse --regex $RE.module_actions) {
+      let name: string = $parsed.name | module-name
+      let mod_id: oneof<nothing, int> = (scope modules | where name == $name).0?.module_id?
+      match $parsed.action {
+        use => {
+          # Ensure removal from the hidden modules
+          drop-hidden $name | ignore
+          # Add to the used modules, if not already set
+          if (get-used $name) != $mod_id { set-used $name $mod_id }
+        }
+        hide => {
+          # Ensure removal from the used modules
+          drop-used $name | ignore
+          # Add to the hidden modules, if not already set
+          if (get-hidden $name) != $mod_id { set-hidden $name $mod_id }
+        }
       }
     }
   }
@@ -200,7 +219,7 @@ export def refresh [
   }
 }
 
-# List the modules loaded in the current session.
+# List the modules loaded in the current session (a `name`/`description`/`location` table), or one module's row.
 @category core
 export def --env list [
   name?: string@_module-names
@@ -217,7 +236,7 @@ export def --env list [
   # Update the environment variable tracking loaded modules
   --hidden (-h)
   # Return a table of hidden modules (only combines with `--short`)
-]: nothing -> oneof<list<string>, table<module: record, commands: table>, table<name: string, description: string, location: path>> {
+]: nothing -> oneof<list<string>, string, table, record> {
   if $hidden {
     list-hidden | if $short { get $.key } else {
       let ids: list<int> = $in.value
@@ -231,27 +250,31 @@ export def --env list [
   if $update { $ls | refresh }
   $ls | if $short { get $.name } else {
     docgen collect ...($in.file | where ($it | path exists))
-    | update $.module.description {|row| $row.module | get $.description!? $.extra_description!? | compact | str join (char newline) }
+    | update $.module.description {|row|
+      $row.module | get $.description!? $.extra_description!? | compact | str join (char newline) | str trim
+    }
     | update $.module.file {|row|
       if $in ends-with mod.nu { path dirname } else { }
-      | if $absolute { } else { match ($in | module-file-shorthand) { null => ($in) {find: $f replace: $r} => ($in | str replace $f $r) } }
+      | if $absolute { } else { shorten }
     } | reject --optional $.module.extra_description
-    | if $commands { flatten module } else { get module | rename --column={file: location} }
+    | if $commands { flatten module } else { get $.module | rename --column={file: location} }
   } | if $name != null { first } else { sort }
 }
 
-# Show the modules loaded in the current session and their exports, or define a new one.
+# Show the modules loaded in the current session, or define new ones.
 #
-## Contract 1: `record -> oneof<path, list<path>>`
-# - Mapping of module names to their definitions. Options are not supported in this contract.
+## Contract 1: `record -> list<path>`
+# - Mapping of module names to their definitions (closures), saved under `$env.mods_home`.
 #
 ## Contract 2: `oneof<closure, record<name: string, definition: closure>> -> path`
-# - Single module definition, either as a details record or as a closure with `$name` passed inline. Options are supported when defined in the input record.
+# - Single module definition, either as a details record (optionally with `directory` and `overwrite`) or as a
+#   closure with `$name` passed inline.
 #
-## Contract 3: `nothing -> oneof<list<string>, table<...>, record<...>>`
-# - Query module information, optionally for a single module (targeted by name).
+## Contract 3: `nothing -> oneof<table, list<string>, string>`
+# - With no name and no `--all`: the tracked modules as a `name`/`module_id` table. With a name or `--all`: the
+#   loaded module names (`--all` includes overlays), or the name itself when it is loaded.
 #
-### By default, when no arguments or input are provided, the names of the loaded modules will be returned as a list of strings.
+# Every call first registers the currently loaded modules (`list --update`).
 @category core
 export def --env main [
   # nu-lint-ignore: add_doc_comment_exported_fn
@@ -260,27 +283,40 @@ export def --env main [
   --all (-a)
   # Include overlays in the entries returned or searched
 ]: [
-  nothing -> list<string>
+  nothing -> oneof<table<name: string, module_id: int>, list<string>, string>
   record -> oneof<path, list<path>>
-  oneof<closure, record<name: string, definition: closure>, record<name: string, definition: closure, directory: path, overwrite: bool>> -> path
-  nothing -> oneof<table<name: string, exports: table<name: string, type: string>, path: path>, record<name: string, exports: table<name: string, type: string>, path: path>>
+  closure -> path
 ] {
-  list --update
-  $in | match ($in | describe) {
-    closure if $name == null => (error make --unspanned 'name is required when defining a new module')
-    closure => (define $name $in)
+  let input: any;
+  list --update --short | ignore
+  match ($input | describe | str replace --regex '<.*' '') {
+    closure if $name == null => {
+      error raise 'name is required when defining a new module' --kind invalid_argument
+    }
+    closure => (define $name $input)
     nothing if not $all and $name == null => (list-used | rename --column={key: name value: module_id})
     nothing => (list --short --overlays=$all $name)
-    _ if $in not-has definition and ($in | is-not-empty) => {
-      transpose name definition
+    record if $input not-has definition and ($input | is-not-empty) => {
+      $input
+      | transpose name definition
       | where ($it.name | is-not-empty) and ($it.definition | describe) == closure
-      | par-each {|| define $in.name $in.definition }
+      | each {|m| define $m.name $m.definition }
     }
-    _ => {
-      let m: record = default $name name | default $env.mods_home directory | default false overwrite
-      if $m.definition == null { error make --unspanned 'module definition is required' }
-      if $m.name == null { error make --unspanned 'name is required when defining a new module' }
-      define $m.name $m.definition --directory=$m.directory --overwrite=$m.overwrite
+    record => {
+      let m: record = $input
+        | default $name $.name
+        | default false $.overwrite
+        | default { error raise 'module definition is required' --kind invalid_argument } $.definition
+        | default {
+          error raise 'name is required when defining a new module' --kind invalid_argument
+        } $.name
+      define $m.name $m.definition --directory=$m.directory? --overwrite=$m.overwrite
+    }
+    $t => {
+      error raise $"unsupported input type '($t)'" --with={
+        kind: invalid_argument
+        help: 'pipe a closure, a details record or a record of name/closure pairs'
+      }
     }
   }
 }
@@ -288,19 +324,3 @@ export def --env main [
 # ——— completions ——————————————————————————————————————————————————————————————
 
 def _module-names []: nothing -> list { 'use ' | commandline complete | where $it !~ '(.nu|/)$' }
-def _definitions []: nothing -> record {
-  machine-config user
-  | get $.modules $.scripts
-  | flatten
-  | par-each {|dir|
-    glob --no-dir --depth=3 --exclude=$EXCLUDE ($dir | path rejoin ** *.nu)
-    | path relative-to $dir
-    | wrap value
-    | insert description ($dir | str replace $nu.home-dir '~')
-  } | flatten --all
-  | into completions {
-    sort: true
-    completion_algorithm: fuzzy
-    match_description: true
-  }
-}
