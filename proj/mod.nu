@@ -91,9 +91,9 @@ export module test {
   export def --env after [kind: string = 'test']: nothing -> nothing {
     let t: string = kind-to-table-name $kind
     if $env not-has project_testing or $env.project_testing!? != {kind: $kind table: $t} {
-      error raise $"test fixture is inactive for kind '($kind)'" ...{
+      error raise $"test fixture is inactive for kind '($kind)'" --with={
         kind: conflict
-        advice: 'run `test before` with the same kind first'
+        help: 'run `test before` with the same kind first'
       }
     } else {
       # Hidden first: after a `def --env` call such as `kv drop`, `hide-env` no longer reaches the caller.
@@ -130,9 +130,9 @@ export def scan [
   # The arguments and the workspace are checked before the TTL short-circuit: a fresh snapshot excuses neither.
   let unknown: list<string> = $kinds | where $KIND not-has $it
   if $unknown != [] {
-    error raise $"unknown kind: '($unknown | first)'" ...{
+    error raise $"unknown kind: '($unknown | first)'" --with={
       kind: invalid_argument
-      advice: $"kinds: ($KIND | columns | str join ', ')"
+      help: $"kinds: ($KIND | columns | str join ', ')"
     }
   }
   let work: path = workspace
@@ -185,9 +185,9 @@ export def kind [
 ]: nothing -> oneof<KindSummary, list<KindSummary>, error> {
   match ($kind | describe) {
     string if $KIND not-has $kind => {
-      error raise $"unknown kind: '($kind)'" ...{
+      error raise $"unknown kind: '($kind)'" --with={
         kind: invalid_argument
-        advice: $"kinds: ($KIND | columns | str join ', ')"
+        help: $"kinds: ($KIND | columns | str join ', ')"
       }
     }
     string => {
@@ -449,9 +449,9 @@ def inspect [root: path name: string]: nothing -> record {
 def prune-missing-dirs []: nothing -> int {
   let snap: record = snapshot
     | default {
-      error raise 'no metadata found' ...{
+      error raise 'no metadata found' --with={
         kind: not_found
-        advice: 'run a scan first'
+        help: 'run a scan first'
       }
     }
   let kinds: record = $snap.kinds | record each {|k rows| {$k: ($rows | where ($it.path | path exists))} }
@@ -470,9 +470,9 @@ def has-workspace []: nothing -> bool { $env.work!? | is-not-empty }
 # The workspace root, `$env.WORK`; raises an error naming the variable when it is unset or empty.
 def workspace []: nothing -> path {
   if not (has-workspace) {
-    error raise 'WORK is not set' ...{
+    error raise 'WORK is not set' --with={
       kind: missing_dependency
-      advice: 'set $env.WORK to the workspace root (the directory that holds src, txt, dev and ext)'
+      help: 'set $env.WORK to the workspace root (the directory that holds src, txt, dev and ext)'
     }
   }
   $env.work!

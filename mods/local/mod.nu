@@ -59,9 +59,9 @@ export def edit [
     | compact
     | get 0?
     | default {
-      error raise $"no definition found for '($target)'" ...{
+      error raise $"no definition found for '($target)'" --with={
         kind: not_found
-        advice: 'definitions are the .nu files under the module and script directories of `conf machine-config user`'
+        help: 'definitions are the .nu files under the module and script directories of `conf machine-config user`'
       }
     }
   if $get { return ($found | path expand) }

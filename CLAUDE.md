@@ -49,33 +49,36 @@ or a new external dependency.
   input/output signature. `@category` attributes group commands for `help`.
 - Cell paths are written with the `$.` prefix (`get $.name`, `insert $.role …`). The `!` suffix means
   case-insensitive access and `?` means optional.
-- Errors are raised with `error raise <message> --kind <kind> [--advice <text>]` from the `error` module; the code
-  `<namespace>::<command>::<kind>` is derived from the raise site (`_docs/errors.md`). Write the message literal at
-  the raise site (lowercase start, no trailing period, values in single quotes), pick a kind from the fixed
-  vocabulary, and put remedies in `--advice`. `--code` overrides derivation only for a message that cannot be
-  written at the raise site. Keep the message minimal: the code already names the module and command and the advice
-  carries the remedy, so the message states only what is wrong and the value concerned (`'WORK is not set'`, not
+- Errors are raised with `error raise <message> [--kind <kind>] [--with {kind help code …}] [...labels]` from the
+  `error` module; the code `<namespace>::<command>::<kind>` is derived from the raise site (`_docs/errors.md`).
+  Write the message literal at the raise site (lowercase start, no trailing period, values in single quotes), pick a
+  kind from the fixed vocabulary, and put remedies in `help`. `--with {code: …}` overrides derivation only for a
+  message that cannot be written at the raise site; `--with` rejects keys `error make` does not know (`advice`). Keep
+  the message minimal: the code already names the module and command and `help` carries the remedy, so the message
+  states only what is wrong and the value concerned (`'WORK is not set'`, not
   `'proj: the WORK workspace variable is not set'`).
-- Long command lines — a raise with more than one flag, or any call that would pass 100 columns — pass their flags as
-  a record spread, one flag per line:
+- A raise with details passes them as one `--with` record, one key per line:
 
   ```nu
-  error raise 'WORK is not set' ...{
+  error raise 'WORK is not set' --with={
     kind: missing_dependency
-    advice: 'set $env.WORK to the workspace root'
+    help: 'set $env.WORK to the workspace root'
   }
   ```
 
-  A raise with a single short flag stays on one line. (The spread works for every custom command's flags; `topiary`
-  keeps the layout.)
+  A raise with only a kind stays on one line (`error raise 'x' --kind io`). Labels make `error raise` return a
+  closure; raise it with `| error throw`.
 - Never emit ANSI directly (`ansi green`, `nu-highlight` and `std/log` all ignore the colour setting): wrap text with
   `style paint <codes>` or gate on `style colors`, which honour `config use-colors` (`use_ansi_coloring`, `NO_COLOR`,
   the terminal). A command's explicit `--colors` flag overrides the check (`validate rules --colors=false`,
   `paint --colors=true`). Error messages (`error raise`) never carry ANSI.
 - Lint with `nu-lint <file>` (owner config at `~/.config/nu-lint.toml`); file- or line-level suppressions use
   `# nu-lint-ignore-file: <rule>` / `# nu-lint-ignore: <rule>`.
-- Format with `topiary`. It refuses files that contain `type` declarations: comment the typedefs out before
-  formatting and restore them afterwards.
+- Format with `topiary`. Its grammar (tree-sitter-nu) refuses `type` declarations and custom types used in a
+  signature (comment the typedefs out before formatting and restore them afterwards; prefer an inline
+  `table<…>`/`record<…>` in a signature), a bare boolean row condition (`where dead`: write `where $it.dead`), a raw
+  string whose body holds `#` with a single-hash delimiter (`r#'[^#]'#`: write `r##'[^#]'##`), and a record spread
+  in argument position (`cmd ...{…}`).
 - Comments and docs must describe actual behavior. When behavior changes, update the doc comment in the same change.
 
 ## Data shaping and performance

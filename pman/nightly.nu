@@ -113,9 +113,9 @@ def install-dir [
 ]: nothing -> path {
   let dir: path = $dir | default ($nu.current-exe | path dirname) | path expand --no-symlink
   if $writable and not ($dir | is-under $nu.home-dir) and not (is-admin) {
-    error raise $"installing into '($dir)' needs elevated privileges" ...{
+    error raise $"installing into '($dir)' needs elevated privileges" --with={
       kind: unsupported
-      advice: 'rerun elevated, or pass an --install-dir inside your home directory'
+      help: 'rerun elevated, or pass an --install-dir inside your home directory'
     }
   }
   $dir
@@ -152,9 +152,9 @@ def pick-build [
     let ext: string = if $target =~ windows { 'zip' } else { 'tar.gz' }
     $archives | where target == $target and ext == $ext | get 0? | default {
       let known: string = $archives | each { get target } | str join ', '
-      error raise $"the latest release has no build for '($target)'" ...{
+      error raise $"the latest release has no build for '($target)'" --with={
         kind: not_found
-        advice: $'builds: ($known); choose one with --interactive'
+        help: $'builds: ($known); choose one with --interactive'
       }
     }
   }
@@ -191,17 +191,17 @@ def download [
   }
   let expected: oneof<string, nothing> = published-sha256 $build $sums
   if $expected == null and $sums != null {
-    error raise $"($sums.name) does not list '($build.name)'" ...{
+    error raise $"($sums.name) does not list '($build.name)'" --with={
       kind: io
-      advice: "the release's checksum file is incomplete: retry later, or pick another release (--source)"
+      help: "the release's checksum file is incomplete: retry later, or pick another release (--source)"
     }
   }
   if $expected != null {
     let actual: string = open --raw $archive | hash sha256
     if $actual != $expected {
-      error raise $"'($build.name)' does not match its published sha256" ...{
+      error raise $"'($build.name)' does not match its published sha256" --with={
         kind: io
-        advice: $'expected ($expected), got ($actual)'
+        help: $'expected ($expected), got ($actual)'
       }
     }
     log info $'verified the sha256 of ($build.name)'
@@ -215,9 +215,9 @@ def extract [archive: path dir: path]: nothing -> list<path> {
   # GNU tar reads the `.tar.gz` builds; the bsdtar of Windows and macOS also reads the `.zip` ones.
   let res: record = ^tar -xf $archive -C $dir | complete
   if $res.exit_code != 0 {
-    error raise $"could not extract '($archive | path basename)'" ...{
+    error raise $"could not extract '($archive | path basename)'" --with={
       kind: external_failure
-      advice: ($res.stderr | str trim)
+      help: ($res.stderr | str trim)
     }
   }
   let bins: list<path> = do { cd $dir; glob '**/*' --no-dir } | where {|file|
@@ -248,16 +248,16 @@ def smoke-test [
     {exit_code: 1 stdout: '' stderr: $e.msg}
   }
   if $ran.exit_code != 0 {
-    error raise $"the new nu does not run; its archive is kept at '($archive)'" ...{
+    error raise $"the new nu does not run; its archive is kept at '($archive)'" --with={
       kind: external_failure
-      advice: ($ran.stderr | str trim)
+      help: ($ran.stderr | str trim)
     }
   }
   let reported: string = $ran.stdout | str trim
   if $reported != $version {
-    error raise $"the new nu reports version '($reported)', not '($version)'" ...{
+    error raise $"the new nu reports version '($reported)', not '($version)'" --with={
       kind: external_failure
-      advice: $"its archive is kept at '($archive)'"
+      help: $"its archive is kept at '($archive)'"
     }
   }
   let modules: list<string> = glob ($ROOT | path join '*' mod.nu) | path dirname | each {|dir| $"use ($dir | to nuon)" }
@@ -270,9 +270,9 @@ def smoke-test [
       ($loaded.stderr | str trim)
       'fix the module for this nightly, or pass --no-smoke to install the build regardless'
     ] | compact --empty | str join (char newline)
-    error raise $"nu ($version) cannot load this library; its archive is kept at '($archive)'" ...{
+    error raise $"nu ($version) cannot load this library; its archive is kept at '($archive)'" --with={
       kind: external_failure
-      advice: $advice
+      help: $advice
     }
   }
 }
@@ -382,9 +382,9 @@ def kept-previous [dir: path]: nothing -> list<path> {
 # `{installed plugins}`: the restored paths and the registry's plugins as they were, for `sync-plugins`.
 def rollback [dir: path registry: path]: nothing -> record {
   if not ($dir | path join $'nu($EXE).previous' | path exists) {
-    error raise $"there is no previous nu in '($dir)'" ...{
+    error raise $"there is no previous nu in '($dir)'" --with={
       kind: not_found
-      advice: 'only a bump keeps one, as `nu.previous` next to the installed `nu`'
+      help: 'only a bump keeps one, as `nu.previous` next to the installed `nu`'
     }
   }
   let kept: list<path> = kept-previous $dir
@@ -483,18 +483,18 @@ export def bump-nu [
 ]: nothing -> record {
   let tty: bool = is-terminal --stdin
   if $rollback and ($check or $interactive or $musl or $no_smoke) {
-    error raise '--rollback is exclusive with --check, --interactive, --musl and --no-smoke' ...{
+    error raise '--rollback is exclusive with --check, --interactive, --musl and --no-smoke' --with={
       kind: invalid_argument
-      advice: '--rollback installs nothing new'
+      help: '--rollback installs nothing new'
     }
   }
   if $interactive and not $tty {
     error raise '--interactive needs a terminal' --kind unsupported
   }
   if not ($check or $rollback or $yes or $tty) {
-    error raise 'there is no terminal to confirm the installation' ...{
+    error raise 'there is no terminal to confirm the installation' --with={
       kind: unsupported
-      advice: 'pass --yes to install without confirmation, or --check to only compare versions'
+      help: 'pass --yes to install without confirmation, or --check to only compare versions'
     }
   }
   let dir: path = install-dir $install_dir --writable=(not $check)

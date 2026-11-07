@@ -64,7 +64,7 @@ const ISOLATION: list<string> = [test suite]
 const IGNORE: string = r#'(?i)^\s*ignore(\s|:|$)'#
 # Test names the runner can call (see the header): no quotes, brackets, braces, pipes, semicolons, comments, carets,
 # percent signs or `>` (a redirection), no word starting with `$`, and no bare `=` or `&&` word.
-const CALLABLE: string = r#'^[^'"`()\[\]{}|;#^%>\n]*$'#
+const CALLABLE: string = r##'^[^'"`()\[\]{}|;#^%>\n]*$'##
 const UNCALLABLE_WORD: string = r#'(^| )(\$|(=|&&)( |$))'#
 # A `def` line in suite source: the command name, double/single/back-quoted or bare. Double- and single-quoted names
 # are captured with their quotes, escapes and adjacent segments (`"say \"hi\""`, `'it''s'`) included, so `from nuon`
@@ -560,7 +560,7 @@ def run-suite [suite: path cfg: record opts: record]: nothing -> list {
   let cmds: table = $found.cmds
   let hooks: record = $HOOKS | each {|h| {$h: ($cmds | where role == $h | get name)} } | into record
   let wanted: table = $cmds | where role == test | where $opts.test == '' or $it.name =~ $opts.test
-  let ignored: list = $wanted | where ignore | each {|t| {name: $t.name status: skip duration: 0sec error: 'ignored'} }
+  let ignored: list = $wanted | where $it.ignore | each {|t| {name: $t.name status: skip duration: 0sec error: 'ignored'} }
   let runnable: table = $wanted | where not $it.ignore
   # A test is called by writing its name into the child program, so the name must parse as bare words; it is called
   # without arguments, so it must not require one.

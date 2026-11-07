@@ -29,9 +29,9 @@ def ensure-bumpable []: path -> oneof<string, error> {
   if not ($file | path exists) { error raise $"file not found: '($file)'" --kind not_found }
   let ext: string = $file | path parse | get $.extension
   if $BUMPABLE not-has $ext {
-    error raise $"unsupported file extension: '($ext)'" ...{
+    error raise $"unsupported file extension: '($ext)'" --with={
       kind: unsupported
-      advice: $"`save` writes: ($BUMPABLE | str join ', ')"
+      help: $"`save` writes: ($BUMPABLE | str join ', ')"
     }
   }
   return $ext

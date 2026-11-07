@@ -20,9 +20,9 @@ export type Session = record<name: string, age: duration, status: string>
 # client is one error instead of a failed external call.
 def need-client []: nothing -> nothing {
   if (which zellij | is-empty) {
-    error raise 'zellij is not on PATH' ...{
+    error raise 'zellij is not on PATH' --with={
       kind: missing_dependency
-      advice: 'install zellij, or put its directory on PATH'
+      help: 'install zellij, or put its directory on PATH'
     }
   }
 }
@@ -70,15 +70,15 @@ export def list [
   --short (-s) # Return the names only
   --active (-a) # Only sessions that are still running
   --exited (-e) # Only sessions that have exited
-]: nothing -> oneof<list<string>, list<Session>> {
+]: nothing -> oneof<list<string>, table<name: string, age: duration, status: string>> {
   need-client
   let res: record = client list-sessions --no-formatting
   if $res.exit_code != 0 and $res.stderr =~ '(?i)no active zellij sessions' {
     return []
   } else if $res.exit_code != 0 {
-    error raise 'zellij could not list its sessions' ...{
+    error raise 'zellij could not list its sessions' --with={
       kind: external_failure
-      advice: ($res.stderr | str trim)
+      help: ($res.stderr | str trim)
     }
   }
   $res.stdout
@@ -105,24 +105,24 @@ export def down [
   if $all {
     let res: record = client delete-all-sessions --yes --force
     if $res.exit_code != 0 {
-      error raise 'zellij could not delete the sessions' ...{
+      error raise 'zellij could not delete the sessions' --with={
         kind: external_failure
-        advice: ($res.stderr | str trim)
+        help: ($res.stderr | str trim)
       }
     }
   } else {
     let name: string = $name
       | default {
-        error raise 'a session name is required without --all' ...{
+        error raise 'a session name is required without --all' --with={
           kind: invalid_argument
-          advice: 'name the session to tear down, or pass --all'
+          help: 'name the session to tear down, or pass --all'
         }
       }
     let res: record = client delete-session --force $name
     if $res.exit_code != 0 {
-      error raise $"zellij could not delete the session '($name)'" ...{
+      error raise $"zellij could not delete the session '($name)'" --with={
         kind: external_failure
-        advice: ($res.stderr | str trim)
+        help: ($res.stderr | str trim)
       }
     }
   }
@@ -156,9 +156,9 @@ export def --wrapped manage [
   } else if $env.ZELLIJ_SESSION_NAME? != null {
     ^zellij --session=($env.ZELLIJ_SESSION_NAME) action ...$rest
   } else {
-    error raise 'no session name was given and this shell is not inside a Zellij session' ...{
+    error raise 'no session name was given and this shell is not inside a Zellij session' --with={
       kind: invalid_argument
-      advice: 'pass --session <name>, or run from inside the session'
+      help: 'pass --session <name>, or run from inside the session'
     }
   }
 }
@@ -178,22 +178,22 @@ export def --wrapped exec [
   need-client
   let command: string = $rest | get --optional $.0
     | default {
-      error raise 'a command line is required' ...{
+      error raise 'a command line is required' --with={
         kind: invalid_argument
-        advice: "`session exec 'cargo build' --floating`"
+        help: "`session exec 'cargo build' --floating`"
       }
     }
   if ($command | str starts-with '-') {
-    error raise $"'($command)' is a flag, not a command line" ...{
+    error raise $"'($command)' is a flag, not a command line" --with={
       kind: invalid_argument
-      advice: "put the command line first: `session exec 'cargo build' --floating`"
+      help: "put the command line first: `session exec 'cargo build' --floating`"
     }
   }
   let words: list<string> = $command | split row ' ' | where $it != ''
   if $words == [] {
-    error raise $"the command line '($command)' names no program" ...{
+    error raise $"the command line '($command)' names no program" --with={
       kind: invalid_argument
-      advice: "`session exec 'cargo build' --floating`"
+      help: "`session exec 'cargo build' --floating`"
     }
   }
   let args: list<string> = $piped | default ($words | skip 1)

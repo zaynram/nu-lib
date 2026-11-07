@@ -75,9 +75,9 @@ def override-path [file: oneof<nothing, path>]: nothing -> oneof<nothing, path> 
   if $named == '' { return null }
   if $named != null {
     if not ($named | path exists) {
-      error raise $"override file not found: '($named)'" ...{
+      error raise $"override file not found: '($named)'" --with={
         kind: not_found
-        advice: (
+        help: (
           'the file is named by --file or $env.NU_MACHINE_CONFIG; an empty NU_MACHINE_CONFIG means no file'
         )
       }
@@ -91,9 +91,9 @@ def override-path [file: oneof<nothing, path>]: nothing -> oneof<nothing, path> 
     [] => null
     [$one] => $one
     [$static $script] => {
-      error raise $"both '($static)' and '($script)' exist" ...{
+      error raise $"both '($static)' and '($script)' exist" --with={
         kind: conflict
-        advice: (
+        help: (
           'keep one: machine.nuon for literal values, machine.nu when values must be computed'
         )
       }
@@ -117,16 +117,16 @@ def load [file: path]: nothing -> record {
       }
       let stderr: string = $child.stderr | str trim
       if $child.exit_code != 0 {
-        error raise $"override script '($file)' exited with code ($child.exit_code)" ...{
+        error raise $"override script '($file)' exited with code ($child.exit_code)" --with={
           kind: external_failure
-          advice: $stderr
+          help: $stderr
         }
       }
       if $stderr != '' { print --stderr $stderr }
       try { $child.stdout | from nuon } catch {|e|
-        $e | error raise $"override script '($file)' printed something other than its record" ...{
+        $e | error raise $"override script '($file)' printed something other than its record" --with={
           kind: invalid_argument
-          advice: (
+          help: (
             'the script must print nothing on stdout; report on stderr with `print --stderr`'
           )
         }
@@ -193,9 +193,9 @@ def check [source: string]: record -> record {
     | record each {|key part| {$key: (if ($part | describe) =~ '^record' { $part | compact } else { $part })} }
   let failures: table = $value | validate rules (rules) --strict --colors=false --return=table
   if $failures != [] {
-    error raise $"invalid '($source)': ($failures.0.hint)" ...{
+    error raise $"invalid '($source)': ($failures.0.hint)" --with={
       kind: invalid_argument
-      advice: (
+      help: (
         $failures | each {|f| $"($f.rule): ($f.hint)" } | str join (char newline)
       )
     }
@@ -234,15 +234,15 @@ def main [
   # Print the lookup target, which override file was used and whether its record came from the cache
 ]: nothing -> oneof<MachineConfig, error> {
   if $DEFAULT not-has $mode {
-    error raise $"unsupported mode: '($mode)'" ...{
+    error raise $"unsupported mode: '($mode)'" --with={
       kind: invalid_argument
-      advice: $"expected one of: ($MODE | str join ', ')"
+      help: $"expected one of: ($MODE | str join ', ')"
     }
   }
   if $strategy != null and $strategy not-in $STRATEGY {
-    error raise $"unsupported strategy: '($strategy)'" ...{
+    error raise $"unsupported strategy: '($strategy)'" --with={
       kind: invalid_argument
-      advice: $"expected one of: ($STRATEGY | str join ', ')"
+      help: $"expected one of: ($STRATEGY | str join ', ')"
     }
   }
   if $file != null and $no_file {

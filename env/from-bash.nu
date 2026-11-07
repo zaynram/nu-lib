@@ -195,20 +195,20 @@ export def --env main [
   if $return != null and $return not-in $RETURN {
     error raise $"unknown --return '($return)'" --with={
       kind: invalid_argument
-      advice: $"expected one of: ($RETURN | str join ', ')"
+      help: $"expected one of: ($RETURN | str join ', ')"
     }
   }
   if $execute != [] and $return not-in [null preserve] {
     error raise $"--execute cannot be combined with --return '($return)'" --with={
       kind: invalid_argument
-      advice: '--execute returns every change (preserve)'
+      help: '--execute returns every change (preserve)'
     }
   }
   let script: oneof<string, binary> = $texts | get 0? | default {
       let path: path = $file | default {
           error raise 'no script was given' --with={
             kind: invalid_argument
-            advice: 'pipe its text, or give --content or a file path'
+            help: 'pipe its text, or give --content or a file path'
           }
         }
       if not ($path | path exists) { error raise $"file not found: '($path)'" --kind not_found }
@@ -234,7 +234,7 @@ export def --env main [
     let stderr: string = $res.stderr | text | str replace --all "\u{0}=phase\u{0}" '' | str trim
     error raise $"bash exited with status ($res.exit_code) before the variables were read" --with={
       kind: external_failure
-      advice: (
+      help: (
         [$stderr 'a script that calls `exit` ends bash early; `return` (with status 0) ends the script and keeps the variables'] | compact --empty | str join (char newline)
       )
     }

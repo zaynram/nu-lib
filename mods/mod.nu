@@ -149,18 +149,18 @@ export def --env define [
   let base: path = $directory
     | default $env.mods_home!?
     | default {
-      error raise 'no directory to save the module under' ...{
+      error raise 'no directory to save the module under' --with={
         kind: missing_dependency
-        advice: 'pass --directory or set $env.mods_home'
+        help: 'pass --directory or set $env.mods_home'
       }
     }
   let directory: directory = $base | path expand --no-symlink | append $name | path join
   if not ($directory | path exists) { mkdir $directory }
   let path: path = $directory | path join mod.nu
   if not $overwrite and ($path | path exists) {
-    error raise $"module '($name)' is already defined at '($path)'" ...{
+    error raise $"module '($name)' is already defined at '($path)'" --with={
       kind: conflict
-      advice: 'pass --overwrite to replace it'
+      help: 'pass --overwrite to replace it'
     }
   }
   let source: list<string> = $block | preserve-serialized-closure
@@ -313,9 +313,9 @@ export def --env main [
       define $m.name $m.definition --directory=$m.directory? --overwrite=$m.overwrite
     }
     $t => {
-      error raise $"unsupported input type '($t)'" ...{
+      error raise $"unsupported input type '($t)'" --with={
         kind: invalid_argument
-        advice: 'pipe a closure, a details record or a record of name/closure pairs'
+        help: 'pipe a closure, a details record or a record of name/closure pairs'
       }
     }
   }

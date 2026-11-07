@@ -40,17 +40,17 @@ export def list [
     | where value != null | get flag
   if $completed and $open_only != [] {
     let flags: string = $open_only | each { $'`--($in)`' } | str join ', '
-    error raise $"`--completed` cannot be combined with ($flags)" ...{
+    error raise $"`--completed` cannot be combined with ($flags)" --with={
       kind: invalid_argument
-      advice: (
+      help: (
         '`td completed list` filters only by `--project` and `--since`'
       )
     }
   }
   if not $completed and $since != null {
-    error raise '`--since` requires `--completed`' ...{
+    error raise '`--since` requires `--completed`' --with={
       kind: invalid_argument
-      advice: (
+      help: (
         'open tasks have no completion date to filter by; add `--completed` to list completed tasks'
       )
     }
@@ -199,9 +199,9 @@ def --wrapped todoist [
     let args;
     let res: record = attempt td ...$args
     if $res.exit_code != 0 {
-      error raise $"`td` exited with code ($res.exit_code)" ...{
+      error raise $"`td` exited with code ($res.exit_code)" --with={
         kind: external_failure
-        advice: (
+        help: (
           [$res.stderr $res.stdout] | str trim | compact --empty | str join (char nl)
         )
       }
@@ -242,9 +242,9 @@ def format-priority []: oneof<nothing, int> -> oneof<nothing, string> {
 
 def repo-name []: nothing -> string {
   let root: string = try { attempt --check git rev-parse --show-toplevel } catch {|e|
-    $e | error raise 'not inside a repository' ...{
+    $e | error raise 'not inside a repository' --with={
       kind: not_found
-      advice: 'pass --project to name the Todoist project'
+      help: 'pass --project to name the Todoist project'
     }
   }
   $root | str trim | path basename

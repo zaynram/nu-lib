@@ -174,9 +174,9 @@ export def is-enabled [
   } else if $name != null {
     not (list $name --strict=$strict | get $.0?.disabled!? | default false)
   } else {
-    error raise 'a ref or --name is required' ...{
+    error raise 'a ref or --name is required' --with={
       kind: invalid_argument
-      advice: "pass the hook's cell-path or its --name"
+      help: "pass the hook's cell-path or its --name"
     }
   }
 }
@@ -247,7 +247,7 @@ export def show [
       $in | each {|| upsert code $stringify | upsert condition $stringify }
     }
   if $found == [] and $strict {
-    error raise $"no hook at '($ref)'" ...{
+    error raise $"no hook at '($ref)'" --with={
       kind: not_found
       labels: [{text: reference span: (metadata $ref).span}]
     } | do $in
@@ -266,7 +266,7 @@ export def list [
   let found: list = flatten-hooks --include=$names
   if $found == [] and $strict {
     let listed: string = $names | each {|n| $"'($n)'" } | str join ', '
-    error raise $"no hook named ($listed)" ...{
+    error raise $"no hook named ($listed)" --with={
       kind: not_found
       labels: [{text: 'name(s)' span: (metadata $names).span}]
     } | do $in
@@ -289,21 +289,21 @@ export def --env edit [
   # closure or string, so they take `--overwrite` only
 ]: nothing -> oneof<HookData, CodeType> {
   if $overwrite == null and $update == null {
-    error raise 'no overwrite value or update record was given' ...{
+    error raise 'no overwrite value or update record was given' --with={
       kind: invalid_argument
-      advice: 'pass --overwrite or --update'
+      help: 'pass --overwrite or --update'
     }
   } else if ($env.config.hooks | get --optional --ignore-case $ref) == null {
     error raise $"no hook at '($ref)'" --kind not_found
   } else if not ($ref | names-one-hook) {
-    error raise $"'($ref)' is a list of hooks, not one hook" ...{
+    error raise $"'($ref)' is a list of hooks, not one hook" --with={
       kind: invalid_argument
-      advice: 'reference one entry (`$.pre_prompt.0`, `$.env_change.PWD.0`); `hook add` appends to the list'
+      help: 'reference one entry (`$.pre_prompt.0`, `$.env_change.PWD.0`); `hook add` appends to the list'
     }
   } else if $overwrite == null and ($ref | hook-type) in [display_output command_not_found] {
-    error raise $"the hook at '($ref)' holds a single closure or string, not a record" ...{
+    error raise $"the hook at '($ref)' holds a single closure or string, not a record" --with={
       kind: invalid_argument
-      advice: 'display_output and command_not_found are replaced with --overwrite, not merged with --update'
+      help: 'display_output and command_not_found are replaced with --overwrite, not merged with --update'
     }
   } else {
     # `update` calls a closure argument, so the overwrite value is wrapped: a closure is stored, not its result.
@@ -343,7 +343,7 @@ export def --wrapped test [
   | show --raw $ref $in
   | default {
     let part: string = if $condition { 'condition' } else { 'code' }
-    error raise $"no hook ($part) at '($ref)'" ...{
+    error raise $"no hook ($part) at '($ref)'" --with={
       kind: not_found
       labels: [{text: reference span: (metadata $ref).span}]
     } | do $in
@@ -377,9 +377,9 @@ export def --env add [
   # bound first: only the first pipeline of the block receives the input
   let given: oneof<nothing, list<HookType>> = $in
   if not ($target | names-hook-list) {
-    error raise $"'($target)' is not a hook type or an env_change variable" ...{
+    error raise $"'($target)' is not a hook type or an env_change variable" --with={
       kind: invalid_argument
-      advice: 'add to a hook type (`$.pre_prompt`) or an env_change variable (`$.env_change.PWD`); `hook edit` changes one entry'
+      help: 'add to a hook type (`$.pre_prompt`) or an env_change variable (`$.env_change.PWD`); `hook edit` changes one entry'
     }
   }
   let hooks: list = $given | if $value != null { append $value } else { } | match $in {

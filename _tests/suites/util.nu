@@ -289,7 +289,7 @@ def "test deactivate needs the workspace overlay" []: nothing -> nothing {
     let hidden = sandboxed $ctx 'overlay new __workspace__
 use util
 util workspace deactivate
-overlay list | where active | get name | to nuon' --pipe
+overlay list | where $it.active | get name | to nuon' --pipe
     assert ('__workspace__' not-in $hidden) 'the overlay is hidden'
   }
 }

@@ -114,7 +114,10 @@ def derive [span: record<start: int, end: int> kind: string]: nothing -> string 
 
 # ——— definitions ———————————————————————————————————————————————————————————————
 
-# Alias for piping `raise` woth labels.
+# The keys `raise --with` takes: the fields of `error make` (the message is the argument) and `kind`.
+const WITH_KEYS: list<string> = [kind code help url label labels inner src]
+
+# Raise the closure that `raise` returns when it has labels, in the caller's scope (`raise … {label} | throw`).
 export def throw []: closure -> error { do --capture-errors $in }
 
 # Raise an error whose code is derived from the raise site: `<namespace>::<command>::<kind>`.
@@ -123,11 +126,17 @@ export def throw []: closure -> error { do --capture-errors $in }
 # ---
 #
 # The `<namespace>` is derived intrinsically for sibling modules from path of the caller.
-# It can be overriden via a comment directive in the form `# error-namespace: <ns>`.
+# It can be overridden via a comment directive in the form `# error-namespace: <ns>`.
+#
+## Details
+# `--with` takes the fields of `error make` (`code`, `help`, `url`, `label`, `labels`, `inner`, `src`) plus `kind`,
+# and wins over the flags: `kind` replaces `--kind`, `code` replaces the derived code (`code: ''` raises without
+# one). Any other key (`advice` is `help`) is an `error::raise::invalid_argument` error rather than silently lost.
 #
 ## Input Behavior
-# Pipeline input is accepted and untyped, but only error records are kept, with dynamic unwrapping for chains.
-# If any error records are detected this way, they will be used as the inner for the new error.
+# Pipeline input is accepted and untyped, but only error records are kept, with dynamic unwrapping for chains:
+# a caught error contributes its `details`, an error record itself, and a record holding only `inner` its first
+# inner error. If any error records are detected this way, they will be used as the inner for the new error.
 #
 ## Output Behavior
 # Raises the error unspanned when no `labels` are provided.
@@ -158,13 +167,28 @@ export def raise [
   ...labels: record<text: string, span: record>
   # Labels to include in the error output
 ]: any -> oneof<error, closure> {
+  # Bound first: `raise` may be the first command of a block that receives input.
   let cause: list<any> = append [] | each {|it|
-      match ($it | describe | str replace <.+ '') {
-        record if $it has msg => $it
-        record if $it has details => $it.details
-        record if $it has inner => $it.inner.0?
+      if ($it | describe) !~ '^record' {
+        null
+      } else if $it has details {
+        $it.details
+      } else if $it has msg {
+        $it
+      } else if $it has inner {
+        $it.inner | get --optional 0
       }
     }
+  let unknown: list<string> = $with | columns | where $it not-in $WITH_KEYS
+  if $unknown != [] {
+    error make {
+      msg: $"unknown --with key '($unknown | first)'"
+      code: 'error::raise::invalid_argument'
+      help: $"--with takes ($WITH_KEYS | str join ', ') \(a remedy is `help`)"
+      label: {text: 'these details' span: (metadata $with).span}
+    }
+  }
+  let kind: string = $with.kind? | default $kind
   if $kind not-in $KINDS {
     error make {
       msg: $"unknown error kind '($kind)'"
@@ -178,15 +202,15 @@ export def raise [
   # The span is taken here, not in the closure: a captured variable reports the span of its capture site.
   let span: record = metadata $message | get $.span
 
-  let labels: table = $with
-    | get $.label? $.labels?
-    | flatten
-    | append $labels
+  # Not `flatten`: it would also flatten each label's `span` record into `start`/`end` columns.
+  let labels: list<record> = [$with.label?]
     | compact
+    | append ($with.labels? | default [])
+    | append $labels
   let count: int = $labels | length
 
   let details: record = $with
-    | if $in has kind { rename --column={kind: code} } else { }
+    | reject --optional kind
     | default { derive $span $kind } $.code
     | upsert $.msg $message
     | upsert $.inner { append $cause }

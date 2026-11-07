@@ -681,6 +681,6 @@ def main [
     }
   let failed: list = $results | where not ok
   for f in $failed { print $"\n('FAIL' | style paint red) ($f.case)\n($f.error)" }
-  print $"\n($results | length) cases, ($failed | length) failed, ($results | where skipped | length) skipped"
+  print $"\n($results | length) cases, ($failed | length) failed, ($results | where $it.skipped | length) skipped"
   if ($failed | is-not-empty) { exit 1 }
 }

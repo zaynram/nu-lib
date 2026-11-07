@@ -140,16 +140,16 @@ export def --env dir [
   let p: oneof<path, list<path>> = $s
     | get --ignore-case --optional $target
     | default {
-      error raise $"no directory named '($target)'" ...{
+      error raise $"no directory named '($target)'" --with={
         kind: not_found
-        advice: $"directories: ($s | columns | str join ', ')"
+        help: $"directories: ($s | columns | str join ', ')"
       }
     }
   if $return { return $p }
   if ($p | describe) =~ '^list' {
-    error raise $"'($target)' is a list of directories" ...{
+    error raise $"'($target)' is a list of directories" --with={
       kind: invalid_argument
-      advice: 'pass --return to get the list instead of navigating'
+      help: 'pass --return to get the list instead of navigating'
     }
   }
   cd $p
@@ -198,9 +198,9 @@ export def find [
     let files: list = try { xglob **/* --no-dir } | default []
     match ($files | length) {
       0 => {
-        error raise $"no config files found for '($target)'" ...{
+        error raise $"no config files found for '($target)'" --with={
           kind: not_found
-          advice: 'pass --path to name a file to create'
+          help: 'pass --path to name a file to create'
         }
       }
       1 => { $files | first }
@@ -225,9 +225,9 @@ export def prompt [
   } else if ($cfg | path type) != file {
     error raise $"file not found: '($cfg)'" --kind not_found
   } else if $cfg !~ $PROMPT_EXT {
-    error raise $"unsupported format: '($cfg)'" ...{
+    error raise $"unsupported format: '($cfg)'" --with={
       kind: invalid_argument
-      advice: 'oh-my-posh reads toml, yaml, yml, json and jsonc files'
+      help: 'oh-my-posh reads toml, yaml, yml, json and jsonc files'
     }
   } else {
     oh-my-posh init nu --config=($cfg)

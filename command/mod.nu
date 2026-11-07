@@ -37,9 +37,9 @@ export def post-complete [
   # the signature already rejects other input types, including records without the three fields
   let result: any = if ($input | describe) == closure { $input | run-captured } else { $input }
   if ($result.exit_code? | describe) != int {
-    error raise 'unable to gather external command result' ...{
+    error raise 'unable to gather external command result' --with={
       kind: invalid_argument
-      advice: $"the closure must end with an external command that exists, or with `| complete`; it produced ($result | describe)"
+      help: $"the closure must end with an external command that exists, or with `| complete`; it produced ($result | describe)"
     }
   }
   if $result.exit_code == 0 {
@@ -49,9 +49,9 @@ export def post-complete [
   let name: string = if (which $desc | where type == external) != [] { $'`($desc)`' } else { $desc }
   let help: string = $result | output-help --empty=$empty
   # Without labels `error raise` raises here; with them it returns the closure, which `do` runs with the spans intact.
-  $inner | error raise $"($name) exited with code ($result.exit_code)" ...{
+  $inner | error raise $"($name) exited with code ($result.exit_code)" --with={
     kind: external_failure
-    advice: $help
+    help: $help
     labels: ($label | append [])
   } | do $in
 }

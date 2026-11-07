@@ -55,9 +55,9 @@ export def upgrade [
   let input: oneof<nothing, record> = $in
   if $async {
     if $system {
-      error raise '`--system` cannot run in the background' ...{
+      error raise '`--system` cannot run in the background' --with={
         kind: invalid_argument
-        advice: 'sudo needs a prompt: run `pman upgrade --system` in the foreground'
+        help: 'sudo needs a prompt: run `pman upgrade --system` in the foreground'
       }
     }
     job spawn --description=pkg-auto-upgrade {
@@ -136,17 +136,17 @@ export def history [
   --throw (-t) # Throw an error if the log file is missing
 ]: nothing -> oneof<record, nothing, duration> {
   if $LOG not-has $target {
-    error raise $"unknown target '($target)'" ...{
+    error raise $"unknown target '($target)'" --with={
       kind: invalid_argument
-      advice: $"targets: ($LOG | columns | str join ', ')"
+      help: $"targets: ($LOG | columns | str join ', ')"
     }
   }
   alias invoke = if $age { (date now) - (ls $in).0.modified } else { open $in }
   try { $LOG | get $target | invoke } catch {|e|
     if $throw {
-      $e | error raise $"no cached results found for '($target)'" ...{
+      $e | error raise $"no cached results found for '($target)'" --with={
         kind: not_found
-        advice: $"nothing has written '($LOG | get $target)' yet"
+        help: $"nothing has written '($LOG | get $target)' yet"
       }
     }
   }

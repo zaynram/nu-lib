@@ -128,11 +128,11 @@ export def string [
     let labels: table<text: string, span: record> = $labels | default --empty [$value $check]
     # The message is the caller's `--message`, whose span lies at the call site, so the code is the caller's `--code`
     # rather than derived here; with labels, `error raise` returns the closure that raises.
-    $inner | error raise $message ...{
+    $inner | error raise $message --with={
       kind: invalid_argument
       code: $code
       labels: $labels
-      advice: $instruct
+      help: $instruct
     }
   }
 }
@@ -293,7 +293,7 @@ export def rules [
   let data: record;
   let colors: bool = $colors | default { style colors }
   if $return not-in $RETURNS {
-    error raise $"invalid --return value '($return)'" ...{
+    error raise $"invalid --return value '($return)'" --with={
       kind: invalid_argument
       labels: [
         {text: $"expected one of ($RETURNS | str join ', ')" span: (metadata $return).span}
@@ -375,7 +375,7 @@ export def rules [
       let verdicts: table = $inter.result | flatten --all
       {index: $r.index at: $r.item.at verdicts: $verdicts dead: ($inter.item.0? == null or $verdicts != [])}
     }
-  let dead: list<cell-path> = $judged | where dead | get at
+  let dead: list<cell-path> = $judged | where $it.dead | get at
   let verdicts: table = $indexed
     | where {|r|
       let before: list<cell-path> = $judged | where $it.dead and $it.index < $r.index | get at
@@ -412,9 +412,9 @@ export def rules [
       | str trim
       | format pattern "[{index}]: {hint}"
       | align ':'
-    error raise 'validation completed with errors' ...{
+    error raise 'validation completed with errors' --with={
       kind: invalid_argument
-      advice: $help
+      help: $help
     }
   } else {
     return $in
@@ -599,7 +599,7 @@ def verdicts [
 }
 
 # A dynamic rule fails in one of two ways, and passes by returning anything else (usually nothing):
-# - raising (`error raise <reason> --advice <hint>`): the error's `msg` is the reason, its `help` the hint. Nothing
+# - raising (`error raise <reason> --with={help: <hint>}`): the error's `msg` is the reason, its `help` the hint. Nothing
 #   else survives a raised error (LabeledError keeps only its own fields), so this form carries no data.
 # - returning a record with `reason` (or `msg`): `hint` (or `help`) is the hint and every other field is kept as
 #   `data` on the failure row, also available to the templates (`{at}` is always available).

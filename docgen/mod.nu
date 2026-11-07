@@ -141,9 +141,9 @@ def introspect [ctx: record]: nothing -> record {
   let out = ^$nu.current-exe --no-config-file --include-path=(include-dirs | str join (char esep)) --commands $script
     | complete
   if $out.exit_code != 0 {
-    error raise $"the module could not be collected after `($ctx.uses | last)`" ...{
+    error raise $"the module could not be collected after `($ctx.uses | last)`" --with={
       kind: external_failure
-      advice: ($out.stderr | str trim)
+      help: ($out.stderr | str trim)
     }
   }
   $out.stdout | from nuon
@@ -256,9 +256,9 @@ export def collect [
   ...targets: string # module names or paths (directory, mod.nu, or file.nu)
 ]: nothing -> table {
   if ($targets | is-empty) {
-    error raise 'at least one module target is required' ...{
+    error raise 'at least one module target is required' --with={
       kind: invalid_argument
-      advice: 'give a module name, or the path of a module directory, its mod.nu, or a single-file module'
+      help: 'give a module name, or the path of a module directory, its mod.nu, or a single-file module'
     }
   }
   $targets | each {|target|

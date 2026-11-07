@@ -136,10 +136,10 @@ export def init-local [
 export-env {
   let missing: list<path> = $NU_LIB_DIRS | where $it not-in ($env.NU_LIB_DIRS? | default [])
   if $missing != [] { $env.NU_LIB_DIRS = ($env.NU_LIB_DIRS? | default []) ++ $missing }
-  # File paths, not bare names: inside this module a bare `mods` is the wrapper above, which has no env block.
   if $nu.is-login { use conf }
   if $nu.is-interactive and $nu.is-login {
-    use mods
+    # A file path, not the bare name: inside this module a bare `mods` is the wrapper above, which has no env block.
+    use mods/mod.nu
     use completion/local
     use proj
     use track

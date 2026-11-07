@@ -29,9 +29,9 @@ export def rejoin [
   let input: oneof<nothing, string, list<string>> = $in
   match ($input | describe | str replace --regex '<.*' '') {
     nothing if ($segments | is-empty) => {
-      error raise 'nothing to join' ...{
+      error raise 'nothing to join' --with={
         kind: invalid_argument
-        advice: 'pipe a path (or a list of paths), or give segments'
+        help: 'pipe a path (or a list of paths), or give segments'
       }
     }
     list => { $input | each {|p| [$p] | append $segments | join-with $sep } }
@@ -55,9 +55,9 @@ export def truncate [
 ] {
   let queue: any = $in
   if $n == 0 {
-    error raise 'cannot keep zero segments' ...{
+    error raise 'cannot keep zero segments' --with={
       kind: invalid_argument
-      advice: 'a negative count keeps every segment'
+      help: 'a negative count keeps every segment'
     }
   }
   let trim: closure = if $from =~ ^e {
@@ -65,9 +65,9 @@ export def truncate [
   } else if $from =~ ^s {
     {|n: int| first $n }
   } else {
-    error raise $"unknown --from '($from)'" ...{
+    error raise $"unknown --from '($from)'" --with={
       kind: invalid_argument
-      advice: 'use start or end'
+      help: 'use start or end'
     }
   }
   let glob: bool = $queue | any ($it | describe) == string
@@ -100,7 +100,7 @@ export def select [
     match ($choice | describe) { string => $choice _ => { $choice | get --optional $column } }
   } else if not $optional {
     # The message is the caller's `--message`, whose span lies at the call site, so the code cannot be derived here.
-    error raise $message ...{
+    error raise $message --with={
       kind: invalid_argument
       code: 'path::select::invalid_argument'
     }

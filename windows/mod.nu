@@ -130,9 +130,9 @@ export def --env "win env" [
 ]: oneof<nothing, record> -> oneof<nothing, record, any> {
   let input: record = default {}
   if $path not-in [merge overwrite] {
-    error raise $"unknown --path '($path)'" ...{
+    error raise $"unknown --path '($path)'" --with={
       kind: invalid_argument
-      advice: 'merge or overwrite'
+      help: 'merge or overwrite'
     }
   }
   # the cache holds the raw Windows variables; `--path` is applied afterwards

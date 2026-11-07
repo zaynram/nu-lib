@@ -86,7 +86,7 @@ def "test raise with a message built in the same command" []: nothing -> nothing
 
 def "test raise with a message from another command derives that command" []: nothing -> nothing {
   let e = caught { error raise (message-from-elsewhere) }
-  assert equal $e.code $'($HERE)::message-from-elsewhere::internal' 'the span of the message decides, hence --code for such messages'
+  assert equal $e.code $'($HERE)::message-from-elsewhere::internal' 'the span of the message decides, hence --with {code} for such messages'
 }
 
 # A message whose span lies in this command, not at the raise site.
@@ -100,7 +100,7 @@ def "test raise from a module under the repository root" []: nothing -> nothing 
 
 def "test raise with a code" []: nothing -> nothing {
   let e = caught {
-    error raise 'it broke' ...{
+    error raise 'it broke' --with={
       code: 'mymod::ctx::kind'
       kind: not_found
     }
@@ -109,18 +109,33 @@ def "test raise with a code" []: nothing -> nothing {
 }
 
 def "test raise with an empty code has no code" []: nothing -> nothing {
-  let e = caught { error raise 'it broke' --code '' }
+  let e = caught { error raise 'it broke' --with={code: ''} }
   assert equal $e.code null 'an empty code is not derived, it is left out'
 }
 
-def "test raise with advice" []: nothing -> nothing {
-  let e = caught { error raise 'it broke' --advice 'try again' }
-  assert equal $e.help 'try again' 'the advice is the help'
+def "test raise with help" []: nothing -> nothing {
+  let e = caught { error raise 'it broke' --with={help: 'try again'} }
+  assert equal $e.help 'try again' 'the help is passed through'
 }
 
-def "test raise leaves out empty advice" []: nothing -> nothing {
-  let e = caught { error raise 'it broke' --advice '' }
+def "test raise leaves out empty help" []: nothing -> nothing {
+  let e = caught { error raise 'it broke' --with={help: ''} }
   assert equal $e.help null 'an empty string is compacted away'
+}
+
+def "test raise with a kind in with derives the code and wins over the flag" []: nothing -> nothing {
+  let e = caught { error raise 'it broke' --kind io --with={kind: not_found help: 'look elsewhere'} }
+  assert equal $e.code $'($HERE)::test-raise-with-a-kind-in-with-derives-the-code-and-wins-over-the-flag::not_found' 'derived with the kind from --with'
+  assert equal $e.help 'look elsewhere' 'and the rest of the details'
+  let bad = caught { error raise 'it broke' --with={kind: bogus} }
+  assert equal $bad.code 'error::raise::invalid_argument' 'a kind from --with is validated too'
+}
+
+def "test raise rejects a key error make would drop" []: nothing -> nothing {
+  let e = caught { error raise 'it broke' --with={kind: io advice: 'try again'} }
+  assert equal $e.code 'error::raise::invalid_argument' 'not a silent loss'
+  assert equal $e.msg "unknown --with key 'advice'" 'the key is named'
+  assert str contains $e.help 'help' 'the help names the accepted keys'
 }
 
 def "test raise wraps a record input as the inner error" []: nothing -> nothing {
@@ -145,7 +160,7 @@ def "test raise wraps a caught error as the inner error" []: nothing -> nothing 
 
 def "test raise with labels returns a closure" []: nothing -> nothing {
   let span = (metadata 'here').span
-  let raiser = error raise 'it broke' ...{
+  let raiser = error raise 'it broke' --with={
     kind: conflict
     labels: [{text: 'right here' span: $span}]
   }
@@ -159,8 +174,42 @@ def "test raise with labels returns a closure" []: nothing -> nothing {
 
 def "test raise with labels keeps the inner error" []: nothing -> nothing {
   let cause = {msg: 'the cause'}
-  let raiser = $cause | error raise 'it broke' --labels [{text: x span: (metadata 'x').span}]
+  let raiser = $cause | error raise 'it broke' {text: x span: (metadata 'x').span}
   assert equal ((caught $raiser).inner | get msg) ['the cause'] 'the input is captured by the closure'
+}
+
+def "test raise takes labels as arguments, a label or labels in with, and counts them all" []: nothing -> nothing {
+  let a = {text: a span: (metadata 'a').span}
+  let b = {text: b span: (metadata 'b').span}
+  let c = {text: c span: (metadata 'c').span}
+  assert equal ((caught (error raise 'one' $a)).labels | get text) [a] 'a rest argument'
+  assert equal ((caught (error raise 'one' --with={label: $b})).labels | get text) [b] 'a single label in --with'
+  assert equal ((caught (error raise 'two' --with={labels: [$b $c]})).labels | get text) [b c] 'labels in --with'
+  let all = caught (error raise 'three' --with={label: $a labels: [$b]} $c)
+  assert equal ($all.labels | get text) [a b c] 'all of them, --with first'
+  assert equal ($all.labels | get span) [$a.span $b.span $c.span] 'with their spans intact'
+}
+
+def "test throw raises a labelled error in the caller" []: nothing -> nothing {
+  let e = caught { error raise 'thrown' --kind conflict {text: here span: (metadata 'here').span} | error throw }
+  assert equal [$e.msg ($e.labels | get text)] [thrown [here]] 'the closure is raised'
+  assert equal $e.code $'($HERE)::test-throw-raises-a-labelled-error-in-the-caller::conflict' 'with the code derived at the raise'
+}
+
+def "test raise keeps every error record of a list input" []: nothing -> nothing {
+  let e = caught { [{msg: first} 'not an error' {msg: second}] | error raise 'it broke' }
+  assert equal ($e.inner | get msg) [first second] 'one inner error per error record'
+}
+
+def "test raise unwraps a record that holds only inner errors" []: nothing -> nothing {
+  let e = caught { {inner: [{msg: 'deep cause'} {msg: 'ignored'}]} | error raise 'it broke' }
+  assert equal ($e.inner | get msg) ['deep cause'] 'its first inner error'
+}
+
+def "test raise keeps the code of a caught inner error" []: nothing -> nothing {
+  let cause = try { error raise 'the cause' --kind not_found } catch {|e| $e }
+  let e = caught { $cause | error raise 'it broke' }
+  assert equal ($e.inner | get code) [$'($HERE)::test-raise-keeps-the-code-of-a-caught-inner-error::not_found'] 'the details of the caught error, code included'
 }
 
 # ——— derivation from fixture module trees ——————————————————————————————————————
@@ -224,18 +273,18 @@ def "test raise outside any def omits the command" []: nothing -> nothing {
 
 def "test raise outside any def that follows one is attributed to that def" []: nothing -> nothing {
   # The documented approximation (_docs/errors.md): the command is the last `def` line before the raise, so an alias
-  # or `export-env` block placed after the defs names the last def; `--code` is the remedy there.
+  # or `export-env` block placed after the defs names the last def; `--with {code}` is the remedy there.
   with-sandbox {|ctx|
     let late = [
       'use error'
       'export def go [] { }'
       "export alias boom = do { error raise 'late' --kind conflict }"
-      "export alias fixed = do { error raise 'late' --kind conflict --code 'late::conflict' }"
+      "export alias fixed = do { error raise 'late' --with={code: 'late::conflict'} }"
     ] | str join (char newline)
     let early = "use error\nexport alias boom = do { error raise 'early' --kind conflict }\nexport def go [] { }"
     let lib = write-lib $ctx {'late/mod.nu': $late 'early/mod.nu': $early}
     assert equal (child-raise $lib 'use late; late boom').code 'late::go::conflict' 'after a def: the def is named'
-    assert equal (child-raise $lib 'use late; late fixed').code 'late::conflict' '--code gives the intended code'
+    assert equal (child-raise $lib 'use late; late fixed').code 'late::conflict' '--with {code} gives the intended code'
     assert equal (child-raise $lib 'use early; early boom').code 'early::conflict' 'before the first def: no command'
   }
 }

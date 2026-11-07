@@ -40,9 +40,9 @@ export def bin [
         _ => {
           let res: record = ^sudo unlink $config.link out+err>| complete
           if $res.exit_code != 0 {
-            error raise $"unable to remove the dangling link '($config.link)'" ...{
+            error raise $"unable to remove the dangling link '($config.link)'" --with={
               kind: external_failure
-              advice: ($res.stdout | str trim)
+              help: ($res.stdout | str trim)
             }
           }
         }
@@ -56,7 +56,7 @@ export def bin [
     | where type == external and ($it.path | path dirname) not-in $config.skip
     | get --optional 0.path
     | default {
-      error raise $"no external '($name)' found on PATH outside ($config.skip | str join ', ')" ...{
+      error raise $"no external '($name)' found on PATH outside ($config.skip | str join ', ')" --with={
         kind: not_found
       }
     }
@@ -68,9 +68,9 @@ export def bin [
     _ => { ^sudo ln -s $source $config.link out+err>| complete }
   }
   if $res.exit_code != 0 {
-    error raise $"unable to link '($source)' at '($config.link)'" ...{
+    error raise $"unable to link '($source)' at '($config.link)'" --with={
       kind: external_failure
-      advice: ($res.stdout | str trim)
+      help: ($res.stdout | str trim)
     }
   }
   $config.link

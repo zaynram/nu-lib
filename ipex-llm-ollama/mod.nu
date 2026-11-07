@@ -26,9 +26,9 @@ export def status []: nothing -> record<state: string, spawned: oneof<datetime, 
   let result: record = ^systemctl status ipex-llm-ollama --no-pager --lines 0 out+err>| complete
   let active: list<string> = $result.stdout | lines | str trim | where $it starts-with 'Active: '
   if ($active | is-empty) {
-    error raise $"no status reported by systemctl \(exit code ($result.exit_code)\)" ...{
+    error raise $"no status reported by systemctl \(exit code ($result.exit_code)\)" --with={
       kind: external_failure
-      advice: ($result.stdout | str trim)
+      help: ($result.stdout | str trim)
     }
   }
   $active

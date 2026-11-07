@@ -17,7 +17,7 @@ const BASH_EXTENSIONS: list<string> = [sh bash]
 const BASH_NAMES: list<string> = ['.envrc' '.profile' '.bashrc' '.bash_profile' '.bash_login']
 # An assignment as `from dotenv` takes it (`export` allowed; a key is anything but whitespace, `=` and `#`), with
 # its value as written.
-const ASSIGNMENT: string = r#'^\s*(?:export\s+)?(?<key>[^\s=#]+)\s*=\s*(?<raw>.*)$'#
+const ASSIGNMENT: string = r##'^\s*(?:export\s+)?(?<key>[^\s=#]+)\s*=\s*(?<raw>.*)$'##
 # What only a shell gives meaning to, anywhere in a written value: `$(…)` (also `$((…))`) or a backtick.
 const SHELL_VALUE: string = r#'\$\(|`'#
 # Variables Nushell manages itself: a bash file's `cd` changes them and `load-env` refuses them (as `from-bash
@@ -114,9 +114,9 @@ def from-bash-text []: string -> record {
 def read-file [file: path]: nothing -> record {
   let reader: oneof<nothing, string> = reader-of $file
   if $reader == null and ($file | path parse | get extension) != '' {
-    error raise $"'($file)': no reader for this file name" ...{
+    error raise $"'($file)': no reader for this file name" --with={
       kind: invalid_argument
-      advice: $".env/.conf/.dotenv are parsed, .sh/.bash and ($BASH_NAMES | str join ', ') run in bash; a file without an extension goes by its content"
+      help: $".env/.conf/.dotenv are parsed, .sh/.bash and ($BASH_NAMES | str join ', ') run in bash; a file without an extension goes by its content"
     }
   }
   let text: string = read-text $file
@@ -130,15 +130,15 @@ def read-file [file: path]: nothing -> record {
   match $verdict {
     {vars: $vars} => $vars
     {line: $n text: $line} => {
-      error raise $"'($file)' line ($n) is not KEY=VALUE: ($line)" ...{
+      error raise $"'($file)' line ($n) is not KEY=VALUE: ($line)" --with={
         kind: invalid_argument
-        advice: $SHELL_ADVICE
+        help: $SHELL_ADVICE
       }
     }
     {key: $key} => {
-      error raise $"'($file)': the value of '($key)' needs a shell" ...{
+      error raise $"'($file)': the value of '($key)' needs a shell" --with={
         kind: invalid_argument
-        advice: $SHELL_ADVICE
+        help: $SHELL_ADVICE
       }
     }
     {inner: $e} => { $e | error raise $"'($file)' is not a valid .env file" --kind invalid_argument }

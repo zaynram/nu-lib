@@ -50,7 +50,7 @@ export def paint [
   let text: string = $in
   let prefix: string = $codes | each {|code|
     try { ansi $code } catch {
-      error raise $"unknown ansi code '($code)'" ...{
+      error raise $"unknown ansi code '($code)'" --with={
         kind: invalid_argument
         labels: [
           {text: 'not a name from `ansi --list`' span: (metadata $codes).span}
@@ -81,7 +81,7 @@ export def --wrapped "ansi extern" [
 ]: nothing -> string {
   # The attribute is checked before the colour decision, so a bad name is an error without a terminal too.
   let pre: string = if $attr == null { '' } else if $attr in (_ansi_attributes) { ansi $'attr_($attr)' } else {
-    error raise $"unknown attribute '($attr)'" ...{
+    error raise $"unknown attribute '($attr)'" --with={
       kind: invalid_argument
       labels: [
         {text: $"expected one of: (_ansi_attributes | str join ', ')" span: (metadata $attr).span}
