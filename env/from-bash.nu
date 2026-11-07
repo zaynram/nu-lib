@@ -66,7 +66,18 @@ const PREFIX: string = '__from_bash_'
 # exported SHELLOPTS turns its options on at startup); the dynamic variables (RANDOM, SRANDOM, SECONDS, LINENO,
 # EPOCHSECONDS, EPOCHREALTIME) are listed by `set` once a script has referenced them.
 const INHIBITED: list<string> = [
-  BASH_LINENO COLUMNS LINES SHELLOPTS BASHOPTS POSIXLY_CORRECT RANDOM SRANDOM SECONDS LINENO EPOCHSECONDS EPOCHREALTIME
+  BASH_LINENO
+  COLUMNS
+  LINES
+  SHELLOPTS
+  BASHOPTS
+  POSIXLY_CORRECT
+  RANDOM
+  SRANDOM
+  SECONDS
+  LINENO
+  EPOCHSECONDS
+  EPOCHREALTIME
 ]
 # Variables Nushell manages itself (a `cd` in the script sets PWD/OLDPWD): returned, never loaded.
 const UNLOADABLE: list<string> = [PWD OLDPWD FILE_PWD CURRENT_FILE]
@@ -93,11 +104,11 @@ def shellvars [snapshot: record<env: record, set: record>]: nothing -> record {
 # variables are left out.
 def changes [before: record after: record set: record]: nothing -> record {
   let changed: list = $after | items {|name value|
-    if ($name starts-with BASH_FUNC_) or $name in $INHIBITED or ($before | get --optional $name) == $value { null } else { {$name: $value} }
-  }
+      if ($name starts-with BASH_FUNC_) or $name in $INHIBITED or ($before | get --optional $name) == $value { null } else { {$name: $value} }
+    }
   let removed: list = $before | items {|name _|
-    if ($name starts-with BASH_FUNC_) or $name in $INHIBITED or ($set has $name) { null } else { {$name: null} }
-  }
+      if ($name starts-with BASH_FUNC_) or $name in $INHIBITED or ($set has $name) { null } else { {$name: null} }
+    }
   $changed ++ $removed | compact | into record
 }
 
@@ -176,33 +187,33 @@ export def --env main [
 ] {
   let texts: list<string> = [$in $content] | compact
   if ($texts | length) + ([$file] | compact | length) > 1 {
-    error raise 'the script was given more than once' ...{
+    error raise 'the script was given more than once' --with={
       kind: invalid_argument
-      advice: 'pipe its text, give --content, or give a file path: one of them'
+      help: 'pipe its text, give --content, or give a file path: one of them'
     }
   }
   if $return != null and $return not-in $RETURN {
-    error raise $"unknown --return '($return)'" ...{
+    error raise $"unknown --return '($return)'" --with={
       kind: invalid_argument
       advice: $"expected one of: ($RETURN | str join ', ')"
     }
   }
   if $execute != [] and $return not-in [null preserve] {
-    error raise $"--execute cannot be combined with --return '($return)'" ...{
+    error raise $"--execute cannot be combined with --return '($return)'" --with={
       kind: invalid_argument
       advice: '--execute returns every change (preserve)'
     }
   }
   let script: oneof<string, binary> = $texts | get 0? | default {
-    let path: path = $file | default {
-      error raise 'no script was given' ...{
-        kind: invalid_argument
-        advice: 'pipe its text, or give --content or a file path'
-      }
+      let path: path = $file | default {
+          error raise 'no script was given' --with={
+            kind: invalid_argument
+            advice: 'pipe its text, or give --content or a file path'
+          }
+        }
+      if not ($path | path exists) { error raise $"file not found: '($path)'" --kind not_found }
+      open --raw $path
     }
-    if not ($path | path exists) { error raise $"file not found: '($path)'" --kind not_found }
-    open --raw $path
-  }
   let bash: path = which bash
     | where type == external
     | get 0?.path
@@ -221,7 +232,7 @@ export def --env main [
   }
   if ($sections | where mark == '=done' | is-empty) {
     let stderr: string = $res.stderr | text | str replace --all "\u{0}=phase\u{0}" '' | str trim
-    error raise $"bash exited with status ($res.exit_code) before the variables were read" ...{
+    error raise $"bash exited with status ($res.exit_code) before the variables were read" --with={
       kind: external_failure
       advice: (
         [$stderr 'a script that calls `exit` ends bash early; `return` (with status 0) ends the script and keeps the variables'] | compact --empty | str join (char newline)

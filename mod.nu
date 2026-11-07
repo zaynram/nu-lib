@@ -137,12 +137,12 @@ export-env {
   let missing: list<path> = $NU_LIB_DIRS | where $it not-in ($env.NU_LIB_DIRS? | default [])
   if $missing != [] { $env.NU_LIB_DIRS = ($env.NU_LIB_DIRS? | default []) ++ $missing }
   # File paths, not bare names: inside this module a bare `mods` is the wrapper above, which has no env block.
-  if $nu.is-login { use conf/mod.nu }
+  if $nu.is-login { use conf }
   if $nu.is-interactive and $nu.is-login {
-    use mods/mod.nu
-    use completion/local/mod.nu
-    use proj/mod.nu
-    use track/mod.nu
+    use mods
+    use completion/local
+    use proj
+    use track
   }
-  if $env.WSL_DISTRO_NAME? != null or $nu.os-info.kernel_version =~ '(?i)microsoft' { use windows/mod.nu }
+  if $env.WSL_DISTRO_NAME? != null or $nu.os-info.kernel_version =~ '(?i)microsoft' { use windows }
 }
