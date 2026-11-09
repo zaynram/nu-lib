@@ -203,10 +203,7 @@ export def raise [
   let span: record = metadata $message | get $.span
 
   # Not `flatten`: it would also flatten each label's `span` record into `start`/`end` columns.
-  let labels: list<record> = [$with.label?]
-    | compact
-    | append ($with.labels? | default [])
-    | append $labels
+  let labels: list<record> = [$with.label? ...$with.labels? ...$labels] | compact
   let count: int = $labels | length
 
   let details: record = $with
